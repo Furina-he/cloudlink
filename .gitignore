@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+target/
+
+# Environment files (keep .env.mock, which only contains VITE_MOCK=1)
+.env.local
+.env.*.local
+
+# Test & tooling output
+test-results/
+playwright-report/
+coverage/
+*.log
+
+# Local agent / editor settings
+.claude/settings.local.json
+.impeccable/config.local.json
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

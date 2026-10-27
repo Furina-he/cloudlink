@@ -1,0 +1,15 @@
+# Normalize all text files to LF in the repository and working tree.
+# Probe scripts run on Linux servers via `sh -s`; CRLF would break them.
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary
+*.woff2 binary
