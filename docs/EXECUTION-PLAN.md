@@ -70,6 +70,15 @@
 
 **仓库：** 根目录已经是 Git 仓库，关联远端 https://github.com/Furina-he/cloudlink （**公开仓库**），默认分支为 `main`。根目录的 `.gitignore` 和 `.gitattributes` 已经提交。`.gitattributes` 让文本文件统一使用 LF 换行，这一点很重要：探测脚本要在 Linux 上执行，带 CRLF 就会出错。每个阶段结束后，等你确认再提交和推送。
 
+**推送说明（2026-10-28 实测）：** 本机环境变量 `GH_TOKEN` 里是一个细粒度 token，它没有 cloudlink 仓库的写权限，直接 `git push` 会返回 403。有两种处理方式，任选其一：
+
+1. 在 GitHub 的 token 设置里，把 cloudlink 加入这个 token 的仓库范围，并授予 Contents 读写权限。
+2. 推送时临时不用这个 token，改用 gh 钥匙串里那份带 `repo` 权限的登录凭据：
+
+   ```bash
+   env -u GH_TOKEN git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push
+   ```
+
 ---
 
 ## 2. 目标仓库结构
