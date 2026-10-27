@@ -279,6 +279,7 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
 1. **骨架：**
    - 按 PRD 8.1 写好 Cargo 依赖（锁定主版本），搭好模块骨架，用 thiserror 定义错误类型。
    - 用 ts-rs 把类型导出到 `../src/bindings/`，和 P1 手写的契约比对。
+   - 加入 `tauri-plugin-window-state` 后，复核默认窗口尺寸 1280×800（P0 遗留，2026-10-28 决定留到这里）：在 1080p、125% 缩放且任务栏常驻的屏幕上，它连同标题栏比工作区高约 22 像素。
 2. **db：**
    - rusqlite（bundled、WAL 模式），带迁移和 `schema_version`。
    - 表：资产、目标、挂载、活动、设置。
@@ -397,7 +398,7 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
 ## 7. 新对话开场提示词
 
 ```text
-你在 D:\desk\Desktop\CloudSkill Hub 中实施 CloudLink v0.1（Windows 优先）。这是 Git 仓库，远端为 https://github.com/Furina-he/cloudlink 。
+你在 D:\desk\Desktop\cloudlink 中实施 CloudLink v0.1（Windows 优先）。这是 Git 仓库，远端为 https://github.com/Furina-he/cloudlink 。
 先按顺序通读：README.md → PRODUCT.md → DESIGN.md → docs/PRD.md（重点是第三到第八章）→ docs/EXECUTION-PLAN.md。
 然后从 EXECUTION-PLAN 的 P0 开始执行。规则：
 1. 每个阶段只做这个阶段的任务。阶段结束时逐条运行验收门槛，把命令、结果和截图路径汇报给我；

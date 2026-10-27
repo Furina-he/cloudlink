@@ -821,6 +821,15 @@ pnpm dlx shadcn@4 mcp init --client claude
 3. shadcn 的 `Progress` 把 `ProgressIndicator` 封装在组件内部，外部无法给它传类名。需要按 7.6 在 `progress.tsx` 里增加 `tone` 属性。
 4. shadcn 的 Vite 模板自带 `src/components/theme-provider.tsx`，里面有一段「按 d 键切换主题」的监听，要删掉（见 7.3）。
 
+以下几条是 2026-10-28 执行 P0 时发现的，当时 `shadcn@4` 解析为 4.23.0，上面的 preset 和组件清单同样全部通过：
+
+5. `shadcn init` 会在生成的 `cloudlink/` 里自动 `git init`，并提交一次 `feat: initial commit`，形成嵌套仓库。确认里面只有模板内容、没有远端后，删掉 `cloudlink/.git`。
+6. 模板的 `typecheck` 脚本是 `tsc --noEmit`，但根 `tsconfig.json` 是 `files: []` 加 references 的写法，这个命令实际检查 0 个文件，故意写入的类型错误也返回 0。改为 `tsc -b`。
+7. `src/hooks/use-mobile.ts`（`sidebar` 依赖它）在 effect 里同步调用 setState，过不了模板自带的 eslint-plugin-react-hooks 7 的 `react-hooks/set-state-in-effect` 规则，`pnpm lint` 会失败。用 `useSyncExternalStore` 改写，对外接口不变。
+8. `shadcn mcp init` 会顺带把 `shadcn` 从 dependencies 挪到 devDependencies。不影响构建，因为 `shadcn/tailwind.css` 只在构建时被引用。
+9. shadcn MCP（4.23.0）的 `view_items_in_registries` 不认 `components.json` 里的 `base-nova`，返回的是 Radix 版组件（依赖 `radix-ui`）。另外，`.mcp.json` 写在 `cloudlink/` 下，从仓库根目录启动的 Claude Code 不会加载它。查组件写法以 `src/components/ui/` 的源码，以及在 `cloudlink/` 下执行的 `pnpm dlx shadcn@4 view <组件>` 为准，不要采用 MCP 返回的代码。
+10. typeset 生成器导出的 `typeset.css` 是通用样式表，生成器里选的值只会变成 `--typeset-*` 变量，所以文件保持上游原样。它第 142 行有一个上游写死的颜色 `oklch(0.86 0.17 95)`（`<mark>` 高亮用），因此 7.10 第 6 条的颜色检查同时排除 `index.css` 和 `typeset.css`。
+
 ### 7.3 需求 → 唯一实现映射表
 
 | 需求或交互行为 | 必须使用的实现 | 禁止 |
@@ -1103,7 +1112,7 @@ src/
 3. 6.11 中列出的每个状态，都能通过夹具或交互复现出来。
 4. 只用键盘就能完成以下操作：在资产列表中上下移动并打开资产，`Ctrl+K`，`Ctrl+S`，拖拽挂载（空格加方向键），用空格切换矩阵开关，退出 Agent 视角。
 5. Playwright 截图覆盖 4 个主要视图，浅色和深色各一套，宽度 1280 和 1024 各一套。截图中不出现文字溢出或遮挡，焦点环清晰可见。
-6. 只修改了 7.6 列出的令牌，没有新增任何颜色值（用 `grep -E "oklch\(|#[0-9a-f]{3,6}"` 检查 `src/` 下除 `index.css` 以外的文件）。
+6. 只修改了 7.6 列出的令牌，没有新增任何颜色值（用 `grep -E "oklch\(|#[0-9a-f]{3,6}"` 检查 `src/` 下除 `index.css` 和上游原样的 `typeset.css` 以外的文件，见 7.2 已知的坑第 10 条）。
 
 ### 7.11 给 Coding Agent 的执行入口
 
