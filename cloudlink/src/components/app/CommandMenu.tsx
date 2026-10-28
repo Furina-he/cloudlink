@@ -35,6 +35,7 @@ import { copy, ipcErrorText, type ViewId } from "@/lib/copy"
 import { KEY_HINT } from "@/lib/hotkeys"
 import { useAssetStore } from "@/stores/assets"
 import { useMountStore } from "@/stores/mounts"
+import { useProbeStore } from "@/stores/probe"
 import { useSkillStore } from "@/stores/skills"
 import { useTargetStore } from "@/stores/targets"
 import { VIEWS, useUIStore } from "@/stores/ui"
@@ -129,8 +130,23 @@ function RootPage({
     fn()
     close()
   }
-  const notReady = run(() => toast.add({ title: copy.command.notReady }))
   const ui = useUIStore.getState
+  const probeCurrent = run(() => {
+    if (!selectedAssetId) return
+    useProbeStore
+      .getState()
+      .start(selectedAssetId)
+      .then(() => ui().requestProbePanel())
+      .catch((e: IpcError) => toast.add({ title: ipcErrorText(e.id, e.params), type: "error" }))
+  })
+  const probeAll = run(() => {
+    void useProbeStore
+      .getState()
+      .startAll()
+      .then((n) =>
+        toast.add({ title: n ? copy.probeToast.startedAll(n) : copy.probeToast.nothingToProbe })
+      )
+  })
 
   return (
     <>
@@ -173,23 +189,23 @@ function RootPage({
         </CommandGroup>
       )}
       <CommandGroup heading={copy.command.groups.actions}>
-        <CommandItem value={copy.command.actions.newAsset} onSelect={notReady}>
+        <CommandItem value={copy.command.actions.newAsset} onSelect={run(() => ui().startNewAsset())}>
           <PlusIcon />
           {copy.command.actions.newAsset}
         </CommandItem>
-        <CommandItem value={copy.command.actions.importSsh} onSelect={notReady}>
+        <CommandItem value={copy.command.actions.importSsh} onSelect={run(() => ui().setImportOpen(true))}>
           <FileInputIcon />
           {copy.command.actions.importSsh}
         </CommandItem>
         <CommandItem
           value={copy.command.actions.probeCurrent}
           disabled={!selectedAssetId}
-          onSelect={notReady}
+          onSelect={probeCurrent}
         >
           <RadarIcon />
           {copy.command.actions.probeCurrent}
         </CommandItem>
-        <CommandItem value={copy.command.actions.probeAll} onSelect={notReady}>
+        <CommandItem value={copy.command.actions.probeAll} onSelect={probeAll}>
           <RadarIcon />
           {copy.command.actions.probeAll}
         </CommandItem>

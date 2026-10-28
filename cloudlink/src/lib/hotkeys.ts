@@ -26,6 +26,14 @@ export const VIEW_BY_DIGIT: Record<string, ViewId> = {
 /** 全局快捷键在输入框里也生效，并阻止浏览器默认行为（如 Ctrl+S 保存网页） */
 export const HOTKEY_OPTIONS: Options = { preventDefault: true, enableOnFormTags: true }
 
+/** 「/」这类单键：在输入框里要能正常输入，所以不在表单控件里触发 */
+export const SINGLE_KEY_OPTIONS: Options = { preventDefault: true }
+
+/** 有模态对话框打开时，视图快捷键不响应，交给对话框自己处理 */
+export function isModalOpen(): boolean {
+  return document.querySelector("[role=dialog][data-open], [role=alertdialog][data-open]") !== null
+}
+
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform)
 const MOD = isMac ? "⌘" : "Ctrl"
 

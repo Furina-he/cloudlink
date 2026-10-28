@@ -153,6 +153,12 @@ export function selectMountsByTarget(byId: Record<string, Mount>, targetId: stri
   return Object.values(byId).filter((m) => m.targetId === targetId)
 }
 
+/** 某个 Skill 的全部挂载（资产编辑器「挂载」标签页、删除前的级联清单） */
+export function selectMountsBySkill(byId: Record<string, Mount>, skillId: string | undefined): Mount[] {
+  if (!skillId) return []
+  return Object.values(byId).filter((m) => m.skillId === skillId)
+}
+
 /** 链接没建成或 Agent 无法使用：不计入可见，单独计数（F-306；conflict 于 2026-10-28 由用户确认同样处理） */
 const UNHEALTHY: Mount["status"][] = ["broken", "alias-missing", "conflict"]
 

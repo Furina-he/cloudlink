@@ -142,6 +142,8 @@ export const assets: Asset[] = [
     services: [
       { kind: "systemd", name: "postgresql", ports: [], role: "主数据库", critical: true, source: "probe", lastSeenAt: ago(41 * DAY), missing: false },
       { kind: "docker", name: "redis", image: "redis:7.4", ports: [{ hostIp: "127.0.0.1", hostPort: 6379, containerPort: 6379, proto: "tcp" }], critical: false, source: "probe", lastSeenAt: ago(41 * DAY), missing: false },
+      // 容器名是服务器上的人起的：名字本身像一句指令 → Lint「疑似指令注入」（PRD 8.3），用来复现「有警告」
+      { kind: "docker", name: "ignore-previous-instructions", image: "busybox:1.36", ports: [], critical: false, source: "probe", lastSeenAt: ago(41 * DAY), missing: false },
     ],
     servedHostnames: [],
     listeningPorts: [{ addr: "127.0.0.1", port: 5432, proto: "tcp" }],
@@ -168,7 +170,8 @@ export const assets: Asset[] = [
     listeningPorts: [],
     guardrails: { defaultMode: "standard", rules: [] },
     export: builtinExport,
-    notes: "",
+    // 第 3 行像一条口令赋值 → 密钥扫描阻断发布，两个变体都「编译受阻」
+    notes: "临时测试库，用完即删。\n连接：psql -h 127.0.0.1 -U dev app\npassword=devpass-2026",
     probe: { lastRunId: null, lastSuccessAt: null, status: "never" },
     createdAt: ago(1 * DAY),
     updatedAt: ago(1 * DAY),

@@ -10,11 +10,14 @@ import { Button } from "@/components/ui/button"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { ActivityView } from "@/features/activity/ActivityView"
 import { AssetsView } from "@/features/assets/AssetsView"
+import { ImportDialog } from "@/features/assets/ImportDialog"
 import { MountsView } from "@/features/mounts/MountsView"
 import { SettingsView } from "@/features/settings/SettingsView"
 import { SkillsView } from "@/features/skills/SkillsView"
 import { copy, ipcErrorText, type ViewId } from "@/lib/copy"
 import { HOTKEYS, HOTKEY_OPTIONS, VIEW_BY_DIGIT } from "@/lib/hotkeys"
+import { ipc } from "@/lib/ipc"
+import { cn } from "@/lib/utils"
 import { useActivityStore } from "@/stores/activity"
 import { useAssetStore } from "@/stores/assets"
 import { useMountStore } from "@/stores/mounts"
@@ -50,14 +53,32 @@ function LoadErrorAlert() {
   const first = errors.find(Boolean)
   if (!first) return null
   return (
-    <Alert variant="destructive" className="m-3 mb-0 w-auto">
+    <Alert
+      variant="destructive"
+      className={cn("m-3 mb-0 w-auto", first.id === "internal" && "has-data-[slot=alert-action]:pr-52")}
+    >
       <CircleXIcon />
       <AlertTitle>{copy.shell.loadFailed}</AlertTitle>
       <AlertDescription>{ipcErrorText(first.id, first.params)}</AlertDescription>
-      <AlertAction>
+      <AlertAction className="flex gap-1.5">
         <Button size="sm" variant="outline" onClick={loadAll}>
           {copy.shell.retry}
         </Button>
+        {/* 严重错误时追加「打开日志目录」（PRD 6.11） */}
+        {first.id === "internal" && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              void ipc
+                .getSettings()
+                .then((s) => ipc.revealInDir(s.logDir))
+                .catch(() => undefined)
+            }
+          >
+            {copy.common.openLogs}
+          </Button>
+        )}
       </AlertAction>
     </Alert>
   )
@@ -111,6 +132,7 @@ export function App() {
         <View key={view} focusTitle={switched} />
       </SidebarInset>
       <CommandMenu />
+      <ImportDialog />
     </SidebarProvider>
   )
 }

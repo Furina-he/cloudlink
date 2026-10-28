@@ -1,5 +1,6 @@
 import { CommandIcon } from "lucide-react"
 
+import { Keys } from "@/components/app/Keys"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -8,7 +9,6 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
-import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import {
@@ -22,24 +22,15 @@ import { useAssetStore } from "@/stores/assets"
 import { useSkillStore } from "@/stores/skills"
 import { useUIStore } from "@/stores/ui"
 
-function Keys({ keys }: { keys: readonly string[] }) {
-  return (
-    <KbdGroup>
-      {keys.map((k) => (
-        <Kbd key={k}>{k}</Kbd>
-      ))}
-    </KbdGroup>
-  )
-}
-
 /** 面包屑第二级：当前对象（资产名、Skill slug） */
 function useCurrentObject(): string | null {
   const view = useUIStore((s) => s.view)
   const selectedAssetId = useUIStore((s) => s.selectedAssetId)
+  const creatingAsset = useUIStore((s) => s.creatingAsset)
   const selectedSkillId = useUIStore((s) => s.selectedSkillId)
   const asset = useAssetStore((s) => (selectedAssetId ? s.byId[selectedAssetId]?.name : undefined))
   const skill = useSkillStore((s) => (selectedSkillId ? s.statusById[selectedSkillId]?.slug : undefined))
-  if (view === "assets") return asset ?? null
+  if (view === "assets") return creatingAsset ? copy.editor.newTitle : (asset ?? null)
   if (view === "skills") return skill ?? null
   return null
 }
@@ -77,8 +68,8 @@ export function AppToolbar() {
         </BreadcrumbList>
       </Breadcrumb>
       <div className="flex-1" />
-      {/* 当前视图的操作区（ButtonGroup），各视图在 P2、P3 填充 */}
-      <div id="view-actions" className="flex items-center gap-1" />
+      {/* 当前视图的操作区：各视图用 createPortal 渲染到这里 */}
+      <div id="view-actions" className="flex shrink-0 items-center gap-1" />
       <Button variant="outline" size="sm" onClick={() => setCommandOpen(true)}>
         <CommandIcon data-icon="inline-start" />
         {copy.shell.openCommand}

@@ -1,5 +1,6 @@
 // 唯一允许调用 invoke 的地方（PRD 7.3、7.8）
 import { invoke } from "@tauri-apps/api/core"
+import { revealItemInDir } from "@tauri-apps/plugin-opener"
 
 import type {
   ActivityItem,
@@ -60,6 +61,8 @@ export const ipc = {
   updateSettings: (patch: Partial<Settings>) =>
     invoke<Settings>("update_settings", { patch }),
   getProbeScript: () => invoke<string>("get_probe_script"),
+  /** 在文件管理器中显示（PRD 7.3：plugin-opener 的 revealItemInDir） */
+  revealInDir: (path: string) => revealItemInDir(path),
 }
 
 /** 把 invoke 的拒绝值规整为 IpcError。后端约定抛出 { id, params } */

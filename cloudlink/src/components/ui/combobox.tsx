@@ -53,10 +53,15 @@ function ComboboxInput({
   disabled = false,
   showTrigger = true,
   showClear = false,
+  triggerLabel,
+  clearLabel,
   ...props
 }: ComboboxPrimitive.Input.Props & {
   showTrigger?: boolean
   showClear?: boolean
+  /** 展开按钮、清除按钮的屏幕阅读器文字 */
+  triggerLabel?: string
+  clearLabel?: string
 }) {
   return (
     <InputGroup className={cn("w-auto", className)}>
@@ -73,9 +78,10 @@ function ComboboxInput({
             data-slot="input-group-button"
             className="group-has-data-[slot=combobox-clear]/input-group:hidden data-pressed:bg-transparent"
             disabled={disabled}
+            aria-label={triggerLabel}
           />
         )}
-        {showClear && <ComboboxClear disabled={disabled} />}
+        {showClear && <ComboboxClear disabled={disabled} aria-label={clearLabel} />}
       </InputGroupAddon>
       {children}
     </InputGroup>
@@ -231,9 +237,12 @@ function ComboboxChip({
   className,
   children,
   showRemove = true,
+  removeLabel,
   ...props
 }: ComboboxPrimitive.Chip.Props & {
   showRemove?: boolean
+  /** 移除按钮的屏幕阅读器文字 */
+  removeLabel?: string
 }) {
   return (
     <ComboboxPrimitive.Chip
@@ -250,6 +259,7 @@ function ComboboxChip({
           render={<Button variant="ghost" size="icon-xs" />}
           className="-ml-1 opacity-50 hover:opacity-100"
           data-slot="combobox-chip-remove"
+          aria-label={removeLabel}
         >
           <XIcon className="pointer-events-none" />
         </ComboboxPrimitive.ChipRemove>

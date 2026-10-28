@@ -90,8 +90,13 @@ function CodeBlockCopyButton({
   size = "icon-xs",
   className,
   onClick,
+  labels = { copy: "Copy", copied: "Copied" },
   ...props
-}: React.ComponentProps<typeof Button> & { value: string }) {
+}: React.ComponentProps<typeof Button> & {
+  value: string
+  /** 按钮和复制成功播报的文字 */
+  labels?: { copy: string; copied: string }
+}) {
   const [copied, setCopied] = React.useState(false)
 
   React.useEffect(() => {
@@ -110,7 +115,7 @@ function CodeBlockCopyButton({
         data-copied={copied || undefined}
         variant={variant}
         size={size}
-        aria-label={copied ? "Copied" : "Copy"}
+        aria-label={copied ? labels.copied : labels.copy}
         className={cn(className)}
         onClick={(event) => {
           onClick?.(event)
@@ -130,7 +135,7 @@ function CodeBlockCopyButton({
         )}
       </Button>
       <span aria-live="polite" className="sr-only">
-        {copied ? "Copied" : ""}
+        {copied ? labels.copied : ""}
       </span>
     </>
   )

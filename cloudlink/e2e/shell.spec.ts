@@ -68,6 +68,8 @@ test.describe("应用外壳（Mock 模式）", () => {
     await expect(page.getByRole("navigation", { name: "当前位置" })).toContainText("香港轻量反代与边缘节点")
 
     await page.keyboard.press("Control+k")
+    // 等输入框拿到焦点再输入，否则按键可能在对话框打开前丢失
+    await expect(page.getByPlaceholder("输入视图、资产名称、别名或操作")).toBeFocused()
     await page.keyboard.type("前往活动")
     await expect(page.getByRole("option", { selected: true })).toContainText("前往活动")
     await page.keyboard.press("Enter")

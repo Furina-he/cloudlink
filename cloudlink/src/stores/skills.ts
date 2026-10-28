@@ -56,3 +56,12 @@ export const useSkillStore = create<SkillState>()((set) => ({
 
 /** 任一变体编译受阻即算受阻 */
 export const isSkillBlocked = (skill: SkillStatus) => skill.variants.some((v) => v.blocked)
+
+/** 资产对应的单资产 Skill（F-201）；新建尚未保存的资产没有 */
+export function selectSkillOfAsset(
+  statusById: Record<string, SkillStatus>,
+  assetId: string | null
+): SkillStatus | undefined {
+  if (!assetId) return undefined
+  return Object.values(statusById).find((s) => s.assetId === assetId)
+}

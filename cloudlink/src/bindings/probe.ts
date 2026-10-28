@@ -44,8 +44,10 @@ export interface ProbeDiff {
   finishedAt: string
 }
 
+// 两个事件都带 assetId（2026-10-28 用户确认，偏离 PRD 7.8）：导入后由后端发起的探测，前端也能归到对应资产
 export interface ProbeProgressEvent {
   runId: string
+  assetId: string
   step: ProbeStep
   status: ProbeStepStatus
   ms?: number
@@ -55,7 +57,9 @@ export type ProbeRunStatus = "running" | "ok" | "failed" | "cancelled"
 
 export interface ProbeFinishedEvent {
   runId: string
+  assetId: string
   status: Exclude<ProbeRunStatus, "running">
+  /** 失败原因；status 为 ok 时可能是 partial（部分段采集失败） */
   error?: ProbeError
   diff?: ProbeDiff
 }

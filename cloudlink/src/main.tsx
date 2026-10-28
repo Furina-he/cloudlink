@@ -7,6 +7,7 @@ import App from "./App.tsx"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { Toaster } from "@/components/ui/toast"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { copy } from "@/lib/copy"
 import { subscribeBackendEvents } from "@/lib/events"
 
 async function bootstrap() {
@@ -25,7 +26,7 @@ async function bootstrap() {
           transition={{ duration: 0.18, ease: [0.25, 1, 0.5, 1] }}
         >
           <TooltipProvider>
-            <Toaster>
+            <Toaster closeLabel={copy.common.close}>
               <App />
             </Toaster>
           </TooltipProvider>

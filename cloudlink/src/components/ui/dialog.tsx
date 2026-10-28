@@ -41,9 +41,12 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  closeLabel = "Close",
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
+  /** 关闭按钮的屏幕阅读器文字 */
+  closeLabel?: string
 }) {
   return (
     <DialogPortal>
@@ -70,7 +73,7 @@ function DialogContent({
           >
             <XIcon
             />
-            <span className="sr-only">Close</span>
+            <span className="sr-only">{closeLabel}</span>
           </DialogPrimitive.Close>
         )}
       </DialogPrimitive.Popup>

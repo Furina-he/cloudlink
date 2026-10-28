@@ -36,6 +36,22 @@ const db = {
   environments: structuredClone(fx.environments),
 }
 
+/**
+ * 复现 PRD 6.11 状态用的场景，通过地址栏参数选择：
+ * - ?mock=empty：首次启动，没有任何资产和挂载
+ * - ?mock=slow：每个命令延迟 1.5 秒（加载中、保存中）
+ * - ?mock=fail：开头两次加载资产失败（开发模式下 StrictMode 会把首次加载执行两遍），点「重试」后恢复
+ */
+const scenario = new URLSearchParams(window.location.search).get("mock")
+if (scenario === "empty") {
+  db.assets = []
+  db.mounts = []
+  db.activity = []
+  db.hosts.hosts.forEach((h) => (h.imported = false))
+}
+const LATENCY = scenario === "slow" ? 1500 : 120
+let failListAssets = scenario === "fail" ? 2 : 0
+
 let seq = 0
 const newId = (prefix: string) => `${prefix}_${Date.now().toString(36)}${(seq++).toString(36)}`
 const now = () => new Date().toISOString()
@@ -68,43 +84,86 @@ const BUILTIN_RULES = [
   'If the host does not match this document, report the difference to the user instead of "fixing" the server to match the document.',
 ]
 
+/** 简化版密钥规则（真实实现复用 gitleaks 规则集） */
+const SECRET_RULES: [string, RegExp][] = [
+  ["generic-password", /password\s*[=:]\s*\S+/i],
+  ["private-key", /-----BEGIN [A-Z ]*PRIVATE KEY-----/],
+  ["aws-access-key", /AKIA[0-9A-Z]{16}/],
+  ["github-token", /gh[pousr]_[A-Za-z0-9]{36}/],
+]
+const INJECTION = /ignore[\s_-]*(all[\s_-]*)?previous|system[\s_-]*prompt|忽略以上/i
+const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/
+
 const estimateTokens = (s: string) => Math.ceil(s.length / 3.6)
+const code = (s: string) => `\`${s.slice(0, 128)}\``
+const portText = (p: Asset["services"][number]["ports"][number]) =>
+  `${p.hostIp}:${p.hostPort}->${p.containerPort}${p.proto === "udp" ? "/udp" : ""}`
+
+/** 在文件里找第一处匹配，返回行号（从 1 开始） */
+function findLine(content: string, test: (line: string) => boolean): number | null {
+  const i = content.split("\n").findIndex(test)
+  return i < 0 ? null : i + 1
+}
 
 function compile(input: AssetInput, mode: Mode): CompilePreview {
-  const alias = input.connection.sshAlias
+  const saved = input.id ? db.assets.find((a) => a.id === input.id) : undefined
+  const alias = input.connection.sshAlias || "(no alias)"
   const env = { prod: "Production", staging: "Staging", dev: "Development" }[input.envTag]
-  const hosts = input.servedHostnames.join(", ")
-  const description = `Connection, directory and container topology, and guardrails for ${alias} (${input.facts.os ?? "unknown OS"}, ${env.toLowerCase()}).${hosts ? ` Use when a task involves ${alias}, ${hosts}.` : ` Use when a task involves ${alias}.`}`
+  const os = input.facts.os
+  const hosts = input.servedHostnames
+  const summary = input.summary.trim()
+  const description = [
+    `Connection, directory and container topology, and guardrails for ${alias}${os ? ` (${os}, ${env.toLowerCase()})` : ` (${env.toLowerCase()})`}${summary ? `: ${summary}` : ""}.`,
+    `Use when a task involves ${[alias, ...hosts].join(", ")}.`,
+  ].join(" ")
   const rules = [...input.guardrails.rules.map((r) => r.text), ...BUILTIN_RULES]
+  const snapshot =
+    db.settings.writeSnapshotTime && saved?.probe.lastSuccessAt
+      ? ` | Snapshot: ${saved.probe.lastSuccessAt.slice(0, 10)}`
+      : ""
+  const facts = input.facts
+  const system = [
+    os,
+    facts.cpuCores && facts.memoryTotalMiB
+      ? `${facts.cpuCores} vCPU / ${Math.round(facts.memoryTotalMiB / 1024)} GB RAM`
+      : null,
+    facts.panel ? `managed by ${facts.panel.type === "1panel" ? "1Panel" : "aaPanel (BT)"} (${facts.panel.installPath})` : null,
+  ].filter(Boolean)
+  const resolved = saved?.connection.resolved
   const modeSection =
     mode === "read-only"
       ? [
           "## Mode: read-only",
-          "- Only inspection commands are allowed, e.g. `docker ps`, `docker logs --tail 200 <container>`, `df -h`, `free -m`.",
-          "- No writes of any kind. If a change is needed, describe the plan to the user and stop.",
+          "- Only inspection commands are allowed, e.g. `docker ps`, `docker logs --tail 200 <container>`, `df -h`, `free -m`, `uptime`, `ss -tln`.",
+          "- No writes of any kind: do not restart or stop containers or services, edit or delete files, install packages, or change the firewall. If a change is needed, describe the plan to the user and stop.",
         ]
       : [
           "## Mode: standard operations",
           "- Routine deployments and service restarts are allowed.",
-          "- Ask the user for explicit approval before deleting data, changing the firewall, stopping critical services or rebooting the host.",
+          `- Ask the user for explicit approval before: deleting data or volumes (including \`docker compose down -v\`), changing the firewall or security groups, stopping critical services${input.services.some((s) => s.critical) ? ` (${input.services.filter((s) => s.critical).map((s) => s.name).join(", ")})` : ""}, changing SSH configuration, or rebooting the host.`,
         ]
   const hasTopology = input.paths.length > 0 || input.services.length > 0
+  const hasNotes = input.notes.trim().length > 0
   const body = [
-    `# ${alias} — ${input.summary || input.name}`,
+    `# ${alias} — ${input.name || "untitled asset"}`,
     "",
-    `> ${env} | Mode: ${mode} | Generated by CloudLink — do not edit`,
+    `> ${env} | Mode: ${mode}${snapshot} | Generated by CloudLink — do not edit`,
     "",
     "## Connect",
-    `- Run commands through the system SSH alias: \`ssh ${alias} '<command>'\`.`,
-    ...(input.facts.os ? [`- System: ${input.facts.os}`] : []),
+    `- Run commands through the system SSH alias: \`ssh ${alias} '<command>'\`. Authentication is handled by the local ssh-agent; never ask for or record passwords, IPs or private keys.`,
+    ...(system.length ? [`- System: ${system.join(" | ")}.`] : []),
+    ...(summary ? [`- Role: ${summary}`] : []),
+    ...(input.export.resolvedConnection && resolved
+      ? [`- Resolved connection: HostName ${resolved.hostname}, User ${resolved.user}, Port ${resolved.port}.`]
+      : []),
     "",
     ...modeSection,
     "",
     "## Guardrails (must follow)",
     ...rules.map((r, i) => `${i + 1}. ${r}`),
-    ...(hasTopology
-      ? ["", "## References (read on demand)", "- Key directories, containers and port mappings: read `references/runtime-topology.md`"]
-      : []),
+    ...(hasTopology || hasNotes ? ["", "## References (read on demand)"] : []),
+    ...(hasTopology ? ["- Key directories, containers and port mappings: read `references/runtime-topology.md`"] : []),
+    ...(hasNotes ? ["- Additional notes from the owner: read `references/notes.md`"] : []),
   ]
   const skill = ["---", `name: ${input.slug}`, `description: ${description}`, "---", "", ...body].join("\n")
   const files: CompilePreview["files"] = [{ path: "SKILL.md", content: skill, tokens: estimateTokens(skill) }]
@@ -112,26 +171,67 @@ function compile(input: AssetInput, mode: Mode): CompilePreview {
     const topo = [
       `# ${alias} runtime topology`,
       "",
-      "| Key | Path |",
-      "| --- | --- |",
-      ...input.paths.map((p) => `| ${p.key} | \`${p.path}\` |`),
-      "",
-      "| Service | Kind | Image | Critical |",
-      "| --- | --- | --- | --- |",
-      ...input.services.map((s) => `| \`${s.name}\` | ${s.kind} | ${input.export.image && s.image ? `\`${s.image}\`` : "-"} | ${s.critical ? "yes" : "no"} |`),
+      ...(input.paths.length
+        ? ["## Key directories", "", "| Purpose | Path |", "| --- | --- |", ...input.paths.map((p) => `| ${p.label} | ${code(p.path)} |`), ""]
+        : []),
+      ...(input.services.length
+        ? [
+            "## Services",
+            "",
+            "| Name | Kind | Image | Ports | Role | Critical |",
+            "| --- | --- | --- | --- | --- | --- |",
+            ...input.services.map(
+              (s) =>
+                `| ${code(s.name)} | ${s.kind} | ${input.export.image && s.image ? code(s.image) : "-"} | ${s.ports.map(portText).join(", ") || "-"} | ${s.role ?? "-"}${s.missing ? " (not seen in last probe)" : ""} | ${s.critical ? "yes" : "no"} |`
+            ),
+            "",
+          ]
+        : []),
+      ...(hosts.length ? ["## Sites served by this host", "", ...hosts.map((h) => `- ${h}`), ""] : []),
+      ...(input.export.listeningPorts && input.listeningPorts.length
+        ? ["## Listening ports", "", ...input.listeningPorts.map((p) => `- ${p.addr}:${p.port}/${p.proto}`), ""]
+        : []),
     ].join("\n")
     files.push({ path: "references/runtime-topology.md", content: topo, tokens: estimateTokens(topo) })
   }
-  if (input.notes.trim()) {
+  if (hasNotes) {
     files.push({ path: "references/notes.md", content: input.notes, tokens: estimateTokens(input.notes) })
   }
 
   const lint: LintItem[] = []
-  if (input.slug === "synced") lint.push({ id: "reserved-name", level: "error", params: { slug: input.slug } })
-  if (/password\s*=/i.test(skill + input.notes)) lint.push({ id: "secret-detected", level: "error", params: { line: 1, rule: "generic-password" }, file: "SKILL.md" })
-  if (description.length > 1024) lint.push({ id: "description-too-long", level: "error", params: { chars: description.length } })
-  if (body.length > db.settings.bodyLineLimit) lint.push({ id: "body-too-long", level: "warning", params: { lines: body.length, limit: db.settings.bodyLineLimit } })
-  if (input.envTag === "prod" && mode === "standard" && input.guardrails.rules.length === 0) lint.push({ id: "prod-standard-no-guardrails", level: "warning" })
+  if (!SLUG.test(input.slug) || input.slug.length > 64) lint.push({ id: "name-format", level: "error", file: "SKILL.md", line: 2 })
+  if (input.slug === "synced") lint.push({ id: "reserved-name", level: "error", params: { slug: input.slug }, file: "SKILL.md", line: 2 })
+  if (description.length > 1024) lint.push({ id: "description-too-long", level: "error", params: { chars: description.length }, file: "SKILL.md", line: 3 })
+  for (const f of files) {
+    for (const [rule, re] of SECRET_RULES) {
+      const line = findLine(f.content, (l) => re.test(l))
+      if (line) lint.push({ id: "secret-detected", level: "error", params: { line, rule }, file: f.path, line })
+    }
+    if (!input.export.resolvedConnection && resolved) {
+      const line = findLine(f.content, (l) => l.includes(resolved.hostname))
+      if (line) lint.push({ id: "export-disabled-field", level: "error", params: { field: "HostName" }, file: f.path, line })
+    }
+  }
+  if (body.length > db.settings.bodyLineLimit) {
+    lint.push({ id: "body-too-long", level: "warning", params: { lines: body.length, limit: db.settings.bodyLineLimit }, file: "SKILL.md" })
+  }
+  if (input.envTag === "prod" && mode === "standard" && input.guardrails.rules.length === 0) {
+    lint.push({ id: "prod-standard-no-guardrails", level: "warning", file: "SKILL.md", line: findLine(skill, (l) => l.startsWith("## Guardrails")) ?? undefined })
+  }
+  for (const s of input.services.filter((x) => x.source === "probe" && INJECTION.test(x.name))) {
+    const topo = files.find((f) => f.path === "references/runtime-topology.md")
+    lint.push({
+      id: "suspected-injection",
+      level: "warning",
+      params: { value: s.name },
+      file: topo?.path,
+      line: topo ? (findLine(topo.content, (l) => l.includes(s.name)) ?? undefined) : undefined,
+    })
+  }
+  if (saved?.probe.status === "stale" && saved.probe.lastSuccessAt) {
+    const days = Math.floor((Date.now() - new Date(saved.probe.lastSuccessAt).getTime()) / (24 * 3600 * 1000))
+    lint.push({ id: "probe-stale", level: "info", params: { days } })
+  }
 
   return {
     slug: input.slug,
@@ -158,11 +258,6 @@ function toInput(a: Asset): AssetInput {
   return { ...(rest as Asset), connection: { sshAlias: a.connection.sshAlias } }
 }
 
-/** dev-box 的 standard 变体模拟「编译受阻」（侧栏 Skills 红色计数） */
-const BLOCKED_FIXTURE: Record<string, LintItem[]> = {
-  "skl_dev_box:standard": [{ id: "secret-detected", level: "error", params: { line: 14, rule: "generic-password" }, file: "references/notes.md" }],
-}
-
 function listSkills(): SkillStatus[] {
   return db.assets.map((a) => {
     const skillId = skillIdOf(a.id)
@@ -174,13 +269,11 @@ function listSkills(): SkillStatus[] {
       assetId: a.id,
       variants: [...modes].map((mode) => {
         const result = compile(toInput(a), mode)
-        const lint = BLOCKED_FIXTURE[`${skillId}:${mode}`] ?? result.lint
-        if (a.probe.status === "stale") lint.push({ id: "probe-stale", level: "info", params: { days: 41 } })
         return {
           mode,
-          lint,
+          lint: result.lint,
           residentTokens: result.budget.resident,
-          blocked: lint.some((l) => l.level === "error"),
+          blocked: result.blocked,
           compiledAt: a.updatedAt,
           path: `${db.settings.dataDir}\\compiled\\${mode}\\${a.slug}`,
         }
@@ -207,21 +300,21 @@ function startProbe(assetId: string) {
 
   STEPS.forEach((step, i) => {
     if (failAt >= 0 && i > failAt) return
-    at(i * stepMs, () => void emit("probe://progress", { runId, step, status: "running" }))
+    at(i * stepMs, () => void emit("probe://progress", { runId, assetId, step, status: "running" }))
     at((i + 1) * stepMs - 20, () => {
       const failed = i === failAt
-      void emit("probe://progress", { runId, step, status: failed ? "error" : "done", ms: Math.round(stepMs - 20) })
+      void emit("probe://progress", { runId, assetId, step, status: failed ? "error" : "done", ms: Math.round(stepMs - 20) })
       if (failed) {
         const error: ProbeError = { id: "host-key-unknown", params: { alias } }
-        void emit("probe://finished", { runId, status: "failed", error })
         asset.probe = { ...asset.probe, status: "failed", lastRunId: runId }
+        void emit("probe://finished", { runId, assetId, status: "failed", error })
         logActivity({ kind: "probe", assetId, messageId: "probe-failed", params: { alias }, durationMs: (i + 1) * stepMs, ok: false })
         probeRuns.delete(runId)
       } else if (i === STEPS.length - 1) {
         const changes = asset.id === "ast_hk_edge" ? structuredClone(fx.hkEdgeProbeChanges) : []
         run.diff = { changes, durationMs: 3000, finishedAt: now() }
-        void emit("probe://finished", { runId, status: "ok", diff: run.diff })
         if (changes.length === 0) asset.probe = { lastRunId: runId, lastSuccessAt: now(), status: "ok" }
+        void emit("probe://finished", { runId, assetId, status: "ok", diff: run.diff })
         logActivity({
           kind: "probe",
           assetId,
@@ -241,7 +334,7 @@ function cancelProbe(runId: string) {
   if (!run) return
   run.timers.forEach((t) => clearTimeout(t))
   probeRuns.delete(runId)
-  void emit("probe://finished", { runId, status: "cancelled" })
+  void emit("probe://finished", { runId, assetId: run.assetId, status: "cancelled" })
 }
 
 function applyProbe(runId: string, changeIds: string[]) {
@@ -255,6 +348,12 @@ function applyProbe(runId: string, changeIds: string[]) {
     }
     if (change.field === "service" && change.kind === "added") {
       asset.services.push({ kind: "docker", name: change.label, image: "my-api:v1.2", ports: [{ hostIp: "127.0.0.1", hostPort: 8080, containerPort: 8080, proto: "tcp" }], critical: false, source: "probe", lastSeenAt: now(), missing: false })
+    }
+    if (change.field === "listeningPorts" && change.after) {
+      asset.listeningPorts = change.after.split(",").map((p) => {
+        const [port, proto] = p.trim().split("/")
+        return { addr: "0.0.0.0", port: Number(port), proto: proto === "udp" ? "udp" : "tcp" }
+      })
     }
   }
   asset.probe = { lastRunId: runId, lastSuccessAt: now(), status: "ok" }
@@ -285,13 +384,30 @@ function publish(asset: Asset) {
 
 // ---------- 资产 ----------
 
+const uniqueSlug = (base: string) => {
+  let slug = base
+  for (let n = 2; db.assets.some((a) => a.slug === slug); n++) slug = `${base}-${n}`
+  return slug
+}
+
 function saveAsset(input: AssetInput) {
   if (db.assets.some((a) => a.slug === input.slug && a.id !== input.id)) fail("slug-taken", { slug: input.slug })
   const existing = input.id ? db.assets.find((a) => a.id === input.id) : undefined
   const alias = input.connection.sshAlias
   const definedIn = db.hosts.hosts.find((h) => h.alias === alias)?.definedIn ?? []
   const asset: Asset = existing
-    ? { ...existing, ...input, id: existing.id, connection: { ...existing.connection, sshAlias: alias, definedIn }, updatedAt: now() }
+    ? {
+        ...existing,
+        ...input,
+        id: existing.id,
+        connection: {
+          sshAlias: alias,
+          definedIn,
+          // 别名改了，旧的 ssh -G 快照作废
+          resolved: alias === existing.connection.sshAlias ? existing.connection.resolved : null,
+        },
+        updatedAt: now(),
+      }
     : {
         ...input,
         id: newId("ast"),
@@ -302,6 +418,18 @@ function saveAsset(input: AssetInput) {
       }
   if (existing) db.assets[db.assets.indexOf(existing)] = asset
   else db.assets.push(asset)
+  const host = db.hosts.hosts.find((h) => h.alias === alias)
+  if (host) host.imported = true
+  // 重命名迁移（F-101 AC2）：按新 slug 重建这个 Skill 的全部链接
+  if (existing && existing.slug !== asset.slug) {
+    const skillId = skillIdOf(asset.id)
+    db.mounts.forEach((m) => {
+      if (m.skillId !== skillId) return
+      m.links = m.links.map((l) => ({ ...l, path: l.path.slice(0, l.path.length - existing.slug.length) + asset.slug }))
+      m.checkedAt = now()
+    })
+    emitMounts()
+  }
   return publish(asset)
 }
 
@@ -312,7 +440,7 @@ function deleteAsset(id: string) {
   db.mounts = db.mounts.filter((m) => m.skillId !== skillId)
   db.assets = db.assets.filter((a) => a.id !== id)
   const host = db.hosts.hosts.find((h) => h.alias === asset.connection.sshAlias)
-  if (host) host.imported = false
+  if (host && !db.assets.some((a) => a.connection.sshAlias === host.alias)) host.imported = false
   emitMounts()
   return { unmounted }
 }
@@ -325,7 +453,7 @@ function importHosts(hosts: ImportHost[], probeAfter: boolean) {
       id: newId("ast"),
       type: "vps",
       name: h.alias,
-      slug: `vps-${h.alias}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-"),
+      slug: uniqueSlug(`vps-${h.alias}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-")),
       envTag: "dev",
       tags: [],
       summary: "",
@@ -351,7 +479,8 @@ function importHosts(hosts: ImportHost[], probeAfter: boolean) {
     db.assets.push(asset)
     return asset
   })
-  if (probeAfter) created.forEach((a) => startProbe(a.id))
+  // 先让 invoke 返回，再开始推送探测事件
+  if (probeAfter) setTimeout(() => created.forEach((a) => startProbe(a.id)), 0)
   return created
 }
 
@@ -485,7 +614,13 @@ type Args = Record<string, unknown>
 const handlers: Record<string, (args: Args) => unknown> = {
   detect_environments: () => db.environments,
   list_ssh_hosts: () => db.hosts,
-  list_assets: () => db.assets,
+  list_assets: () => {
+    if (failListAssets > 0) {
+      failListAssets--
+      fail("internal", { message: "database is locked" })
+    }
+    return db.assets
+  },
   save_asset: (a) => saveAsset(a.input as AssetInput),
   delete_asset: (a) => deleteAsset(a.id as string),
   import_hosts: (a) => importHosts(a.hosts as ImportHost[], a.probeAfter as boolean),
@@ -534,7 +669,7 @@ export function installMocks() {
         console.warn(`[mock] 未实现的命令：${cmd}`)
         return null
       }
-      await sleep(120)
+      await sleep(LATENCY)
       // 返回副本，避免界面层意外改到 Mock 数据库
       return structuredClone(await handler((payload ?? {}) as Args))
     },
