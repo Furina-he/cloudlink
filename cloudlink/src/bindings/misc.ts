@@ -76,6 +76,8 @@ export type IpcErrorId =
   | "needs-confirm-prod-global"
   /** F-307：别名在目标环境不可达，需要先确认 */
   | "needs-confirm-alias-missing"
+  /** 这个目录已经是一个目标（P3 契约扩展） */
+  | "target-exists"
   | "internal"
 
 /** IPC 失败时 invoke 抛出的对象。文案由 copy.ts 按 id 映射 */

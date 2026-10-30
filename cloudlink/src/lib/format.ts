@@ -22,6 +22,8 @@ const day = new Intl.DateTimeFormat(LOCALE, {
   weekday: "short",
 })
 
+const time = new Intl.DateTimeFormat(LOCALE, { hour: "2-digit", minute: "2-digit", hour12: false })
+
 const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["year", 365 * 24 * 3600],
   ["month", 30 * 24 * 3600],
@@ -49,6 +51,17 @@ export function formatDateTime(iso: string): string {
 /** 活动视图按天分组的标题 */
 export function formatDay(iso: string): string {
   return day.format(new Date(iso))
+}
+
+/** 活动记录的时刻：「14:02」 */
+export function formatTime(iso: string): string {
+  return time.format(new Date(iso))
+}
+
+/** 本地日期的键，用于按天分组：「2026-10-29」 */
+export function dayKey(iso: string): string {
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
 }
 
 export function formatNumber(n: number): string {

@@ -1,10 +1,12 @@
 // 唯一允许调用 invoke 的地方（PRD 7.3、7.8）
 import { invoke } from "@tauri-apps/api/core"
+import { open } from "@tauri-apps/plugin-dialog"
 import { revealItemInDir } from "@tauri-apps/plugin-opener"
 
 import type {
   ActivityItem,
   ActivityQuery,
+  AddAgentTargetRequest,
   AddProjectRequest,
   Asset,
   AssetInput,
@@ -23,6 +25,7 @@ import type {
   SkillStatus,
   SshHostList,
   Target,
+  UpdateTargetPatch,
 } from "@/bindings"
 
 export const ipc = {
@@ -48,6 +51,14 @@ export const ipc = {
   addProjectTarget: (req: AddProjectRequest) =>
     invoke<Target>("add_project_target", { req }),
   removeTarget: (id: string) => invoke<void>("remove_target", { id }),
+  // 以下四个命令是 P3 的契约扩展（2026-10-29 用户确认），PRD 7.8 中没有
+  updateTarget: (id: string, patch: UpdateTargetPatch) =>
+    invoke<Target>("update_target", { id, patch }),
+  addAgentTarget: (req: AddAgentTargetRequest) =>
+    invoke<Target>("add_agent_target", { req }),
+  unmountAll: () => invoke<void>("unmount_all"),
+  /** 清空数据：卸载全部挂载、删除资产与目标、恢复默认设置 */
+  resetData: () => invoke<void>("reset_data"),
   listMounts: () => invoke<Mount[]>("list_mounts"),
   mount: (req: MountRequest) => invoke<Mount>("mount", { req }),
   unmount: (mountId: string) => invoke<void>("unmount", { mountId }),
@@ -63,6 +74,8 @@ export const ipc = {
   getProbeScript: () => invoke<string>("get_probe_script"),
   /** 在文件管理器中显示（PRD 7.3：plugin-opener 的 revealItemInDir） */
   revealInDir: (path: string) => revealItemInDir(path),
+  /** 选择目录（PRD 7.3：plugin-dialog 的 open({ directory: true })）；取消时返回 null */
+  pickDirectory: () => open({ directory: true, multiple: false }),
 }
 
 /** 把 invoke 的拒绝值规整为 IpcError。后端约定抛出 { id, params } */

@@ -79,3 +79,18 @@ export interface AddProjectRequest {
   conventions: Convention[]
   gitExclude: boolean
 }
+
+/** 修改目标（P3 契约扩展，2026-10-29 用户确认）：切换链接方式；项目路径失效时改路径（F-305） */
+export interface UpdateTargetPatch {
+  linkMode?: LinkMode
+  path?: string
+}
+
+/** 启用未检测到的 Agent，或添加自定义全局目录（F-301 AC，P3 契约扩展）。path 缺省时用 4.5 的约定位置，目录不存在则创建 */
+export interface AddAgentTargetRequest {
+  envId: EnvId
+  agent: AgentId
+  path?: string
+  /** 仅 custom 使用 */
+  label?: string
+}

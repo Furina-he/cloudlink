@@ -5,7 +5,9 @@ import {
   formatPorts,
   hostnameError,
   parsePorts,
+  projectFormSchema,
   serviceDraftSchema,
+  settingsNumbersSchema,
   slugSchema,
   uniqueSlugSchema,
 } from "./schemas"
@@ -131,5 +133,21 @@ describe("手动添加服务", () => {
 
   it("端口格式不对时报错", () => {
     expect(err(serviceDraftSchema([]).safeParse({ ...draft, ports: "8080" }))).toBe("ports-format")
+  })
+})
+
+describe("P3 表单校验", () => {
+  it("添加项目至少要一个约定目录", () => {
+    const r = projectFormSchema.safeParse({ label: "infra-tools", conventions: [], gitExclude: true })
+    expect(r.success).toBe(false)
+    expect(r.error?.issues[0].message).toBe("convention-required")
+    expect(projectFormSchema.safeParse({ label: "x", conventions: ["claude"], gitExclude: false }).success).toBe(true)
+  })
+
+  it("正文行数上限和探测超时有合理范围", () => {
+    expect(settingsNumbersSchema.safeParse({ bodyLineLimit: 60, probeTimeoutSec: 30 }).success).toBe(true)
+    expect(settingsNumbersSchema.safeParse({ bodyLineLimit: 5, probeTimeoutSec: 30 }).error?.issues[0].message).toBe("body-line-limit")
+    expect(settingsNumbersSchema.safeParse({ bodyLineLimit: 60, probeTimeoutSec: 3600 }).error?.issues[0].message).toBe("probe-timeout")
+    expect(settingsNumbersSchema.safeParse({ bodyLineLimit: Number.NaN, probeTimeoutSec: 30 }).success).toBe(false)
   })
 })

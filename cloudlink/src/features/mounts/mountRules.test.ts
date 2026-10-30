@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import { copy } from "@/lib/copy"
 import * as fx from "@/mocks/fixtures"
-import { effectHints, mountChecks } from "./mountRules"
+import { effectHints, mountChecks, prodGlobalMounts } from "./mountRules"
 
 const asset = (id: string) => fx.assets.find((a) => a.id === id)!
 const target = (id: string) => fx.targets.find((t) => t.id === id)!
@@ -27,5 +27,13 @@ describe("挂载后的生效提示（F-303 AC4）", () => {
     expect(effectHints(target("tgt_agents_wsl"))).toEqual([copy.mountFlow.hintCodex])
     expect(effectHints(target("tgt_openpet"))).toEqual([copy.mountFlow.hintClaude, copy.mountFlow.hintCodex])
     expect(effectHints(target("tgt_blog"))).toEqual([copy.mountFlow.hintClaude])
+  })
+})
+
+describe("生产资产挂全局的常驻提示（PRD 6.6）", () => {
+  it("只统计生产资产挂在全局目标上的挂载", () => {
+    const list = prodGlobalMounts(fx.mounts, fx.targets, (id) => fx.assets.find((a) => `skl_${a.id.slice(4)}` === id))
+    // hk-edge 与 sg-db 都挂在 Claude Code 全局；dev-box 是开发资产，不算
+    expect(list.map((m) => m.id).sort()).toEqual(["mnt_hk_cc", "mnt_sg_cc"])
   })
 })

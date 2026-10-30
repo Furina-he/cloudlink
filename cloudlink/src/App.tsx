@@ -84,6 +84,22 @@ function LoadErrorAlert() {
   )
 }
 
+/** 健康检查（F-305）：窗口重新聚焦时检查全部链接，30 秒内最多一次；启动时的检查随首次加载完成 */
+const RECHECK_MS = 30_000
+
+function useRecheckOnFocus() {
+  useEffect(() => {
+    let last = Date.now()
+    const onFocus = () => {
+      if (Date.now() - last < RECHECK_MS || useMountStore.getState().status !== "ready") return
+      last = Date.now()
+      void useMountStore.getState().checkAll().catch(() => {})
+    }
+    window.addEventListener("focus", onFocus)
+    return () => window.removeEventListener("focus", onFocus)
+  }, [])
+}
+
 function useGlobalHotkeys() {
   const lens = useUIStore((s) => s.lens)
   useHotkeys(
@@ -112,6 +128,7 @@ export function App() {
   const View = VIEW_COMPONENT[view]
 
   useGlobalHotkeys()
+  useRecheckOnFocus()
   useEffect(() => {
     loadAll()
   }, [])

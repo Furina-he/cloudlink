@@ -188,3 +188,32 @@ export type ValidationKey =
   | "slug-same"
   | "hostname-format"
   | "hostname-ip"
+  | "convention-required"
+  | "dir-required"
+  | "body-line-limit"
+  | "probe-timeout"
+
+// ---------- P3：添加项目、自定义全局目录、设置 ----------
+
+/** 添加项目（PRD 6.10）：至少写入一个约定目录 */
+export const projectFormSchema = z.object({
+  label: z.string().trim().min(1, "name-required"),
+  conventions: z.array(z.enum(["claude", "agents"])).min(1, "convention-required"),
+  gitExclude: z.boolean(),
+})
+export type ProjectFormValues = z.infer<typeof projectFormSchema>
+
+/** 自定义全局目录（F-301 AC、PRD 6.9） */
+export const customTargetSchema = z.object({
+  label: z.string().trim().min(1, "name-required"),
+  path: z.string().min(1, "dir-required"),
+  envId: z.string().min(1),
+})
+export type CustomTargetValues = z.infer<typeof customTargetSchema>
+
+/** 设置 / 编译、探测（PRD 6.9）：在合理范围内的整数 */
+export const settingsNumbersSchema = z.object({
+  bodyLineLimit: z.number({ error: "body-line-limit" }).int("body-line-limit").min(20, "body-line-limit").max(500, "body-line-limit"),
+  probeTimeoutSec: z.number({ error: "probe-timeout" }).int("probe-timeout").min(10, "probe-timeout").max(120, "probe-timeout"),
+})
+export type SettingsNumbers = z.infer<typeof settingsNumbersSchema>

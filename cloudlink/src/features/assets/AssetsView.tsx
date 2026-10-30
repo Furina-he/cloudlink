@@ -18,7 +18,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react"
 import { createPortal } from "react-dom"
 import {
@@ -35,7 +34,7 @@ import { useShallow } from "zustand/react/shallow"
 
 import type { Asset, IpcError, Mode } from "@/bindings"
 import { Keys } from "@/components/app/Keys"
-import { useScrollRestore, useViewTitleFocus } from "@/components/app/ViewShell"
+import { useScrollRestore, useToolbarSlot, useViewTitleFocus } from "@/components/app/ViewShell"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -98,13 +97,6 @@ const PREVIEW_MIN_WINDOW = 1200
 
 /** 已处理过的「展开探测面板」请求；放在模块里，视图重新挂载后也不会重复处理旧请求 */
 let handledProbePanelRequest = 0
-
-const noopSubscribe = () => () => {}
-
-/** 工具栏里给视图操作预留的位置（AppToolbar 的 #view-actions），用 portal 渲染进去 */
-function useToolbarSlot() {
-  return useSyncExternalStore(noopSubscribe, () => document.getElementById("view-actions"))
-}
 
 /** 资产视图（PRD 6.4）：没有资产时是首次启动的空状态，否则是三栏工作区 */
 export function AssetsView({ focusTitle }: { focusTitle: boolean }) {

@@ -2,7 +2,7 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
 
-import type { AgentId, AssetType, EnvTag } from "@/bindings"
+import type { AgentId, AssetType, EnvId, EnvTag } from "@/bindings"
 import type { ViewId } from "@/lib/copy"
 
 export const VIEWS: ViewId[] = ["assets", "skills", "mounts", "activity", "settings"]
@@ -22,6 +22,10 @@ export interface Lens {
   targetId: string
   agent: AgentId
 }
+
+/** Skills 视图的状态筛选与排序（PRD 6.7：不做列头排序，用「排序」下拉菜单） */
+export type SkillStateFilter = "all" | "ok" | "warning" | "blocked"
+export type SkillSort = "slug" | "mounts" | "tokens"
 
 export type SettingsSection =
   | "general"
@@ -70,7 +74,14 @@ interface UIState {
   probePanelRequest: number
   importOpen: boolean
   mountsMode: "board" | "matrix"
+  /** 挂载视图的运行环境筛选 */
+  mountsEnv: EnvId | "all"
+  /** 矩阵只显示「生产资产挂在全局目标上」的挂载（常驻提示的「查看」） */
+  matrixProdGlobal: boolean
   lens: Lens | null
+  skillQuery: string
+  skillState: SkillStateFilter
+  skillSort: SkillSort
   commandOpen: boolean
   settingsSection: SettingsSection
   /** 各视图主滚动区的位置，切回视图时恢复（PRD 6.3） */
@@ -89,7 +100,12 @@ interface UIState {
   setAssetTab: (tab: AssetTab) => void
   setImportOpen: (open: boolean) => void
   setMountsMode: (mode: "board" | "matrix") => void
+  setMountsEnv: (env: EnvId | "all") => void
+  setMatrixProdGlobal: (on: boolean) => void
   setLens: (lens: Lens | null) => void
+  setSkillQuery: (query: string) => void
+  setSkillState: (state: SkillStateFilter) => void
+  setSkillSort: (sort: SkillSort) => void
   setCommandOpen: (open: boolean) => void
   setSettingsSection: (section: SettingsSection) => void
   saveScroll: (view: ViewId, top: number) => void
@@ -111,7 +127,12 @@ export const useUIStore = create<UIState>()(
       probePanelRequest: 0,
       importOpen: false,
       mountsMode: "board",
+      mountsEnv: "all",
+      matrixProdGlobal: false,
       lens: null,
+      skillQuery: "",
+      skillState: "all",
+      skillSort: "slug",
       commandOpen: false,
       settingsSection: "general",
       scrollByView: {},
@@ -153,7 +174,12 @@ export const useUIStore = create<UIState>()(
       setAssetTab: (assetTab) => set({ assetTab }),
       setImportOpen: (importOpen) => set({ importOpen }),
       setMountsMode: (mountsMode) => set({ mountsMode }),
+      setMountsEnv: (mountsEnv) => set({ mountsEnv }),
+      setMatrixProdGlobal: (matrixProdGlobal) => set({ matrixProdGlobal }),
       setLens: (lens) => set({ lens }),
+      setSkillQuery: (skillQuery) => set({ skillQuery }),
+      setSkillState: (skillState) => set({ skillState }),
+      setSkillSort: (skillSort) => set({ skillSort }),
       setCommandOpen: (commandOpen) => set({ commandOpen }),
       setSettingsSection: (settingsSection) => set({ settingsSection }),
       saveScroll: (view, top) =>

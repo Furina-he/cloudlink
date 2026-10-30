@@ -5,7 +5,9 @@ import { mockIPC } from "@tauri-apps/api/mocks"
 import type {
   ActivityItem,
   ActivityQuery,
+  AddAgentTargetRequest,
   AddProjectRequest,
+  AgentId,
   Asset,
   AssetInput,
   CompilePreview,
@@ -22,6 +24,7 @@ import type {
   Settings,
   SkillStatus,
   Target,
+  UpdateTargetPatch,
 } from "@/bindings"
 import { AGENTS, CONVENTION_DIRS } from "@/lib/agents"
 import * as fx from "./fixtures"
@@ -510,7 +513,8 @@ function findModeConflict(target: Target, skillId: string, mode: Mode) {
     if (!convention || !project.conventions?.includes(convention)) continue
     const existing = db.mounts.find((m) => m.targetId === other.id && m.skillId === skillId)
     if (existing && existing.mode !== mode) {
-      return { globalMode: global === target ? mode : existing.mode, agent: global.agent }
+      // where：已有的那份挂在哪一侧
+      return { existingMode: existing.mode, where: other.kind === "agent-global" ? "global" : "project", other: other.label, agent: global.agent }
     }
   }
   return null
@@ -524,12 +528,7 @@ async function mount(req: MountRequest) {
   }
   const conflict = findModeConflict(target, req.skillId, req.mode)
   if (conflict) {
-    fail("mode-conflict", {
-      slug: asset.slug,
-      agent: conflict.agent,
-      globalMode: conflict.globalMode,
-      mode: req.mode,
-    })
+    fail("mode-conflict", { slug: asset.slug, mode: req.mode, ...conflict })
   }
   const aliasOk = asset.connection.definedIn.includes(target.envId)
   if (!req.confirmed) {
@@ -566,7 +565,7 @@ function setMountMode(mountId: string, mode: Mode) {
   const m = mountById(mountId)
   const conflict = findModeConflict(targetById(m.targetId), m.skillId, mode)
   if (conflict) {
-    fail("mode-conflict", { slug: assetOfSkill(m.skillId).slug, agent: conflict.agent, globalMode: conflict.globalMode, mode })
+    fail("mode-conflict", { slug: assetOfSkill(m.skillId).slug, mode, ...conflict })
   }
   m.mode = mode
   m.checkedAt = now()
@@ -585,7 +584,11 @@ function repairMount(mountId: string) {
   return m
 }
 
+const samePath = (a: string, b: string) =>
+  a.replace(/[\\/]+$/, "").toLowerCase() === b.replace(/[\\/]+$/, "").toLowerCase()
+
 function addProjectTarget(req: AddProjectRequest) {
+  if (db.targets.some((t) => samePath(t.path, req.path))) fail("target-exists", { path: req.path })
   const envId = /^\\\\wsl(\$|\.localhost)\\([^\\]+)/i.exec(req.path)
   const t: Target = {
     id: newId("tgt"),
@@ -599,6 +602,68 @@ function addProjectTarget(req: AddProjectRequest) {
   }
   db.targets.push(t)
   return t
+}
+
+/** 改链接方式或项目路径后，按新设置重建这个目标上的全部挂载 */
+function updateTarget(id: string, patch: UpdateTargetPatch) {
+  const t = targetById(id)
+  const path = patch.path
+  if (path && db.targets.some((x) => x.id !== id && samePath(x.path, path))) fail("target-exists", { path })
+  Object.assign(t, patch)
+  db.mounts.forEach((m) => {
+    if (m.targetId !== id) return
+    m.links = linksFor(t, assetOfSkill(m.skillId).slug)
+    if (m.status === "broken" || m.status === "stale-copy") m.status = "ok"
+    m.checkedAt = now()
+  })
+  emitMounts()
+  return t
+}
+
+/** 夹具里全局目标的名称写法（真实后端也按这个格式命名） */
+const AGENT_NAME: Partial<Record<AgentId, string>> = {
+  "claude-code": "Claude Code",
+  universal: "通用 .agents",
+  cursor: "Cursor",
+  "gemini-cli": "Gemini CLI",
+  copilot: "GitHub Copilot",
+  opencode: "OpenCode",
+}
+
+function addAgentTarget(req: AddAgentTargetRequest) {
+  const env = db.environments.find((e) => e.id === req.envId) ?? fail("not-found")
+  const dir = AGENTS[req.agent].globalDir
+  const sep = req.envId === "windows" ? "\\" : "/"
+  const path = req.path ?? (dir ? [env.home, ...dir.split("/")].join(sep) : fail("not-found"))
+  if (db.targets.some((t) => samePath(t.path, path))) fail("target-exists", { path })
+  const t: Target = {
+    id: newId("tgt"),
+    kind: "agent-global",
+    envId: req.envId,
+    label:
+      req.agent === "custom"
+        ? (req.label ?? path.split(/[\\/]/).filter(Boolean).pop() ?? path)
+        : `${AGENT_NAME[req.agent]} - 全局`,
+    agent: req.agent,
+    path,
+    linkMode: "auto",
+  }
+  db.targets.push(t)
+  return t
+}
+
+function unmountAll() {
+  for (const m of [...db.mounts]) unmount(m.id)
+}
+
+/** 清空数据：卸载全部挂载，删除资产和项目目标，恢复默认设置；检测到的全局目标保留 */
+function resetData() {
+  unmountAll()
+  db.assets = []
+  db.targets = db.targets.filter((t) => t.kind === "agent-global" && t.agent !== "custom")
+  db.activity = []
+  db.settings = structuredClone(fx.settings)
+  db.hosts.hosts.forEach((h) => (h.imported = false))
 }
 
 function listActivity(q: ActivityQuery) {
@@ -638,6 +703,10 @@ const handlers: Record<string, (args: Args) => unknown> = {
     existingConventions: ["claude"],
   }),
   add_project_target: (a) => addProjectTarget(a.req as AddProjectRequest),
+  update_target: (a) => updateTarget(a.id as string, a.patch as UpdateTargetPatch),
+  add_agent_target: (a) => addAgentTarget(a.req as AddAgentTargetRequest),
+  unmount_all: () => unmountAll(),
+  reset_data: () => resetData(),
   remove_target: (a) => {
     db.targets = db.targets.filter((t) => t.id !== a.id)
     db.mounts = db.mounts.filter((m) => m.targetId !== a.id)

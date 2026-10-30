@@ -1,8 +1,22 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode, type RefObject } from "react"
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useSyncExternalStore,
+  type ReactNode,
+  type RefObject,
+} from "react"
 
 import { ScrollArea } from "@/components/ui/scroll-area"
 import type { ViewId } from "@/lib/copy"
 import { useUIStore } from "@/stores/ui"
+
+const noopSubscribe = () => () => {}
+
+/** 工具栏里给视图操作预留的位置（AppToolbar 的 #view-actions），用 portal 渲染进去 */
+export function useToolbarSlot() {
+  return useSyncExternalStore(noopSubscribe, () => document.getElementById("view-actions"))
+}
 
 /** 由视图切换触发的挂载才把焦点移到 h1（PRD 6.14），首次启动不抢焦点 */
 export function useViewTitleFocus(ref: RefObject<HTMLElement | null>, focusTitle: boolean) {

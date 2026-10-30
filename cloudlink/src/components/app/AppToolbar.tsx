@@ -52,7 +52,7 @@ export function AppToolbar() {
         </TooltipContent>
       </Tooltip>
       <Separator orientation="vertical" className="data-vertical:h-4 data-vertical:self-center" />
-      <Breadcrumb aria-label={copy.shell.breadcrumb} className="min-w-0">
+      <Breadcrumb aria-label={copy.shell.breadcrumb} className="min-w-0 whitespace-nowrap">
         <BreadcrumbList className="flex-nowrap">
           <BreadcrumbItem>
             {current ? copy.nav[view] : <BreadcrumbPage>{copy.nav[view]}</BreadcrumbPage>}
@@ -70,9 +70,10 @@ export function AppToolbar() {
       <div className="flex-1" />
       {/* 当前视图的操作区：各视图用 createPortal 渲染到这里 */}
       <div id="view-actions" className="flex shrink-0 items-center gap-1" />
-      <Button variant="outline" size="sm" onClick={() => setCommandOpen(true)}>
+      <Button variant="outline" size="sm" className="shrink-0" onClick={() => setCommandOpen(true)}>
         <CommandIcon data-icon="inline-start" />
-        {copy.shell.openCommand}
+        {/* 窄窗口下工具栏放不下，只留图标和快捷键 */}
+        <span className="max-xl:sr-only">{copy.shell.openCommand}</span>
         <Keys keys={KEY_HINT.command} />
       </Button>
     </header>

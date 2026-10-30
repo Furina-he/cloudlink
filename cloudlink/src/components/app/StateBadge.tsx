@@ -51,7 +51,7 @@ export function StateBadge({
   )
 }
 
-const MOUNT_STATE: Record<MountStatus, { tone: StateTone; icon: LucideIcon | null }> = {
+export const MOUNT_STATE: Record<MountStatus, { tone: StateTone; icon: LucideIcon | null }> = {
   ok: { tone: "success", icon: CircleCheckIcon },
   pending: { tone: "neutral", icon: null },
   broken: { tone: "danger", icon: Link2OffIcon },

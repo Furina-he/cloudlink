@@ -30,13 +30,14 @@ import {
   CommandShortcut,
 } from "@/components/ui/command"
 import { toast } from "@/components/ui/toast"
-import type { IpcError } from "@/bindings"
+import type { IpcError, Mode } from "@/bindings"
+import { useMountPipeline } from "@/features/mounts/useMountPipeline"
 import { copy, ipcErrorText, type ViewId } from "@/lib/copy"
 import { KEY_HINT } from "@/lib/hotkeys"
 import { useAssetStore } from "@/stores/assets"
 import { useMountStore } from "@/stores/mounts"
 import { useProbeStore } from "@/stores/probe"
-import { useSkillStore } from "@/stores/skills"
+import { selectSkillOfAsset, useSkillStore } from "@/stores/skills"
 import { useTargetStore } from "@/stores/targets"
 import { VIEWS, useUIStore } from "@/stores/ui"
 
@@ -56,6 +57,8 @@ export function CommandMenu() {
   const setOpen = useUIStore((s) => s.setCommandOpen)
   const [page, setPage] = useState<Page>("root")
   const [search, setSearch] = useState("")
+  // 「挂载当前 Skill 到…」与看板、矩阵走同一条挂载管线；面板关闭后确认框仍要显示，所以放在 CommandDialog 外面
+  const { requestMount, dialog } = useMountPipeline()
 
   const onOpenChange = (next: boolean) => {
     setOpen(next)
@@ -70,50 +73,54 @@ export function CommandMenu() {
   }
 
   return (
-    <CommandDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title={copy.command.title}
-      description={copy.command.description}
-    >
-      <Command
-        onKeyDown={(e) => {
-          // 二级页里，空输入时按退格返回
-          if (page !== "root" && e.key === "Backspace" && !search) {
-            e.preventDefault()
-            goPage("root")
-          }
-        }}
+    <>
+      <CommandDialog
+        open={open}
+        onOpenChange={onOpenChange}
+        title={copy.command.title}
+        description={copy.command.description}
       >
-        <CommandInput
-          placeholder={
-            page === "mount"
-              ? copy.command.mountPageTitle
-              : copy.command.placeholder
-          }
-          value={search}
-          onValueChange={setSearch}
-        />
-        <CommandList>
-          <CommandEmpty>{copy.command.empty}</CommandEmpty>
-          {page === "root" && (
-            <RootPage close={() => onOpenChange(false)} goPage={goPage} />
-          )}
-          {page === "mount" && (
-            <MountPage
-              close={() => onOpenChange(false)}
-              back={() => goPage("root")}
-            />
-          )}
-          {page === "theme" && (
-            <ThemePage
-              close={() => onOpenChange(false)}
-              back={() => goPage("root")}
-            />
-          )}
-        </CommandList>
-      </Command>
-    </CommandDialog>
+        <Command
+          onKeyDown={(e) => {
+            // 二级页里，空输入时按退格返回
+            if (page !== "root" && e.key === "Backspace" && !search) {
+              e.preventDefault()
+              goPage("root")
+            }
+          }}
+        >
+          <CommandInput
+            placeholder={
+              page === "mount"
+                ? copy.command.mountPageTitle
+                : copy.command.placeholder
+            }
+            value={search}
+            onValueChange={setSearch}
+          />
+          <CommandList>
+            <CommandEmpty>{copy.command.empty}</CommandEmpty>
+            {page === "root" && (
+              <RootPage close={() => onOpenChange(false)} goPage={goPage} />
+            )}
+            {page === "mount" && (
+              <MountPage
+                close={() => onOpenChange(false)}
+                back={() => goPage("root")}
+                requestMount={requestMount}
+              />
+            )}
+            {page === "theme" && (
+              <ThemePage
+                close={() => onOpenChange(false)}
+                back={() => goPage("root")}
+              />
+            )}
+          </CommandList>
+        </Command>
+      </CommandDialog>
+      {dialog}
+    </>
   )
 }
 
@@ -137,14 +144,20 @@ function RootPage({
       .getState()
       .start(selectedAssetId)
       .then(() => ui().requestProbePanel())
-      .catch((e: IpcError) => toast.add({ title: ipcErrorText(e.id, e.params), type: "error" }))
+      .catch((e: IpcError) =>
+        toast.add({ title: ipcErrorText(e.id, e.params), type: "error" })
+      )
   })
   const probeAll = run(() => {
     void useProbeStore
       .getState()
       .startAll()
       .then((n) =>
-        toast.add({ title: n ? copy.probeToast.startedAll(n) : copy.probeToast.nothingToProbe })
+        toast.add({
+          title: n
+            ? copy.probeToast.startedAll(n)
+            : copy.probeToast.nothingToProbe,
+        })
       )
   })
 
@@ -189,11 +202,17 @@ function RootPage({
         </CommandGroup>
       )}
       <CommandGroup heading={copy.command.groups.actions}>
-        <CommandItem value={copy.command.actions.newAsset} onSelect={run(() => ui().startNewAsset())}>
+        <CommandItem
+          value={copy.command.actions.newAsset}
+          onSelect={run(() => ui().startNewAsset())}
+        >
           <PlusIcon />
           {copy.command.actions.newAsset}
         </CommandItem>
-        <CommandItem value={copy.command.actions.importSsh} onSelect={run(() => ui().setImportOpen(true))}>
+        <CommandItem
+          value={copy.command.actions.importSsh}
+          onSelect={run(() => ui().setImportOpen(true))}
+        >
           <FileInputIcon />
           {copy.command.actions.importSsh}
         </CommandItem>
@@ -258,33 +277,34 @@ function BackItem({ back }: { back: () => void }) {
   )
 }
 
-function MountPage({ close, back }: { close: () => void; back: () => void }) {
+function MountPage({
+  close,
+  back,
+  requestMount,
+}: {
+  close: () => void
+  back: () => void
+  requestMount: (req: {
+    skillId: string
+    targetId: string
+    mode: Mode
+  }) => Promise<void>
+}) {
   const targets = useTargetStore((s) => s.targets)
   const selectedAssetId = useUIStore((s) => s.selectedAssetId)
   const asset = useAssetStore((s) =>
     selectedAssetId ? s.byId[selectedAssetId] : undefined
   )
   const skill = useSkillStore((s) =>
-    Object.values(s.statusById).find((x) => x.assetId === selectedAssetId)
+    selectSkillOfAsset(s.statusById, selectedAssetId)
   )
+  const mountsById = useMountStore((s) => s.byId)
   if (!asset || !skill) return null
-
-  const mountTo = (targetId: string) => {
-    close()
-    useMountStore
-      .getState()
-      .mount({
-        skillId: skill.id,
-        targetId,
-        mode: asset.guardrails.defaultMode,
-      })
-      .catch((e: IpcError) => {
-        // 需要二次确认的情况，确认对话框在 P3 随挂载视图提供；这里先如实提示原因
-        if (e.id.startsWith("needs-confirm")) {
-          toast.add({ title: ipcErrorText(e.id, e.params), type: "warning" })
-        }
-      })
-  }
+  const mounted = new Set(
+    Object.values(mountsById)
+      .filter((m) => m.skillId === skill.id)
+      .map((m) => m.targetId)
+  )
 
   return (
     <CommandGroup heading={`${copy.command.mountPageTitle} · ${asset.slug}`}>
@@ -293,12 +313,22 @@ function MountPage({ close, back }: { close: () => void; back: () => void }) {
         <CommandItem
           key={t.id}
           value={`${t.label} ${t.path}`}
-          onSelect={() => mountTo(t.id)}
+          disabled={mounted.has(t.id)}
+          onSelect={() => {
+            close()
+            void requestMount({
+              skillId: skill.id,
+              targetId: t.id,
+              mode: asset.guardrails.defaultMode,
+            })
+          }}
         >
           {t.kind === "agent-global" ? <BotIcon /> : <FolderGit2Icon />}
           <span className="truncate">{t.label}</span>
           <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-            {copy.env.long(t.envId)}
+            {mounted.has(t.id)
+              ? copy.mountsTab.already
+              : copy.env.long(t.envId)}
           </span>
         </CommandItem>
       ))}

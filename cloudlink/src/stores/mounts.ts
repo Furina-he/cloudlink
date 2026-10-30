@@ -21,6 +21,8 @@ interface MountState {
   unmount: (mountId: string) => Promise<void>
   setMode: (mountId: string, mode: Mode) => Promise<void>
   checkAll: () => Promise<Mount[]>
+  /** 设置 / 危险操作：卸载全部挂载 */
+  unmountAll: () => Promise<void>
   repair: (mountId: string) => Promise<void>
   _onChanged: (mounts: Mount[]) => void
   _dropTarget: (targetId: string) => void
@@ -121,6 +123,17 @@ export const useMountStore = create<MountState>()((set, get) => ({
       toastError(e)
       throw e
     }
+  },
+
+  unmountAll: async () => {
+    try {
+      await ipc.unmountAll()
+    } catch (err) {
+      const e = toIpcError(err)
+      toastError(e)
+      throw e
+    }
+    set({ byId: {} })
   },
 
   repair: async (mountId) => {
