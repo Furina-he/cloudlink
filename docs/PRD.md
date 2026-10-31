@@ -1,6 +1,7 @@
-# 产品需求文档（PRD）v2：CloudLink —— 面向 CLI Agent 的云资产上下文与 Skill 分发器
+# 产品需求文档（PRD）v3：CloudLink —— 管好服务器信息，交给 CLI Agent 运维
 
 > 本文是对 `docs/archive/prd-v1.md`（v1 草案，原名 CloudSkill Hub）的修订版，修订原因逐条记录在 `docs/PRD-review.md`。
+> **v3（2026-10-30 起）是一次方向调整**：取消项目级挂载，只分发到 Agent 的全局目录；界面改为以服务器为中心（参考 Termius）；服务器信息可以在界面里直接录入并测试连接。2026-10-31 又收敛了一轮：全部服务器编译成一个总 Skill；Claude Code 上用护栏把档位落到实处，并记录 Agent 执行过的命令；Agent 可以把学到的东西回写成笔记；分发一律用受管复制；v0.1 只支持 Claude Code 和读取 `~/.agents/skills` 的 Agent。变更清单见附录 C，决策见 11.1。
 > 配套文件：`PRODUCT.md`（产品上下文）和 `DESIGN.md`（视觉系统，令牌以它为准）。
 > 文中的库版本、Agent 目录、规范约束和各 Agent 对链接的支持情况，都在 2026-10-27 对照官方文档、changelog 和 GitHub issue 核实过，来源列在 `docs/PRD-review.md` 第三章。
 
@@ -8,9 +9,9 @@
 | :--- | :--- |
 | 产品名称 | CloudLink（2026-10-27 确定；正式发布前要做商标检索，见 11.2） |
 | 产品形态 | 桌面客户端（Tauri v2）。**v0.1 只支持 Windows 10/11（原生 + WSL2）**；macOS 在 v0.5 支持，Linux 在 v1.0 支持 |
-| 核心定位 | 在结构化 UI 里维护服务器等云资产信息，编译成符合 Agent Skills 规范的 Skill，再按「项目 × Agent」的粒度精确挂载 |
-| 兼容生态 | Claude Code（`.claude/skills`）；读取 `.agents/skills` 的 Agent，包括 Codex CLI、Cursor、Gemini CLI、GitHub Copilot、OpenCode 等；也支持用户自定义目录 |
-| 文档版本 | v2.1（2026-10-27，已并入用户的六项决策，见第十一章） |
+| 核心定位 | 在一个简单的服务器管理界面里录入、测试、探测服务器信息，编译成一个符合 Agent Skills 规范的总 Skill，分发给本机 Agent 的全局 skills 目录；在 Claude Code 上用护栏拦下越界的命令，并记录 Agent 在服务器上执行过什么 |
+| 兼容生态 | v0.1：Claude Code（`~/.claude/skills`），以及 Codex CLI 等读取 `~/.agents/skills` 的 Agent；其他 Agent 可以添加为自定义目录。护栏只支持 Claude Code |
+| 文档版本 | v3.0（2026-10-30 方向调整，2026-10-31 收敛，见附录 C；v2.1 为 2026-10-27 版） |
 | 覆盖范围 | v0.1（MVP）到 v1.0。优先级与版本一一对应：P0 = v0.1，P1 = v0.5，P2 = v1.0 |
 
 ---
@@ -21,8 +22,10 @@
 
 1. **云端上下文断层。** Agent 很会执行 Bash 和 SSH，但它不知道开发者手上有哪些机器、别名叫什么、服务跑在哪个目录、端口怎么映射。每开一次对话，人都得重新交代一遍。
 2. **手工维护成本高。** 服务器上新开容器、改了端口或绑了新域名之后，散落在各个 Markdown 里的说明很容易漏改。Agent 拿到过期信息，就会执行错误的命令。
-3. **全局上下文污染与串台。** 如果把所有服务器信息都塞进全局的 `CLAUDE.md` 或全局 Skill 目录，每次会话都要额外付出常驻 Token。更危险的是，开发 A 项目时，Agent 可能连上 B 项目的生产机。
+3. **全局上下文污染。** 如果把所有服务器信息都塞进全局的 `CLAUDE.md`，每次会话都要为全文付出常驻 Token。Skill 的渐进式加载能解决这个问题：常驻的只有名称和描述，正文只在任务涉及服务器时才加载，每台服务器的详情还可以拆成按需读取的参考文件。
+   - v2 曾把「开发 A 项目时 Agent 连上 B 项目的生产机」作为痛点，并为此设计了项目级挂载。v3 不再做项目级隔离，原因是它只隔离「Agent 知道什么」，不隔离「Agent 能连什么」：`~/.ssh/config` 本身是全局的。真正降低风险的手段是档位（只读巡检）、红线，以及需要硬隔离时使用低权限 SSH 用户。
 4. **敏感信息外泄。** 凭据（密码、私钥、API Secret）绝对不能进入模型上下文。IP、端口、内部路径这类拓扑信息虽然不算凭据，也应该只披露最少必要的部分。
+5. **Agent 上手干活时没有边界，也不留记录。** 让 Agent 到生产机上排查或操作时，「只读」「这个容器不能停」全靠提示词，对话一长就可能被忘掉；在跳过权限确认的模式下，危险命令会直接执行。事后也查不到 Agent 在哪台机器上执行过什么。Agent 自己摸清的部署方式和踩过的坑，会话一结束就丢了，下次从头再摸。
 
 ### 1.2 目标用户与场景（用户画像已于 2026-10-27 确认）
 
@@ -35,50 +38,65 @@
 
 | 编号 | 场景 | 用户要做的事 |
 | :--- | :--- | :--- |
-| S1 | 首次配置 | 检测环境 → 导入 ssh config → 探测 → 挂载到第一个项目 |
-| S2 | 新开一台服务器 | 导入或新建资产，然后探测 |
-| S3 | 服务器有变更 | 重新探测，审阅差异，应用变更 |
-| S4 | 开始一个新项目 | 添加项目目标，把相关资产挂载进去 |
-| S5 | 线上排查前 | 把该项目的挂载档位切成「只读巡检」 |
-| S6 | 项目被移动或改名 | 发现失效链接，一键修复 |
+| S1 | 首次配置 | 检测 Agent → 录入或导入服务器 → 测试连接 → 打开「分发给 Agent」→ 为 Claude Code 安装护栏 |
+| S2 | 新开一台服务器 | 在界面里录入地址、端口、用户和认证方式，测试连接，保存后自动探测 |
+| S3 | 服务器有变更 | 重新探测，变化自动更新；看一眼更新了什么，不对就撤销 |
+| S4 | 不想让 Agent 知道某台机器 | 关掉这台服务器的「分发给 Agent」 |
+| S5 | 线上排查前 | 把这台服务器设为「只读巡检」；确实要改东西时，临时解锁 30 分钟 |
+| S6 | 副本被外部程序删除或改动（例如 Agent 自动更新） | 健康检查发现问题，一键修复 |
+| S7 | 想知道服务器状况 | 对 Agent 说「巡检一下所有服务器」，Agent 按 Skill 里的巡检清单逐台检查并汇报 |
+| S8 | Agent 摸清了一个部署细节 | Agent 把它记成一条笔记；用户在 CloudLink 里确认后并入服务器信息，下次会话直接可用 |
+| S9 | 事后回看 | 在服务器详情里查看 Agent 在这台机器上执行过的命令，以及哪些被护栏拦下 |
 
 ### 1.3 解决方案
 
-- **结构化录入，加上以事实为源的自动探测。** `~/.ssh/config`（按运行环境分别解析）和只读探测脚本是事实来源。探测结果先以差异的形式交给用户审阅，确认后才合并。
-- **渐进式编译。** 按三层加载口径（常驻元数据、触发后加载的正文、按需读取的参考文件）生成 `SKILL.md` 和 `references/`。编辑时实时显示上下文预算和 Lint 结果。
-- **按「项目 × Agent」挂载。** macOS、Linux 和 WSL 上用符号链接；Windows 原生环境默认用受管复制，每次编译后由软件同步副本。提供「Agent 视角」，让用户一眼看清某个项目里的 Agent 到底能看见哪些服务器。
+- **结构化录入，加上以事实为源的自动探测。** `~/.ssh/config`（按运行环境分别解析）和只读探测脚本是事实来源。探测结果自动更新进服务器信息，用户可以查看本次更新了什么并撤销；疑似注入的值要用户确认后才合并。
+- **界面内录入并验证。** 服务器的地址、端口、用户、认证方式可以直接在界面里填写，并且「测试连接」通过后才能分发，保证 Agent 拿到的是一台确实能连上的机器。CloudLink 把录入的连接写进自己托管的 ssh 配置文件，Agent 照常用 `ssh <别名>` 连接（F-107）。
+- **一个总 Skill。** 全部服务器编译成一个 Skill（`cloudlink-servers`）。`SKILL.md` 是总览：有哪些服务器、各自做什么、彼此什么关系、运维约定和巡检入口；每台服务器的详情是一个按需读取的参考文件。用户没说是哪台机器也能触发，常驻成本只有一条描述。
+- **一键分发。** 每台服务器一个「分发给 Agent」开关，决定它是否列入总 Skill。总 Skill 以受管副本的形式写进本机已启用的 Agent 全局 skills 目录，每次编译后同步。
+- **护栏与记录。** 在 Claude Code 上安装一个 `PreToolUse` hook：只读巡检的服务器只放行巡检类命令，标准运维的服务器拦下明显危险的命令；需要改东西时，在 CloudLink 里临时解锁 30 分钟。同一个 hook 记录 Agent 执行过的每条 ssh 命令。
+- **越用越懂。** Agent 在干活中摸清的部署方式、配置位置和踩过的坑，按 Skill 里的约定写进笔记收件箱，用户确认后并入服务器信息。
+- **CloudLink 关着时 Agent 照常工作。** Skill 是普通文件，护栏是一个独立的小程序。只有修改信息、临时解锁时才需要打开 CloudLink。
 
 ### 1.4 竞品与替代方案
 
 | 方案 | 能做到 | 不足 | 本产品的差异 |
 | :--- | :--- | :--- | :--- |
-| 手写 `CLAUDE.md` / `AGENTS.md` | 零成本 | 全局常驻；没有结构；容易过期；容易写进敏感信息 | 结构化 + 探测；按需加载；项目级隔离 |
+| 手写 `CLAUDE.md` / `AGENTS.md` | 零成本 | 全局常驻；没有结构；容易过期；容易写进敏感信息 | 结构化 + 探测；按需加载；不写凭据 |
 | `npx skills`（Vercel skills CLI，支持 79 种 Agent，用软链接或复制分发），以及它的本地图形界面 SkillDock | 分发 Git 仓库里的静态 Skill，`.agents/skills` 是它的共享目录 | 不生成内容；不维护服务器事实；没有红线和探测 | 生成并维护基础设施事实。与它们共存：遵循同样的目录约定，避免同名冲突 |
 | 1Panel、宝塔等面板，云厂商控制台 | 管理服务器 | 不面向 Agent 上下文 | 不重做面板，只负责编译上下文 |
-| Agent 自带的记忆功能 | 自动记住 | 不可控、不可审计、会跨项目串台 | 显式、可审计、项目级隔离 |
+| Termius 等 SSH 客户端 | 主机管理体验好：主机卡片、分组、标签、右侧详情、测试连接 | 面向人连接服务器，不面向 Agent 上下文 | 借鉴它的主机管理体验；主动作从「连接」换成「分发给 Agent、限定 Agent 能做什么」；不做终端，不保存可供 Agent 使用的密码 |
+| Agent 自带的记忆功能 | 自动记住 | 不可控、不可审计 | 显式、可审计、可随时停止分发 |
+| 让 Agent 自己 ssh 上去摸清服务器，写一份说明 | 零成本，内容贴近现场 | 换会话、换 Agent 时内容不一致；连接信息和凭据容易被写进去；没有护栏和操作记录 | 统一、可审计的服务器信息；凭据不进上下文；拦得住的护栏、操作记录，以及经用户确认的回写 |
 
 ### 1.5 成功指标（MVP）
 
 | 指标 | 目标 | 测量方式 |
 | :--- | :--- | :--- |
-| 首次挂载耗时 | 5 名目标用户中至少 4 人在 5 分钟内完成第一个挂载 | 可用性测试（产品不内置遥测） |
+| 首次分发耗时 | 5 名目标用户中至少 4 人在 5 分钟内完成「录入一台服务器、测试连接通过、分发给 Agent」 | 可用性测试（产品不内置遥测） |
 | 探测成功率 | 在 Ubuntu、Debian、CentOS Stream、Rocky、Alpine 上 ≥ 95% | 自动化测试矩阵（容器内 sshd） |
 | 凭据泄漏 | 密钥扫描对测试样本集的漏放行数为 0 | 单元测试样本集 |
-| 失效检出 | 应用启动或窗口重新聚焦后 2 秒内检出失效链接 | 集成测试 |
+| 失效检出 | 应用启动或窗口重新聚焦后 2 秒内检出缺失或被改动的副本 | 集成测试 |
+| 护栏准确性 | 对护栏样本集：只读服务器上写操作和凭据读取的漏放行数为 0；巡检清单中命令的误拦数为 0 | 单元测试样本集 |
 
 ---
 
 ## 二、产品原则与安全边界
 
-1. **凭据零进入。** Skill 中禁止出现明文密码、私钥内容和云厂商 API Secret。编译前必须做密钥扫描，命中就阻断发布（F-205）。认证完全交给系统 OpenSSH，Skill 里只写 `~/.ssh/config` 的 Host 别名。
-2. **拓扑最小披露。** IP、解析后的 HostName、User、Port 默认不导出。每个字段都有独立的导出开关（F-105）。把生产资产挂到全局目标前必须二次确认。
-3. **红线诚实。** 写在 `SKILL.md` 里的红线是给 Agent 的指令，属于建议性约束，不是技术隔离。界面和编译产物都要如实说明这一点。Claude Code 官方文档也明确写了：权限 deny 规则本身「不是安全边界」，真正的强制隔离要靠沙箱。需要硬隔离时，引导用户使用低权限 SSH 用户（P2 提供辅助）。
-4. **渐进式披露。** 加载口径分三层：常驻（name + description）、触发后加载（`SKILL.md` 正文）、按需读取（`references/*`）。正文行数上限是可配置的 Lint 规则（默认 60 行），不是硬性限制。
+1. **凭据零进入模型上下文。** Skill 中禁止出现明文密码、私钥内容和云厂商 API Secret。编译前必须做密钥扫描，命中就阻断发布（F-205）。Agent 的认证完全交给系统 OpenSSH，Skill 里只写 Host 别名。
+   - 用户在界面里录入的密码只存进系统凭据库（Windows 凭据管理器），不进 SQLite、不进日志、不进 Skill，只供 CloudLink 自己测试连接、探测和安装公钥时使用（F-108）。
+   - 私钥只记录文件路径，不读取、不复制私钥内容（CloudLink 为用户生成的密钥除外，见 F-108）。
+2. **拓扑最小披露。** IP、解析后的 HostName、User、Port 默认不导出。每个字段都有独立的导出开关（F-105）。生产服务器默认使用「只读巡检」档，切换到「标准运维」前必须二次确认。
+3. **红线诚实。** 写在 `SKILL.md` 里的红线是给 Agent 的指令，属于建议性约束，不是技术隔离。Claude Code 上的护栏（F-306）会拦下越界命令，但它只解析命令文本：能防手滑，防不了刻意绕过（例如把命令编码后再执行，或者先上传脚本再运行）。界面和编译产物都要如实说明这一点。Claude Code 官方文档也明确写了：权限 deny 规则本身「不是安全边界」，真正的强制隔离要靠沙箱。需要硬隔离时，引导用户使用低权限 SSH 用户（P2 提供辅助）。
+4. **渐进式披露。** 加载口径分三层：常驻（总 Skill 的 name + description）、触发后加载（`SKILL.md` 正文：总览、关系、档位、规则）、按需读取（`references/*`：每台服务器的详情和巡检清单）。正文行数上限是可配置的 Lint 规则（默认 100 行），不是硬性限制。
 5. **单一数据源。**
    - 数据只存一份，在本地 SQLite。
    - 渲染只有一份实现，即 Rust 编译器，预览和发布都调用它。
    - 类型只有一份来源：Rust 结构体经 ts-rs 自动生成 TypeScript 类型。
-6. **只动自己创建的东西。** 所有编译产物和挂载都带所有权标记。软件绝不覆盖、也绝不删除不是自己创建的文件或目录。
+6. **只动自己创建的东西。** 所有编译产物和分发出去的 Skill 都带所有权标记。软件绝不覆盖、也绝不删除不是自己创建的文件或目录。
+   - ssh 配置：只写 CloudLink 自己的托管文件；在用户的 `~/.ssh/config` 中只加一行 `Include`，并且要先征得同意（F-107）。
+   - `known_hosts`：只在用户核对主机指纹并确认后，由 ssh 自身通过 `StrictHostKeyChecking=accept-new` 写入。
+   - Claude Code 的 `~/.claude/settings.json`：只增删 CloudLink 自己的那一条 hook，要先征得同意，修改前备份（F-306）。
 7. **本地优先，零遥测。** 默认不联网，只有 SSH 探测和用户主动开启的更新检查例外。
 
 ---
@@ -89,42 +107,68 @@
 
 | 概念 | 定义 |
 | :--- | :--- |
-| 运行环境 Environment | Agent 运行、并且 `~/.ssh/config` 在其中生效的系统环境，取值为 `windows`、`wsl:<发行版>`、`macos` 或 `linux`。同一台电脑上可以同时存在多个运行环境 |
-| 资产 Asset | 被描述的云资源。类型为 `vps`（P0），以及 `domain`、`panel`、`storage`（P1） |
-| Skill | 编译单元。每个资产自动对应一个「单资产 Skill」；「业务包」由多个资产组合而成（P1） |
-| 档位 Mode | `read-only`（只读巡检）或 `standard`（标准运维）。每个挂载单独选择档位；每个「Skill × 档位」组合编译成一个变体目录 |
-| 目标 Target | 挂载的位置。`agent-global` 指某个运行环境中某个 Agent 的全局 skills 目录；`project` 指某个运行环境中的一个代码仓库，可以包含一个或多个约定目录 |
-| 挂载 Mount | Skill × 目标 × 档位。一次挂载会生成一到两个链接（项目目标可能同时写入两个约定目录） |
-| 探测 ProbeRun | 一次只读采集。它产出一份差异，由用户确认后才合并进资产 |
+| 运行环境 Environment | Agent 运行、并且 ssh 配置在其中生效的系统环境，取值为 `windows`、`wsl:<发行版>`、`macos` 或 `linux`。同一台电脑上可以同时存在多个运行环境，各有自己的 `~/.ssh/config` 和 Agent 全局目录 |
+| 服务器 Server | 被描述的云资源，界面上统一叫「服务器」（数据模型里仍叫 Asset，类型为 `vps`；`domain`、`panel`、`storage` 留到 v0.5） |
+| 总 Skill | 编译单元。全部列入的服务器编译成一个 Skill，名称固定为 `cloudlink-servers`：`SKILL.md` 是总览，每台服务器的详情是一个参考文件。每个运行环境各编译一份，只包含在该环境里能连上的服务器 |
+| 列入 Inclusion | 一台服务器是否出现在某个运行环境的总 Skill 里。由「服务器的分发开关 × 该环境中是否有这台服务器的连接配置」决定，用户不单独设置 |
+| 档位 Mode | `read-only`（只读巡检）或 `standard`（标准运维）。是服务器的属性，所有 Agent 共用；在 Claude Code 上由护栏执行 |
+| Agent 目标 Target | 某个运行环境中某个 Agent 的全局 skills 目录，例如「Claude Code · Windows」。v3 只有这一种目标，不再有项目目标 |
+| 分发 Delivery | 总 Skill 在某个 Agent 目标中的受管副本，每个已启用的目标一份 |
+| 护栏 Guard | 安装在 Claude Code 中的 `PreToolUse` hook，按服务器的档位放行或拦下 ssh 命令，并把判定过的命令记下来（F-306、F-307） |
+| 临时解锁 | 用户在 CloudLink 中对一台服务器解除护栏 30 分钟，期间照常记录 |
+| Agent 笔记 | Agent 按总 Skill 中的约定写进笔记收件箱的条目，用户确认后才并入服务器信息（F-308） |
+| 连接验证 | 最近一次「测试连接」或探测是否成功。没有通过验证的服务器不能打开分发开关 |
+| 探测 ProbeRun | 一次只读采集。结果自动合并进服务器信息，可以撤销；疑似注入的值要用户确认才合并 |
 
 ### 3.2 关系
 
 ```text
-Environment 1 --- n Target          Asset 1 --- 1 Skill(单资产)       Bundle n --- n Asset (P1)
-Skill 1 --- n Variant(按档位)        Variant 1 --- n Mount n --- 1 Target
-Asset 1 --- n ProbeRun               Mount 1 --- 1..2 Link(实际创建的链接或副本)
+Environment 1 --- n Target（Agent 全局目录）
+Environment 1 --- 1 总 Skill 编译产物 1 --- n Delivery（每个已启用目标一份副本）
+Asset n --- n Environment（Inclusion：是否列入该环境的总 Skill）
+Asset 1 --- n ProbeRun    Asset 1 --- n Operation（护栏记录）    Asset 1 --- n AgentNote
 ```
 
-### 3.3 资产（VPS）数据结构
+### 3.3 服务器（Asset）数据结构
 
 ```jsonc
 {
   "id": "ast_01JB3Q8Z6W",                   // ULID
   "type": "vps",
   "name": "香港轻量反代与边缘节点",
-  "slug": "vps-hk-edge",                    // ^[a-z0-9]+(-[a-z0-9]+)*$，≤64，全局唯一；已挂载后只能通过「重命名迁移」修改
-  "envTag": "prod",                         // prod | staging | dev，驱动风险提示和视觉标识
+  "envTag": "prod",                         // prod | staging | dev，驱动风险提示、默认档位和视觉标识
   "provider": "Tencent Cloud",              // 可选
   "region": "HK",                           // 可选
-  "tags": ["edge", "1panel"],               // 自由标签，不再混入环境和资产类型
+  "tags": ["edge", "1panel"],
   "summary": "承担 api.example.com 与 blog.example.com 的公网反代及后端 API 容器托管",
   "connection": {
-    "sshAlias": "hk-edge",
-    "definedIn": ["wsl:Ubuntu-24.04"],      // 这个别名在哪些运行环境的 ssh config 里存在
+    "source": "managed",                    // managed：在 CloudLink 中录入，写入托管 ssh 配置（F-107）；imported：来自用户自己的 ssh config，CloudLink 只读
+    "sshAlias": "hk-edge",                  // Agent 使用的别名。managed 时默认由名称生成，可改，不能与该环境 ssh config 中已有的 Host 重名
+    "host": "203.0.113.10",                 // 仅 managed：IP 或域名。默认不导出
+    "port": 22,                             // 仅 managed
+    "user": "root",                         // 仅 managed
+    "auth": {                               // 仅 managed（F-108）
+      "method": "key",                      // key：私钥文件 | agent：ssh-agent 中的密钥 | password：密码（存系统凭据库，Agent 不能使用）
+      "identityFile": {                     // 仅 key：按运行环境分别记录路径。WSL 中的私钥必须放在 WSL 文件系统里（ssh 会拒绝权限过宽的私钥）
+        "windows": "C:\\Users\\me\\.ssh\\id_ed25519",
+        "wsl:Ubuntu-24.04": "/home/me/.ssh/id_ed25519"
+      },
+      "generatedByCloudLink": false         // 由「改用密钥登录」生成的密钥为 true，删除服务器时可以一并清理
+    },
+    "proxyJump": null,                      // 仅 managed，可选：另一台服务器的别名
+    "definedIn": ["windows", "wsl:Ubuntu-24.04"],  // 哪些运行环境的 ssh 配置里有这个别名（managed 即托管文件写入了哪些环境）
     "resolved": {                           // 由 `ssh -G` 得到的只读快照，默认不导出
       "hostname": "203.0.113.10", "user": "root", "port": 22, "proxyJump": null,
       "resolvedAt": "2026-10-27T10:30:00Z"
+    },
+    "verified": {                           // 最近一次测试连接或探测的结果；连接字段被修改并保存后清空
+      "ok": true, "at": "2026-10-27T10:30:00Z", "envIds": ["windows", "wsl:Ubuntu-24.04"]
     }
+  },
+  "agent": {
+    "distribute": true,                     // 「分发给 Agent」开关（F-303），打开即列入总 Skill
+    "mode": "read-only",                    // 档位，所有 Agent 共用。新建时：生产为 read-only，其他取设置中的默认档位
+    "unlockedUntil": null                   // 临时解锁的到期时间（F-306 AC2）；为空表示没有解锁
   },
   "facts": {                                // 稳定事实，会进入编译产物
     "os": "Ubuntu 24.04 LTS", "kernel": "6.8.0-45-generic", "arch": "x86_64",
@@ -133,182 +177,227 @@ Asset 1 --- n ProbeRun               Mount 1 --- 1..2 Link(实际创建的链接
   },
   "paths": [                                // 有序；key 唯一
     { "key": "nginx-conf", "label": "OpenResty 站点配置目录", "path": "/opt/1panel/apps/openresty/openresty/conf/conf.d", "source": "manual" },
-    { "key": "compose-root", "label": "Docker Compose 编排目录", "path": "/opt/1panel/docker/compose", "source": "manual" },
-    { "key": "app-data", "label": "业务持久化数据目录", "path": "/data/apps", "source": "manual" }
+    { "key": "compose-root", "label": "Docker Compose 编排目录", "path": "/opt/1panel/docker/compose", "source": "manual" }
   ],
   "services": [                             // 统一建模 docker / systemd；以 kind+name 作为合并键
     {
       "kind": "docker", "name": "openresty", "image": "openresty:1.21",
-      "ports": [ { "hostIp": "0.0.0.0", "hostPort": 80, "containerPort": 80, "proto": "tcp" },
-                 { "hostIp": "0.0.0.0", "hostPort": 443, "containerPort": 443, "proto": "tcp" } ],
-      "role": "主网关与 SSL 终结",            // 人工标注；探测时保留
-      "critical": true,                     // 人工标注；关键服务会在红线和标准档的确认清单中被点名
+      "ports": [ { "hostIp": "0.0.0.0", "hostPort": 443, "containerPort": 443, "proto": "tcp" } ],
+      "role": "主网关与 SSL 终结", "critical": true,
       "source": "probe", "lastSeenAt": "2026-10-27T10:30:00Z", "missing": false
     }
   ],
-  "servedHostnames": ["api.example.com", "blog.example.com"],  // 本机反代承载的站点（与 DNS 记录是两个不同的事实）
+  "servedHostnames": ["api.example.com", "blog.example.com"],
   "listeningPorts": [ { "addr": "0.0.0.0", "port": 22, "proto": "tcp" } ],
   "guardrails": {
-    "defaultMode": "read-only",             // 新建挂载时的默认档位
-    "rules": [                              // 有序，原文逐字渲染，不做改写或合并
+    "rules": [                              // 有序，原文逐字渲染（v3：默认档位移到 agent.mode）
       { "id": "r1", "text": "机器内存仅 2GB，严禁在宿主机直接执行 npm run build 或 cargo build 等高内存编译任务" },
-      { "id": "r2", "text": "修改 OpenResty 配置后必须先执行 docker exec openresty nginx -t，校验通过才允许 reload" },
-      { "id": "r3", "text": "禁止停止或重启 openresty 容器" }
+      { "id": "r2", "text": "修改 OpenResty 配置后必须先执行 docker exec openresty nginx -t，校验通过才允许 reload" }
     ]
   },
-  "export": { "resolvedConnection": false, "listeningPorts": false, "image": true },  // 字段级导出开关
-  "notes": "",                              // 附加说明（Markdown），渲染到 references/notes.md
+  "export": { "resolvedConnection": false, "listeningPorts": false, "image": true },
+  "notes": "",                              // 笔记：用户填写，也接收经用户确认并入的 Agent 笔记（F-308）
   "probe": { "lastRunId": "prb_01JB3R", "lastSuccessAt": "2026-10-27T10:30:00Z", "status": "ok" },
   "createdAt": "2026-10-20T08:00:00Z", "updatedAt": "2026-10-27T10:31:00Z"
 }
 ```
 
-与 v1 相比的关键变化（原因见评审报告 R-11 到 R-13）：
+v3 相对 v2 的变化：
 
-- `port` 和 `user` 不再手填，改为从 `ssh -G` 解析得到的只读快照。
-- 磁盘余量、内存余量这类易变指标不再进入编译产物。
-- `domains` 改名为 `servedHostnames`。DNS 记录由 P1 的 Domain 资产负责，两者不再重复。
-- `ports` 从自由字符串改为结构化字段。
-- 环境改为单独的单选字段 `envTag`，不再混在 `tags` 里。
+- `connection` 增加 `source`、`host`、`port`、`user`、`auth`、`proxyJump`、`verified`。手工录入的服务器（managed）由 CloudLink 写进托管 ssh 配置；导入的服务器（imported）连接信息只读，仍由用户自己的 ssh config 维护。
+- 新增 `agent`（分发开关和档位）。`guardrails.defaultMode` 移除：档位不再是「新建挂载时的默认值」，而是这台服务器唯一的档位。
+- 密码不出现在数据结构里，只在系统凭据库中以服务器 id 为键保存。
+- 去掉 `slug`：编译单元改为总 Skill，每台服务器的详情文件按别名命名（5.3）。`agent` 增加 `unlockedUntil`。
 
-### 3.4 运行环境、目标与挂载
+v2 相对 v1 的变化（原因见评审报告 R-11 到 R-13）仍然有效：易变指标不进入产物；`domains` 改名为 `servedHostnames`；`ports` 结构化；环境改为单选字段 `envTag`。
+
+总 Skill 的全局内容（F-201）不属于任何一台服务器，存在设置里：
+
+```jsonc
+{
+  "relationships": "hk-edge reverse-proxies api.example.com to the API containers on hk-edge; those containers use the PostgreSQL database on sg-db over the private network.",
+  "conventions": [                          // 运维约定，有序，原文逐字渲染
+    { "id": "c1", "text": "Deploy with docker compose in /opt/apps/<name>; never edit containers by hand" },
+    { "id": "c2", "text": "Tell the user before restarting anything on a production server" }
+  ]
+}
+```
+
+### 3.4 运行环境、Agent 目标与分发
 
 ```ts
 type EnvId = "windows" | "macos" | "linux" | `wsl:${string}`;
 
 interface Environment {
   id: EnvId; label: string;                 // 例如 "WSL - Ubuntu-24.04"
-  home: string;                             // 例如 "C:\\Users\\me" 或 "/home/me"
+  home: string;
   sshConfigPath: string; available: boolean;
+  managedSshConfig: { path: string; included: boolean };  // 托管文件位置；用户的 ~/.ssh/config 是否已加入 Include（F-107）
 }
 
-type AgentId = "claude-code" | "universal" | "cursor" | "gemini-cli" | "copilot" | "opencode" | "custom";
+type AgentId = "claude-code" | "universal" | "custom";   // v0.1 只有这三类（4.5）
 
-interface Target {
+interface Target {                          // 只有 Agent 全局目录这一种目标
   id: string;
-  kind: "agent-global" | "project";
   envId: EnvId;
-  label: string;                            // 例如 "Claude Code - 全局"、"OpenPet-Desktop"
-  agent?: AgentId;                          // 仅 agent-global 使用
-  path: string;                             // 全局目标：skills 目录；项目目标：仓库根目录
-  conventions?: ("claude" | "agents")[];    // 仅 project 使用：写入 .claude/skills 和/或 .agents/skills
-  gitExclude?: boolean;                     // 仅 project 使用：是否维护 .git/info/exclude
-  linkMode: "auto" | "link" | "copy";       // auto 表示按 8.2 的默认值（Windows 原生为复制，其余为符号链接）
+  agent: AgentId;
+  label: string;                            // 例如 "Claude Code"
+  path: string;                             // 全局 skills 目录
+  enabled: boolean;                         // 关闭后，CloudLink 从这个目录移除自己分发的总 Skill
+  detected: boolean;                        // 是否检测到这个 Agent（未检测到也可以手动启用）
 }
 
 type Mode = "read-only" | "standard";
-type MountStatus = "ok" | "pending" | "broken" | "conflict" | "stale-copy" | "alias-missing";
 
-interface Mount {
-  id: string; skillId: string; targetId: string; mode: Mode;
-  links: { path: string; kind: "symlink" | "junction" | "copy" }[];
-  status: MountStatus; statusDetail?: string;
-  createdAt: string; checkedAt: string;
+interface Inclusion {                       // 一台服务器是否列入某个运行环境的总 Skill
+  assetId: string; envId: EnvId;
+  included: boolean;
+  reason?: { id: string; params?: Record<string, string | number> };  // 未列入的原因：分发开关关闭、该环境没有连接配置、WSL 中没有配置私钥等
+}
+
+type DeliveryStatus =
+  | "ok" | "pending"
+  | "missing"                               // 副本被外部程序删除
+  | "modified"                              // 副本被改动过（实际内容与所有权标记中的哈希不一致）
+  | "outdated"                              // 副本不是最新的编译结果（上次同步失败）
+  | "conflict";                             // 目标位置已有同名目录，而且不是 CloudLink 创建的
+
+interface Delivery {                        // 总 Skill 在一个目标中的受管副本
+  id: string; targetId: string; envId: EnvId;
+  path: string;
+  status: DeliveryStatus;
+  statusDetail?: { id: string; params?: Record<string, string | number> };  // 只返回 id 和参数
+  checkedAt: string;
+}
+
+interface GuardStatus {                     // 每个有 Claude Code 目标的运行环境一条（F-306）
+  envId: EnvId;
+  state: "active" | "not-installed" | "broken" | "unavailable";
+  detail?: { id: string; params?: Record<string, string | number> };  // broken：条目被删、自检失败、设置了 disableAllHooks；unavailable：WSL 互操作已关闭
+  settingsPath: string;
+  checkedAt: string;
+}
+
+interface Operation {                       // 护栏判定过的一条命令（F-307）
+  id: string; assetId: string; envId: EnvId;
+  at: string; sessionId: string; cwd: string;
+  command: string;                          // 已脱敏
+  decision: "allowed" | "denied" | "unlocked";
+  reasonId?: string;                        // 拦下的原因，例如 read-only、volume-delete、credential-read、unparsed
+}
+
+interface AgentNote {                       // Agent 写进收件箱的一条笔记（F-308）
+  id: string; assetId: string;
+  text: string; writtenAt: string;          // 取行首日期，没有日期时取读入时间
+  flags: ("secret" | "injection")[];        // 命中密钥的笔记必须编辑后才能并入
+  status: "pending" | "merged" | "dismissed";
 }
 ```
+
+分发规则：
+
+- 每个运行环境编译一份总 Skill，只列入同时满足两个条件的服务器：分发开关打开；该环境中有这台服务器的连接配置。不满足的记为「未列入」，并写明原因。
+- 总 Skill 以受管副本写进该环境每个已启用的目标。一台服务器都没有列入时，从目标中移除总 Skill。
+- 停用目标、删除服务器、关闭开关时，只删除或更新 CloudLink 创建的副本。
+- 新启用一个目标，或者某个环境新增了连接配置时，自动重新编译并同步。
 
 ### 3.5 编译产物目录与所有权
 
 ```text
 ~/.cloudlink/                                   Windows 上是 %USERPROFILE%\.cloudlink\
-  data.db                                       SQLite（WAL 模式），唯一数据源
+  data.db                                       SQLite（WAL 模式），唯一数据源（不含密码）
   compiled/
-    read-only/vps-hk-edge/                      变体目录。目录名 = slug = SKILL.md 中的 name
-      SKILL.md
-      references/runtime-topology.md
-      references/notes.md                       仅当资产填写了附加说明时才生成
-      .cloudlink.json                           所有权标记：managedBy、skillId、mode、contentHash、compiledAt
-    standard/vps-hk-edge/
+    windows/cloudlink-servers/                  每个运行环境一份（WSL 为 wsl-<发行版>/），只含该环境列入的服务器
+      SKILL.md                                  总览：服务器表、关系、档位与护栏、规则、巡检入口、笔记约定
+      references/hk-edge.md                     每台服务器的详情，文件名取自别名
+      references/health-check.md                巡检清单
+      .cloudlink.json                           所有权标记：managedBy、envId、contentHash、compiledAt、templateVersion
+  bin/cloudlink-guard.exe                       护栏程序，从安装目录复制过来，hook 指向这个固定路径
+  guard/policy.json                             护栏策略：每台服务器的别名、地址、档位、关键服务、解锁到期时间
+  guard/log/2026-10-31.jsonl                    护栏记录，CloudLink 读入数据库后清理
+  inbox/hk-edge.md                              Agent 笔记收件箱：Agent 只追加，CloudLink 读入后清空
   logs/
+~/.ssh/cloudlink.conf                           托管 ssh 配置。每个运行环境各一份（WSL 中为 /home/<user>/.ssh/cloudlink.conf）
 ```
 
-挂载产生的链接示例：
-
-- 全局目标：`~/.claude/skills/vps-hk-edge` 指向 `~/.cloudlink/compiled/read-only/vps-hk-edge`。
-- 项目目标：`<repo>/.claude/skills/vps-hk-edge` 和 `<repo>/.agents/skills/vps-hk-edge` 指向同一个变体目录。
+分发产生的副本示例：`~/.claude/skills/cloudlink-servers/` 是 `~/.cloudlink/compiled/windows/cloudlink-servers/` 的受管副本；WSL 中的 `~/.claude/skills/cloudlink-servers/` 由 CloudLink 经 `\\wsl.localhost\<发行版>\...` 路径直接写入（8.2）。
 
 规则：
 
-- 同一个目标目录里，同一个 Skill 只能出现一次，也就是说一个目标对一个 Skill 只能选一个档位。
-- 只有当某个变体被至少一个挂载引用，或者正在预览时，才会编译它。
-- 变体目录的目录名必须等于 slug。规范要求 `name` 与父目录同名，这样无论 Agent 是按链接路径还是按真实路径校验，都能通过。
+- 一个目标目录里只有一个 `cloudlink-servers`。
+- 保存、应用或撤销探测、切换档位、合并笔记、修改全局内容，都会重新编译，并在同一次发布中同步全部副本。
+- 目录名等于 Skill 的 `name`（`cloudlink-servers`），满足规范中 `name` 与父目录同名的要求。
 
 ---
 
 ## 四、功能需求
 
-### 4.1 模块一：云资产库
+### 4.1 模块一：服务器
 
 | 编号 | 功能 | 优先级 | 需求与验收标准（AC） |
 | :--- | :--- | :--- | :--- |
-| F-101 | VPS 资产管理 | P0 | 增删改查，字段见 3.3。**AC1：** slug 实时校验格式和唯一性。**AC2：** 已挂载资产的 slug 默认锁定，修改必须走「重命名迁移」，迁移会重建全部链接。**AC3：** 删除资产前，确认框要列出会被级联卸载的挂载 |
-| F-102 | ssh config 导入 | P0 | 按运行环境分别扫描（Windows 宿主机和各个 WSL 发行版分开处理）。支持 `Include`。用 `ssh -G <alias>` 获取生效配置。**AC1：** 通配和否定模式的 Host（`*`、`?`、`!`）不导入，并提示已跳过几个。**AC2：** 同一个别名在多个环境里都有定义时，合并为一行，「来源环境」列出全部环境。**AC3：** 已导入的别名标记为「已导入」，默认不勾选 |
-| F-103 | 只读探测 | P0 | 规格见 8.3。**AC1：** 使用 `BatchMode=yes` 和 `ConnectTimeout=10`，整个探测 30 秒超时，用户可以取消。**AC2：** 探测结果以差异形式呈现，用户逐项勾选后才合并。**AC3：** 合并时保留人工标注（role、critical）。上次有、这次没发现的服务标为「未发现」，不自动删除。**AC4：** 错误按 8.3 的分类表给出可操作的说明。**AC5：** 原始输出只留在内存里，不写入磁盘 |
-| F-104 | 多维资产卡片 | P1 | Domain（手工录入 DNS 记录，记录指向 VPS 资产的 id）、Panel（1Panel 或宝塔的目录约定和 CLI 规范）、Storage（Bucket 和备份目录映射）。Cloudflare 只读同步属于 P2，所需 Token 存在系统钥匙串里，不进入数据库 |
-| F-105 | 字段导出控制 | P0 | 每个资产可以单独设置导出开关：解析后的连接信息（默认关）、监听端口（默认关）、镜像版本（默认开）。**AC：** 关闭的字段一旦出现在编译产物里，就触发 Lint 错误并阻断发布 |
+| F-101 | 服务器管理 | P0 | 增删改查，字段见 3.3。**AC1：** 别名在全部服务器中唯一（不区分大小写）；managed 服务器的别名还要满足 F-107 AC3。**AC2：** 删除服务器前，确认框说明它会从总 Skill 中移除；managed 服务器同时删除托管 ssh 配置中的条目、凭据库中的密码，以及 CloudLink 生成的密钥（需单独勾选） |
+| F-102 | ssh config 导入 | P0 | 按运行环境分别扫描（Windows 宿主机和各个 WSL 发行版分开处理）。支持 `Include`。用 `ssh -G <alias>` 获取生效配置。导入的服务器 `source` 为 `imported`，连接字段只读。**AC1：** 通配和否定模式的 Host（`*`、`?`、`!`）不导入，并提示已跳过几个。**AC2：** 同一个别名在多个环境里都有定义时，合并为一行，「来源环境」列出全部环境。**AC3：** 已导入的别名标记为「已导入」，默认不勾选。**AC4：** CloudLink 托管文件中的 Host 不出现在导入列表里 |
+| F-103 | 只读探测 | P0 | 规格见 8.3。**AC1：** 使用 `BatchMode=yes` 和 `ConnectTimeout=10`，整个探测 30 秒超时，用户可以取消。**AC2：** 探测结果自动合并并重新编译，不逐项审批：新增和变化直接写入；上次有、这次没发现的服务标为「未发现」，不删除。完成后告诉用户更新了几处，可以查看本次变化。**AC3：** 合并时保留人工标注（role、critical）。**AC4：** 「撤销」把这次探测改动过的字段恢复原样并重新编译，只能撤销最近一次探测。**AC5：** 清洗后仍疑似指令注入的值（8.3）不自动合并，列为「待确认」，用户确认后才合并。**AC6：** 错误按 8.3 的分类表给出可操作的说明。**AC7：** 原始输出只留在内存里，不写入磁盘。**AC8：** 探测成功同时刷新连接验证 |
+| F-104 | 多维资产卡片 | P1 | Domain（手工录入 DNS 记录，记录指向服务器的 id）、Panel（1Panel 或宝塔的目录约定和 CLI 规范）、Storage（Bucket 和备份目录映射）。Cloudflare 只读同步属于 P2，所需 Token 存在系统钥匙串里，不进入数据库 |
+| F-105 | 字段导出控制 | P0 | 每台服务器可以单独设置导出开关：解析后的连接信息（默认关）、监听端口（默认关）、镜像版本（默认开）。**AC：** 关闭的字段一旦出现在编译产物里，就触发 Lint 错误并阻断发布 |
+| F-106 | 录入服务器与测试连接 | P0 | 「新建服务器」打开右侧面板，只要求填写：名称、地址、端口（默认 22）、用户、认证方式（F-108）、环境标签。别名由名称自动生成，可在「高级」里修改；跳板机也在「高级」里。底部两个按钮：「测试连接」和主按钮「保存」。**AC1：** 测试连接在后台执行 `ssh -F <临时配置> -o BatchMode=yes -o ConnectTimeout=10 <别名> true`（密码方式见 F-108），10 秒超时，可取消，结果在按钮旁原地显示：成功时显示耗时和远端系统；失败时按 8.3 的错误分类给出原因和下一步。**AC2：** 首次连接时显示主机指纹（SHA256），用户核对确认后才写入 `known_hosts`；指纹与已知记录不符时阻断，并明确提示可能的中间人风险。**AC3：** 未测试或测试失败也可以保存（服务器可能暂时关机），但服务器标「未验证」，分发开关不可打开，并说明原因。**AC4：** 保存后，如果测试已通过，自动发起首次探测，结果按 F-103 自动合并。**AC5：** 修改连接字段并保存后，验证状态清空，已有分发保持，但卡片上提示「连接信息已修改，请重新测试」 |
+| F-107 | 托管 ssh 配置 | P0 | managed 服务器写入 CloudLink 托管的 `~/.ssh/cloudlink.conf`（每个运行环境一份，WSL 中写在发行版自己的家目录）。**AC1：** 首次写入前用对话框说明要做什么，征得同意后在用户的 `~/.ssh/config` **开头**加一行 `Include ~/.ssh/cloudlink.conf`（写在开头是因为 ssh 对同一参数取第一次出现的值，放末尾会被前面的 `Host *` 覆盖）。修改前先备份为 `config.cloudlink-bak`。用户拒绝时，设置中给出手动添加的说明，此时服务器在该环境中记为「未列入」。**AC2：** 托管文件整文件重写，带「由 CloudLink 生成，请勿手改」的文件头；CloudLink 不修改用户 config 中除这一行 Include 以外的任何内容。**AC3：** 别名与该环境 ssh config 中已有的 Host 重名时阻止保存。**AC4：** 每次写入后用 `ssh -G <别名>` 回读校验，生效值与录入值不一致时（例如被用户 config 中更靠前的规则覆盖）提示具体字段。**AC5：** 用户可在每台服务器上选择写入哪些运行环境，默认全部可用环境 |
+| F-108 | 认证方式 | P0 | 三种：私钥文件、ssh-agent、密码。**私钥文件：** 只记录路径，提供文件选择器，并检测常见问题（文件不存在、WSL 中位于 `/mnt/c` 下导致权限过宽、带口令但 ssh-agent 中没有）。**ssh-agent：** 不指定私钥，依赖系统 ssh-agent（Windows 的 OpenSSH Authentication Agent 服务）。**密码：** 存进 Windows 凭据管理器，以服务器 id 为键，不进 SQLite、不进日志、不进 Skill；CloudLink 用它测试连接和探测（经 `SSH_ASKPASS` 交给系统 ssh，不在命令行和环境变量中出现明文）。**AC1：** 选择密码方式时，界面明确提示「Agent 在非交互模式下无法输入密码，只用密码的服务器不能分发」，并提供「改用密钥登录」：CloudLink 生成 ed25519 密钥（保存在 `~/.ssh/cloudlink_<slug>`，WSL 中另存一份并设置 600 权限），用已保存的密码把公钥追加到服务器的 `~/.ssh/authorized_keys`，然后把认证方式切换为私钥文件并重新测试连接。**AC2：** 安装公钥只追加一行并带 `cloudlink` 注释，不改动已有内容；失败时不切换认证方式。**AC3：** 切换成功后用户可以选择删除保存的密码 |
 
 ### 4.2 模块二：编译器
 
 | 编号 | 功能 | 优先级 | 需求与验收标准 |
 | :--- | :--- | :--- | :--- |
-| F-201 | 单资产 Skill | P0 | 每个资产自动对应一个 Skill。**取消 v1 中「把所有 VPS 汇总为一份全局清单」的模式**：它重新制造了痛点 3 |
-| F-202 | 档位与红线 | P0 | 两个档位：只读巡检和标准运维。用户自定义的红线在任何档位下都追加在后面（「Custom」不再是一个独立档位）。内置红线（5.5）在任何档位下都始终注入。**AC：** 红线逐字渲染，顺序与编辑器中一致 |
-| F-203 | 编译与发布 | P0 | 触发时机：保存、应用探测结果、首次使用某个档位。流程：校验、渲染、Lint、原子发布（8.4）。**AC1：** 存在错误级 Lint 时不发布，保留上一次成功的产物，并在界面上标出「编译受阻」。**AC2：** 一个典型资产（≤50 个服务）的编译 p95 不超过 100ms |
-| F-204 | 实时预览与上下文预算 | P0 | 编辑器旁边实时预览，内容就是草稿的编译结果。显示三层 Token 估算，以及 description 字符数和正文行数相对上限的进度。Claude 没有官方的离线分词器（`@anthropic-ai/tokenizer` 已归档，作者注明它自 Claude 3 起已不准确），所以 Token 数统一标「≈」，并在 Tooltip 里说明「本地 o200k 估算，较新的 Claude 模型可能更多」。常驻层的 Tooltip 还要讲清预算机制：Claude Code 的技能清单只占上下文窗口的 1%，超出后最少使用的 Skill 描述会先被丢掉；Codex 是 2% 或 8000 字符。**AC：** 预览和发布调用同一个渲染函数，同一份输入得到的内容字节级一致。**P2：** 用户可以选择填入自己的 Anthropic API Key（存系统钥匙串），调用官方 `count_tokens` 接口做精确计数，默认关闭 |
-| F-205 | Lint 与密钥扫描 | P0 | 规则见 5.4。密钥扫描复用 gitleaks 的规则集（MIT 许可），编译进 Rust 二进制 |
-| F-206 | 业务包 Bundle | P1 | 把多个资产组合成一个按业务命名的 Skill，例如 `openpet-prod-cloud`。成员顺序可以拖拽调整 |
-| F-207 | 输出语言 | P0（默认英文）/ P1（可切换） | 编译产物默认英文：模板文字、档位说明、内置红线、description 模板都是英文；用户填写的用途、红线、附加说明原样输出，不翻译。P1 起支持全局或按资产切换为 `zh-CN` |
-| F-208 | 自定义模板 | P2 | 用户模板基于 minijinja，在沙箱中渲染，以文件形式导入导出。**不做「模板市场」**：那需要后端服务，并引入远程代码风险 |
+| F-201 | 总 Skill | P0 | 全部列入的服务器编译成一个 Skill，名称固定为 `cloudlink-servers`，每个运行环境一份（3.4、3.5）。`SKILL.md` 包含：连接规则、服务器总览表（别名、用途、环境、档位、详情文件）、服务器之间的关系、档位与护栏说明、内置红线和运维约定、巡检入口、笔记约定；每台服务器的详情放在 `references/<别名>.md`，巡检清单放在 `references/health-check.md`（规格见第五章）。v1 取消「全局汇总清单」的两个理由，即全局常驻和让 Agent 连错项目的服务器，在 v3 已不成立：v3 只做全局分发，总 Skill 常驻的只有一条描述。**AC1：** 「服务器之间的关系」和「运维约定」是全局内容，在 Agent 页编辑，原文逐字输出。**AC2：** description 由模板生成，列出各服务器的别名和用途、承载的站点，以及部署、日志、容器、巡检等触发词；超过 1024 字符时，依次去掉站点名、缩短用途、只列前若干个别名并注明其余数量，同时给出 Lint 警告。**AC3：** 总览表始终列出全部列入的服务器，不受 description 截断影响 |
+| F-202 | 档位与红线 | P0 | 两个档位：只读巡检和标准运维，是服务器的属性（`agent.mode`）。用户自定义的红线在任何档位下都追加在后面。内置红线（5.5）在任何档位下都始终注入。在 Claude Code 上，档位由护栏执行（F-306）。**AC1：** 红线逐字渲染，顺序与编辑器中一致。**AC2：** 生产服务器新建时默认只读巡检；切换到标准运维前弹 `AlertDialog` 二次确认，说明「所有已启用的 Agent 都会获得变更权限的指令，护栏只会拦下明显危险的命令」 |
+| F-203 | 编译与发布 | P0 | 触发时机：保存、应用或撤销探测、切换档位、合并笔记、修改全局内容、列入情况变化。流程：校验、按运行环境渲染、Lint、原子发布（8.4），然后同步全部副本。**AC1：** 存在错误级 Lint 时不发布，保留上一次成功的产物，并在界面上标出「编译受阻」和出错的服务器。**AC2：** 20 台服务器的总 Skill 编译 p95 不超过 200ms |
+| F-204 | 预览 | P0 | 在服务器详情中点「预览 Skill」打开右侧 Sheet，默认定位到这台服务器的详情文件；在 Agent 页可以预览整个总 Skill。内容就是当前草稿的编译结果。显示 description 字符数和正文行数相对上限的进度，以及 Lint 结果。v3 不再显示 Token 估算：总 Skill 常驻的只有一条描述，估算值对用户没有决策意义。**AC：** 预览和发布调用同一个渲染函数，同一份输入得到的内容字节级一致 |
+| F-205 | Lint 与密钥扫描 | P0 | 规则见 5.4。密钥扫描复用 gitleaks 的规则集（MIT 许可），编译进 Rust 二进制。同一套规则也用于 Agent 笔记（F-308）和操作记录（F-307）的检查与脱敏 |
+| F-207 | 输出语言 | P0（默认英文）/ P1（可切换） | 编译产物默认英文：模板文字、档位说明、内置红线、description 模板都是英文；用户填写的用途、红线、关系、约定、笔记原样输出，不翻译。P1 起支持全局切换为 `zh-CN` |
 
-### 4.3 模块三：目标与挂载
+2026-10-31 删除了 F-206 业务包（由总 Skill 中「服务器之间的关系」取代）和 F-208 自定义模板，编号不再复用。
+
+### 4.3 模块三：Agent 与分发
 
 | 编号 | 功能 | 优先级 | 需求与验收标准 |
 | :--- | :--- | :--- | :--- |
-| F-301 | 运行环境与 Agent 检测 | P0 | 启动时和手动刷新时执行。Windows 上用 `wsl.exe -l -q` 列出发行版。各 Agent 的目录见 4.5。**AC：** 未检测到的 Agent 也可以手动启用（软件会创建目录），也可以添加自定义目录 |
-| F-302 | 项目目标 | P0 | 用户选择仓库目录后，软件检查它是否是 Git 仓库、已经存在哪些约定目录、属于哪个运行环境（按路径判断：`\\wsl$` 或 `\\wsl.localhost` 开头的路径归入对应的 WSL）。用户勾选要写入的约定目录。**AC：** 默认把链接路径写入 `.git/info/exclude`（不修改共享的 `.gitignore`）。路径通过 `git rev-parse --git-path info/exclude` 解析，以兼容 worktree |
-| F-303 | 挂载操作 | P0 | 三种等价入口：看板拖拽、矩阵开关、「挂载到…」菜单。**AC1：** 允许把生产资产挂到全局目标（2026-10-27 决定），但必须先弹 `AlertDialog` 二次确认，确认文案要说明「所有项目中读取这个全局目录的 Agent 都会看到它」；挂上之后，挂载视图顶部常驻一条提示（见 6.6）。**AC2：** 同一个 Skill 已经挂在某个 Agent 的全局目录里，又要挂到该 Agent 会读取的项目目录时：档位相同就提示「冗余」；档位不同就**阻止挂载**，并说明原因——不同 Agent 对同名 Skill 的取舍相反（Claude Code 用全局那份，Gemini CLI 用项目那份，Codex 两份都列出），红线会因 Agent 而异。**AC3：** 档位可以随时切换，切换时重新指向另一个变体。**AC4：** 挂载完成后，按 Agent 给出生效提示：Claude Code 2.1 起会自动加载内容变化，但如果这次挂载是在会话运行期间新建了 `.claude/skills` 目录，需要在会话中执行 `/reload-skills`；已经调用过的 Skill 不会重读，要开新会话；Codex 通过链接更新内容后，如果没有生效，需要重启 Codex |
-| F-304 | 链接引擎 | P0 | 平台策略见 8.2：macOS、Linux、WSL 默认用符号链接；**Windows 原生默认用受管复制**，Junction 作为实验选项（原因见 8.2）。**AC1：** 目标位置已存在同名目录、而且不是本软件创建的，判定为「冲突」，不做任何覆盖。**AC2：** 卸载只删除本软件创建的东西：链接必须指向 `compiled/` 目录，副本必须带有匹配的所有权标记。**AC3：** 链接创建失败时降级为受管复制（状态显示「复制模式」）；重新编译后，所有副本在同一次发布中同步。**AC4：** 每个目标都可以在「链接方式」里手动切换「链接 / 复制」。在 Agent 里看不到某个 Skill 时，故障排查的第一步就是切换为复制 |
-| F-305 | 健康检查与修复 | P0 | 检查时机：启动、窗口重新聚焦（节流 30 秒）、手动「检查全部」。检测四类问题：链接失效、冲突、副本过期、别名缺失。**AC：** 「修复」会重建链接；目标路径已不存在时，引导用户更新项目路径或移除该目标 |
-| F-306 | Agent 视角 | P0 | 视角的单位是「项目 × Agent」，或者「全局目标本身」。选中后，这个 Agent 在这里能看见的 Skill 标为「可见」（信号青描边加 `EyeIcon`），其余标为「不可见」（注记灰文字加 `EyeOffIcon`）。为了保证对比度，不允许用降低透明度的方式表示不可见。可见集合 = 该 Agent 所读约定目录中的项目挂载 ∪ 同一运行环境下该 Agent 全局目录中的挂载。状态为 `broken` 或 `alias-missing` 的挂载单独计数。例如：Claude Code 只读 `.claude/skills` 和本环境的 `~/.claude/skills`；Codex 读 `.agents/skills` 和本环境的 `~/.agents/skills`；WSL 项目看不到 Windows 侧的全局目录。这是本产品的签名交互 |
-| F-307 | 别名可达性校验 | P0 | 挂载时检查 `sshAlias` 是否定义在目标所在运行环境的 ssh config 里。**AC：** 未定义时提示「该环境中的 Agent 无法连接」，用户仍可确认继续，此时挂载状态为 `alias-missing` |
+| F-301 | 运行环境与 Agent 检测 | P0 | 启动时和手动刷新时执行。Windows 上用 `wsl.exe -l -q` 列出发行版。v0.1 只检测两类 Agent，目录见 4.5。检测到的 Agent 默认启用。**AC：** 未检测到的 Agent 也可以手动启用（软件会创建目录）；其他 Agent 可以添加为自定义目录 |
+| F-302 | Agent 启用开关 | P0 | Agent 页每个目标一个开关。**AC1：** 启用后自动写入总 Skill 的副本。**AC2：** 停用前确认，说明会从该目录移除 CloudLink 分发的 `cloudlink-servers`；只移除 CloudLink 创建的东西 |
+| F-303 | 分发给 Agent | P0 | 每台服务器一个「分发给 Agent」开关，在服务器卡片和详情面板顶部都能操作。打开后，这台服务器列入各运行环境的总 Skill（3.4）。**AC1：** 未通过连接验证、或者只用密码认证的服务器不能打开开关，Tooltip 说明原因并提供处理入口。**AC2：** 详情面板的「Agent」分段逐个列出运行环境的列入情况；未列入要写明原因（例如「WSL - Ubuntu 中没有配置私钥」），并给出处理入口。**AC3：** 分发完成后给出生效提示：Claude Code 2.1 起会自动加载内容变化，但如果这次分发在会话运行期间新建了 `~/.claude/skills` 目录，需要在会话中执行 `/reload-skills`；已经调用过的 Skill 不会重读，要开新会话；Codex 如果没有生效，需要重启 Codex。**AC4：** 关闭开关立即把这台服务器从总 Skill 中移除，不需要确认（可以随时重新打开） |
+| F-304 | 副本引擎 | P0 | 分发一律用受管复制，不用符号链接或 Junction（理由见 8.2）。**AC1：** 目标位置已存在 `cloudlink-servers` 目录、而且不是本软件创建的，判定为「冲突」，不做任何覆盖。**AC2：** 移除只删除带有匹配所有权标记的副本。**AC3：** 每次发布在同一批次内同步全部副本；某个目标写入失败时，该目标记为「待同步」，其余目标照常更新 |
+| F-305 | 健康检查与修复 | P0 | 检查时机：启动、窗口重新聚焦（节流 30 秒）、手动「检查全部」。检测四类问题：副本缺失、副本被改动、副本待同步、冲突；同时重新计算列入情况，并对护栏做自检（F-306 AC5）。**AC：** 「修复」重新写入副本，副本被改动过时先提示修复会覆盖改动；目标目录已不存在时重新创建。问题汇总显示在导航栏 Agent 项的计数徽标上 |
+| F-306 | 护栏（Claude Code） | P0 | 在 Claude Code 的用户级 `settings.json` 中安装一条 `PreToolUse` hook（`matcher` 为 `Bash`），指向 CloudLink 自带的小程序 `cloudlink-guard`。它对提到 CloudLink 中服务器的每条 ssh、scp、sftp、rsync 命令做判定（规则见 8.6）：只读巡检的服务器只放行巡检类命令；标准运维的服务器只拦下明显危险的命令，包括删除数据卷、重启主机、改防火墙、改 SSH 配置、停掉标为「关键」的服务；任何档位都拦下读取凭据文件。拦下时把原因返回给 Agent，并提示它不要设法绕过。hook 在权限判断之前执行，所以跳过权限确认的模式下同样有效。**AC1：** 安装前用对话框展示将要加入 `settings.json` 的内容，征得同意后才写入；修改前备份为 `settings.json.cloudlink-bak`；只增删 CloudLink 自己的这一条，不改动其他内容。每个有 Claude Code 目标的运行环境分别安装。**AC2：** 临时解锁：用户对一台服务器选择「临时解锁 30 分钟」后，护栏对它放行全部命令，到期自动恢复，期间照常记录；生产服务器解锁前要确认。解锁不改变档位，也不重新编译 Skill。**AC3：** CloudLink 关着时护栏照常工作：它只读取 `~/.cloudlink/guard/policy.json`，不依赖 CloudLink 进程。**AC4：** 解析不了的命令：在只读服务器上拦下（原因为「无法确认是只读命令」），在标准运维服务器上放行，并在记录中标注。**AC5：** 健康检查时自检：确认 `settings.json` 中的条目还在、没有设置 `disableAllHooks`，并用测试输入实际运行一次护栏程序；任何一项失败，Agent 页显示「护栏未生效」及原因。**AC6：** 界面如实说明边界：护栏只解析命令文本，能防手滑，防不了刻意绕过；Codex 等其他 Agent 没有护栏 |
+| F-307 | 操作记录 | P0 | 护栏判定过的每条命令都记一行：时间、运行环境、会话 id、工作目录、服务器、命令（脱敏后）、结果（放行、拦下、解锁期间放行）和拦下的原因。CloudLink 在启动、窗口重新聚焦时读入，界面可见时每 60 秒读入一次，保留 30 天。**AC1：** 服务器详情的「操作记录」分段显示最近 50 条，折叠时摘要为「今天 12 条，拦下 2 条」；完整列表在设置的「活动」中按服务器筛选。**AC2：** 记录写入前先脱敏（8.6），CloudLink 读入时再用 F-205 的完整规则扫描一遍，命中的片段替换为 `[已隐藏]`。**AC3：** 界面注明只记录经过护栏的命令，也就是 Claude Code 执行的命令 |
+| F-308 | Agent 笔记 | P0 | 总 Skill 中约定：Agent 在干活中摸清值得下次知道的事（部署方式、配置位置、踩过的坑），就往笔记收件箱中这台服务器的文件追加一行 `- YYYY-MM-DD: <内容>`，不写凭据、IP 和临时状态（5.2）。收件箱路径按运行环境渲染成绝对路径；WSL 中指向 Windows 侧的同一个目录，所以只有一个收件箱。**AC1：** CloudLink 在启动、窗口重新聚焦时读取收件箱，界面可见时每 60 秒读取一次；先原子重命名再读，避免和 Agent 的追加冲突；只读取与某台服务器详情文件同名的文件，其他文件不动。**AC2：** 每条笔记读入时做密钥扫描和疑似注入检查；命中密钥的笔记必须编辑后才能并入。单条最长 500 字符，每台服务器最多保留 100 条待处理。**AC3：** 卡片上显示待处理的数量（例如「笔记 3」）；详情的「笔记」分段逐条列出，可以「并入」「编辑后并入」「忽略」，也可以全部并入。**AC4：** 并入就是把这一行（带日期）追加到服务器的笔记字段，立即保存并重新编译，Agent 下次就能读到 |
 
 ### 4.4 模块四：系统
 
 | 编号 | 功能 | 优先级 | 需求与验收标准 |
 | :--- | :--- | :--- | :--- |
-| F-401 | 命令面板与快捷键 | P0 | 见 6.12 |
-| F-402 | 活动日志 | P0 | 记录探测（包括执行的命令清单、耗时、结果）、编译、挂载和卸载、修复，本地保留 30 天。**AC：** 日志中不出现原始探测输出，也不出现解析后的连接信息 |
-| F-403 | 设置 | P0 | 见 6.9 |
-| F-404 | 数据导入导出 | P1 | 以 JSON 导入导出资产。挂载与本机路径强相关，因此不导出。P2 支持加密备份包 |
-| F-405 | 首次启动引导 | P0 | 见 6.10 |
+| F-401 | 命令面板与快捷键 | P0 | 见 6.9 |
+| F-402 | 活动日志 | P0 | 位于设置的「活动」分区。记录测试连接、探测（包括执行的命令清单、耗时、结果）、编译、分发和移除、修复、托管 ssh 配置的写入、护栏的安装与移除、临时解锁与锁回、笔记的并入与忽略，本地保留 30 天。Agent 的操作记录（F-307）也在这里按服务器查看。**AC：** 日志中不出现原始探测输出、密码，也不出现解析后的连接信息 |
+| F-403 | 设置 | P0 | 见 6.7 |
+| F-404 | 数据导入导出 | P1 | 以 JSON 导入导出服务器。分发与本机路径强相关、密码在凭据库中，二者都不导出。P2 支持加密备份包 |
+| F-405 | 首次启动引导 | P0 | 见 6.8 |
 
 ### 4.5 Agent 目录表
 
-数据来源是 vercel-labs/skills 的 `docs/agents.md`（2026-10 版）。上线前需要逐项对照官方文档再核实一遍。
+v0.1 只支持下面两类 Agent，外加自定义目录。数据来源是 vercel-labs/skills 的 `docs/agents.md`（2026-10 版），上线前需要对照官方文档再核实一遍。
 
-| Agent | 全局目录 | 项目约定目录 | 检测依据 |
+| Agent | 全局目录 | 检测依据 | 护栏 |
 | :--- | :--- | :--- | :--- |
-| Claude Code | `~/.claude/skills/` | `.claude/skills/` | `~/.claude/` 存在，或 PATH 中有 `claude` |
-| 通用（Codex CLI、Cline、Warp、Zed 等） | `~/.agents/skills/` | `.agents/skills/` | `~/.codex/` 存在，或 PATH 中有 `codex` |
-| Cursor | `~/.cursor/skills/` | `.agents/skills/` | `~/.cursor/` |
-| Gemini CLI | `~/.gemini/skills/` | `.agents/skills/` | `~/.gemini/` |
-| GitHub Copilot | `~/.copilot/skills/` | `.agents/skills/` | `~/.copilot/` |
-| OpenCode | `~/.config/opencode/skills/` | `.agents/skills/` | `~/.config/opencode/` |
-| 自定义 | 用户指定 | 用户指定 | 无 |
+| Claude Code | `~/.claude/skills/` | `~/.claude/` 存在，或 PATH 中有 `claude` | 有（F-306） |
+| 通用（Codex CLI、Cline、Warp、Zed 等） | `~/.agents/skills/` | `~/.codex/` 存在，或 PATH 中有 `codex` | 没有。Codex 默认的沙箱不允许联网，ssh 要用户批准，或在配置中放开网络 |
+| 自定义 | 用户指定 | 无 | 没有 |
 
-由此可以得出：项目级挂载只需要两个约定目录。`.claude/skills` 供 Claude Code 使用，`.agents/skills` 供其余 Agent 使用。
+Cursor（`~/.cursor/skills/`）、Gemini CLI（`~/.gemini/skills/`）、GitHub Copilot（`~/.copilot/skills/`）、OpenCode（`~/.config/opencode/skills/`）留到 v0.5 再作为独立目标。在此之前，可以把它们的目录添加为自定义目录。
 
 补充事实（2026-10 核实）：
 
-- **Claude Code 不读 `.agents/skills`。** 相关 issue #31005 截至 2026-10 仍未关闭。
-- **Codex 的目录变迁。** v0.94 起读仓库内的 `.agents/skills`；v0.95 起读 `~/.agents/skills`。旧目录 `~/.codex/skills` 已标为废弃，但为了兼容仍会读取。Codex 的官方文档已经迁到 learn.chatgpt.com/docs/build-skills。
-- **同名 Skill 的优先级各家不同。**
-  - Claude Code：企业 > 个人（`~/.claude/skills`）> 项目。
-  - agentskills.io 的客户端指南和 Gemini CLI：项目优先。
-  - Codex：不合并同名项，两份都会出现在列表里。
-
-  这就是 F-303 要阻止「全局和项目挂载同一个 Skill 但档位不同」的原因。
-- **Claude Code 的保留目录名。** `synced` 是 Claude Code 在 `~/.claude/skills` 下的保留目录名，slug 不能取这个值。
+- **Claude Code 不读 `~/.agents/skills`。** 相关 issue #31005 截至 2026-10 仍未关闭，所以 Claude Code 和「通用」是两个独立目标。
+- **Codex 的目录变迁。** v0.95 起读 `~/.agents/skills`。旧目录 `~/.codex/skills` 已标为废弃，但为了兼容仍会读取。Codex 的官方文档已经迁到 learn.chatgpt.com/docs/build-skills。
+- **同名 Skill。** 用户自己在全局目录里已有名为 `cloudlink-servers` 的目录时，按 F-304 AC1 判定为冲突，不覆盖。
 
 ---
 
@@ -318,76 +407,118 @@ interface Mount {
 
 | 字段 | 约束 | 编译器的处理 |
 | :--- | :--- | :--- |
-| `name` | 1–64 个字符，只能是小写字母、数字和连字符，不能以连字符开头或结尾，不能有连续连字符（`--`），必须与父目录同名（VS Code / Copilot 不加载名称不匹配的 Skill） | 直接使用 slug；变体目录名也等于 slug |
-| `description` | 非空，最多 1024 个字符；要同时写明「做什么」和「什么时候用」。Claude Code 对每条清单项另有 1536 字符的上限 | 由模板自动生成，用户可以覆盖；超长时 Lint 报错 |
+| `name` | 1–64 个字符，只能是小写字母、数字和连字符，不能以连字符开头或结尾，不能有连续连字符（`--`），必须与父目录同名（VS Code / Copilot 不加载名称不匹配的 Skill） | 固定为 `cloudlink-servers`，编译目录名也是它 |
+| `description` | 非空，最多 1024 个字符；要同时写明「做什么」和「什么时候用」。Claude Code 对每条清单项另有 1536 字符的上限 | 由模板生成（F-201 AC2），超长时按规则截断并给出 Lint 警告 |
 | 其他字段 | 规范里的可选字段只有 `license`、`compatibility`、`metadata`、`allowed-tools`（实验性）。Claude Code 会忽略未知字段，但 claude.ai 和 Skills API 会直接拒绝 | **编译产物只输出 `name` 和 `description`**，以保证在各个 Agent 之间都能用 |
 
-### 5.2 SKILL.md 示例（只读巡检档，默认英文输出）
+### 5.2 SKILL.md 示例（默认英文输出）
 
-编译产物默认用英文（F-207）。下例中，模板生成的文字都是英文；`summary`、自定义红线、附加说明这类用户填写的文本原样输出，不做翻译。为了方便对照，示例里的用户文本也写成了英文。
+编译产物默认用英文（F-207）。下例中，模板生成的文字都是英文；用途、关系、红线、约定、笔记这类用户填写的文本原样输出，不做翻译。为了方便对照，示例里的用户文本也写成了英文。笔记收件箱的路径是 Windows 环境渲染出的绝对路径。
 
 ```markdown
 ---
-name: vps-hk-edge
-description: Connection, directory and container topology, and guardrails for hk-edge, the Hong Kong edge node (Ubuntu 24.04, production). Use when a task involves hk-edge, api.example.com or blog.example.com — deployments, log investigation, OpenResty or 1Panel configuration.
+name: cloudlink-servers
+description: The user's servers and how to operate them — hk-edge (Hong Kong edge proxy for api.example.com and blog.example.com; production, read-only), sg-db (Singapore PostgreSQL and Redis; production, read-only), dev-box (development machine). Use for any task on these servers or sites: deployments, logs, Docker containers, configuration, troubleshooting, or a health check of the servers.
 ---
 
+# Servers
+
+> Generated by CloudLink — do not edit | Snapshot: 2026-10-31
+
+Connect only through the SSH aliases below: `ssh <alias> '<command>'`. Authentication is handled by the local SSH configuration; never ask for or record passwords, IPs or private keys. Before running commands on a server, read its details file.
+
+| Alias | Role | Env | Mode | Details |
+| --- | --- | --- | --- | --- |
+| `hk-edge` | Public reverse proxy for api.example.com and blog.example.com; hosts the API containers | production | read-only | `references/hk-edge.md` |
+| `sg-db` | PostgreSQL and Redis for the API | production | read-only | `references/sg-db.md` |
+| `dev-box` | Development machine | development | standard | `references/dev-box.md` |
+
+## How they fit together
+hk-edge reverse-proxies api.example.com to the API containers on hk-edge; those containers use the PostgreSQL database on sg-db over the private network.
+
+## Modes
+- **read-only**: inspection commands only, e.g. `docker ps`, `docker logs --tail 200 <container>`, `df -h`, `free -m`, `uptime`, `ss -tln`, `journalctl -u <service> -n 200`. If a change is needed, describe the plan to the user and stop; the user can unlock the server in CloudLink for 30 minutes.
+- **standard**: routine deployments and service restarts are allowed. Ask the user before deleting data or volumes, changing the firewall or SSH configuration, stopping critical services, or rebooting.
+- In Claude Code, CloudLink's guard enforces these modes. A blocked command comes back with the reason.
+
+## Rules for every server
+1. Never read or print credential files (`.env`, `*.pem`, `*.key`, `id_*`, `/etc/shadow`, `~/.ssh/`) and never use `docker inspect` to view environment variables.
+2. Never ask for or record passwords, private keys or IP addresses; connect only through the SSH alias.
+3. If a host does not match its details file, report the difference to the user instead of "fixing" the server to match the document.
+4. If CloudLink's guard blocks a command, report it to the user; never try to work around the block with scripts, encoding or other tools.
+5. Deploy with docker compose in /opt/apps/<name>; never edit containers by hand.
+6. Tell the user before restarting anything on a production server.
+
+## Health check
+When the user asks for a health check of all or some servers, follow `references/health-check.md`.
+
+## Notes for next time
+When you learn something durable about a server that its details file does not cover — how something is deployed, where a config lives, a pitfall — append one line to `C:/Users/me/.cloudlink/inbox/<name>.md`, where `<name>` matches the server's details file (`hk-edge` for `references/hk-edge.md`); create the file if needed:
+`- 2026-10-31: <what you learned>`
+Never write secrets, IP addresses, credentials or transient state such as current load. The user reviews these notes in CloudLink before they become part of this skill.
+```
+
+第 1 到 4 条规则是内置红线（5.5），第 5、6 条是用户的运维约定。每台服务器的详情文件，以 `references/hk-edge.md` 为例：
+
+```markdown
 # hk-edge — Hong Kong edge proxy node
 
-> Production | Mode: read-only | Snapshot: 2026-10-27 | Generated by CloudLink — do not edit
+> Production | Mode: read-only | Snapshot: 2026-10-27
 
 ## Connect
-- Run commands through the system SSH alias: `ssh hk-edge '<command>'`. Authentication is handled by the local ssh-agent; never ask for or record passwords, IPs or private keys.
-- System: Ubuntu 24.04 LTS | 2 vCPU / 2 GB RAM | managed by 1Panel (/opt/1panel).
-- Role: public reverse proxy for api.example.com and blog.example.com, and host for the backend API containers.
-
-## Mode: read-only
-- Only inspection commands are allowed, e.g. `docker ps`, `docker logs --tail 200 <container>`, `df -h`, `free -m`, `uptime`, `ss -tln`, `ls`, `journalctl -u <service> -n 200`.
-- No writes of any kind: do not restart or stop containers or services, edit or delete files, install packages, or change the firewall. If a change is needed, describe the plan to the user and stop.
+- `ssh hk-edge '<command>'`
+- System: Ubuntu 24.04 LTS | 2 vCPU / 2 GB RAM | managed by 1Panel (/opt/1panel)
+- Role: public reverse proxy for api.example.com and blog.example.com, and host for the backend API containers
 
 ## Guardrails (must follow)
 1. Memory is only 2 GB — never run npm run build, cargo build or other memory-heavy builds on this host
 2. After editing OpenResty config, run docker exec openresty nginx -t and reload only if it passes
-3. Never stop or restart the openresty container
-4. Never read or print credential files (.env, *.pem, *.key, id_*, /etc/shadow, ~/.ssh/) and never use docker inspect to view environment variables
+3. Never stop or restart the openresty container (critical)
 
-## References (read on demand)
-- Key directories, containers and port mappings: read `references/runtime-topology.md`
-- Live metrics such as free disk or memory usage are not recorded here; check them on the host when needed (e.g. `df -h`, `free -m`)
-```
+## Key directories
+| Key | Path | Purpose |
+| --- | --- | --- |
+| nginx-conf | `/opt/1panel/apps/openresty/openresty/conf/conf.d` | OpenResty site configs |
+| compose-root | `/opt/1panel/docker/compose` | Docker Compose projects |
 
-在「标准运维档」下，「Mode」一节替换为以下内容：
+## Services
+| Name | Kind | Image | Ports | Role | Critical |
+| --- | --- | --- | --- | --- | --- |
+| `openresty` | docker | `openresty:1.21` | `0.0.0.0:443->443/tcp` | Main gateway and SSL termination | yes |
 
-```markdown
-## Mode: standard operations
-- Routine deployments and service restarts are allowed.
-- Ask the user for explicit approval before: deleting data or volumes (including `docker compose down -v`), changing the firewall or security groups, stopping critical services (openresty), changing SSH configuration, or rebooting the host.
+## Sites served
+`api.example.com`, `blog.example.com`
+
+## Notes
+- 2026-10-31: The API is deployed from /opt/1panel/docker/compose/api with `docker compose up -d --build`.
+
+Live metrics such as free disk or memory are not recorded here; check them on the host when needed (e.g. `df -h`, `free -m`).
 ```
 
 ### 5.3 references 拆分规则
 
 | 文件 | 内容 | 生成条件 |
 | :--- | :--- | :--- |
-| `references/runtime-topology.md` | 关键目录表；服务表（名称、类型、镜像、端口、角色、是否关键）；本机承载的站点；导出开关打开时的监听端口；数据快照时间 | 资产填写了路径或服务时 |
-| `references/notes.md` | 用户的附加说明，原文照录 | `notes` 非空时 |
+| `references/<别名>.md` | 这台服务器的详情：连接、系统、用途、档位、服务器级红线（含由「关键」服务生成的条目）、关键目录、服务、承载的站点、导出开关打开时的监听端口、笔记、数据快照时间 | 每台列入的服务器一个 |
+| `references/health-check.md` | 巡检清单（5.6） | 总是生成 |
 
-参照 Anthropic 官方的 Skill 最佳实践：references 只允许一层，不能出现「参考文件里再引用参考文件」；超过 100 行的参考文件，开头要加目录。
+- 文件名取自别名：转小写，`[a-z0-9-]` 以外的字符换成连字符；两台服务器得到同一个文件名时，按创建时间排在后面的追加 `-2`。笔记收件箱中的文件名与它相同。
+- 参照 Anthropic 官方的 Skill 最佳实践：references 只允许一层，不能出现「参考文件里再引用参考文件」；超过 100 行的参考文件，开头要加目录。
 
 ### 5.4 Lint 规则
 
+每条 Lint 结果都带服务器 id（全局内容的问题除外），界面据此定位到出问题的服务器。
+
 | 规则 | 级别 | 说明 |
 | :--- | :--- | :--- |
-| `name` 格式与长度 | 错误 | 正则 `^[a-z0-9]+(-[a-z0-9]+)*$`，最长 64 |
-| slug 是保留名 | 错误 | `synced` 是 Claude Code 的保留目录名 |
-| `description` 为空或超过 1024 字符 | 错误 | 必须同时有「做什么」和「什么时候用」 |
+| `description` 超过 1024 字符 | 警告 | 已按 F-201 AC2 截断，提示用户缩短用途 |
 | 疑似密钥 | 错误，阻断发布 | 使用 gitleaks 规则集，覆盖私钥文件头、AWS/GitHub/OpenAI/Anthropic Token 格式、`password=` 这类赋值，以及高熵字符串 |
 | 输出了已关闭导出的字段 | 错误，阻断发布 | 例如 IP 被关掉导出后仍出现在产物里 |
 | 引用的 references 文件不存在 | 错误 | 编译器自检 |
-| `SKILL.md` 正文行数超过上限 | 警告 | 默认上限 60 行，可配置。Anthropic 官方的建议是正文不超过 500 行、约 5k Token |
-| `description` 中没有出现别名或站点名 | 警告 | 会降低 Agent 正确触发这个 Skill 的概率 |
-| 生产资产使用标准运维档，且没有任何自定义红线 | 警告 | 提示用户补充红线 |
+| `SKILL.md` 正文行数超过上限 | 警告 | 默认上限 100 行，可配置。Anthropic 官方的建议是正文不超过 500 行、约 5k Token |
+| 生产服务器使用标准运维档，且没有任何自定义红线 | 警告 | 提示用户补充红线 |
 | 探测数据超过 30 天 | 提示 | 提示用户重新探测 |
-| 探测来源的值疑似包含指令注入 | 警告 | 规则见 8.3「探测数据是不可信输入」 |
+| 探测来源或笔记中的值疑似包含指令注入 | 警告 | 规则见 8.3「探测数据是不可信输入」 |
 
 ### 5.5 内置红线（任何档位都会注入，不可删除）
 
@@ -397,7 +528,36 @@ description: Connection, directory and container topology, and guardrails for hk
 | :--- | :--- |
 | Never read or print credential files (`.env`, `*.pem`, `*.key`, `id_*`, `/etc/shadow`, `~/.ssh/`) and never use `docker inspect` to view environment variables. | 不读取、不输出凭据类文件，不用 `docker inspect` 查看环境变量 |
 | Never ask for or record passwords, private keys or IP addresses; connect only through the SSH alias. | 不询问、不记录密码、私钥或 IP；连接只通过 SSH 别名进行 |
-| If the host does not match this document, report the difference to the user instead of "fixing" the server to match the document. | 现场情况与文档不一致时，先向用户报告，不要自行「修正」服务器去迎合文档 |
+| If a host does not match its details file, report the difference to the user instead of "fixing" the server to match the document. | 现场情况与文档不一致时，先向用户报告，不要自行「修正」服务器去迎合文档 |
+| If CloudLink's guard blocks a command, report it to the user; never try to work around the block with scripts, encoding or other tools. | 命令被护栏拦下时告诉用户，不要设法绕过 |
+
+### 5.6 巡检清单（`references/health-check.md`）
+
+用户让 Agent 巡检时（例如「巡检一下所有服务器」「看看 hk-edge 怎么样」），Agent 按这份清单逐台执行只读命令，最后用一张表汇报。清单里的每条命令都必须能通过护栏的只读白名单（8.6），由单元测试保证，所以只读服务器上的巡检不会被拦。
+
+```markdown
+# Health check
+
+Check the servers the user asked about; if none were named, check every server in the overview table. Run the checks for one server in a single ssh call, then report one table: server, status (OK / attention / unreachable), findings. Do not fix anything; list suggested actions separately and wait for the user.
+
+    ssh <alias> 'uptime; nproc; free -m; df -hP -x tmpfs -x devtmpfs -x overlay -x squashfs; docker ps -a --format "{{.Names}}\t{{.Status}}"; systemctl --failed --no-legend --plain; journalctl -p err --since "24 hours ago" --no-pager | tail -n 30'
+
+Mark a server as attention when:
+- any filesystem is at 85% or more
+- available memory is under 10% of the total
+- the 1-minute load is above the number of CPU cores
+- a container is exited, restarting or unhealthy (compare with the services in the details file)
+- a systemd unit has failed
+- the same error repeats in the last 24 hours
+
+Certificates: for each site in the server's details file, run on that server
+
+    ssh <alias> 'echo | openssl s_client -connect 127.0.0.1:443 -servername <site> 2>/dev/null | openssl x509 -noout -enddate'
+
+and mark certificates that expire within 14 days.
+
+If a command is missing on a server (no docker, no systemd), skip it and say so. If a server is unreachable, report it and continue with the next one.
+```
 
 ---
 
@@ -405,17 +565,17 @@ description: Connection, directory and container topology, and guardrails for hk
 
 ### 6.1 设计基调
 
-视觉系统见 `DESIGN.md`。它的核心是「钢与信号」：Nova 风格的紧凑密度，Mist 冷钢中性色，主按钮一律用钢墨色，信号色只有 Signal Cyan 一种，并且只用于焦点、落点和视角。颜色只表达状态。浅色和深色两套主题都要做到同等完成度，默认跟随系统。
+视觉系统见 `DESIGN.md`。它的核心是「钢与信号」：Nova 风格的紧凑密度，Mist 冷钢中性色，主按钮一律用钢墨色，信号色只有 Signal Cyan 一种，并且只用于键盘焦点和选中的服务器卡片描边（DESIGN.md 在 P3.5 同步修改）。颜色只表达状态。浅色和深色两套主题都要做到同等完成度，默认跟随系统。
 
 ### 6.2 信息架构
 
+v3 把一级导航从五项减到三项。服务器信息在「服务器」里管理；交给 Agent 的全局内容、护栏和分发目标在「Agent」里；v2 的 Skills 视图取消（预览移到 Sheet 里），活动日志并入设置。
+
 | 一级导航 | 图标 | 用途 | 侧栏计数徽章 |
 | :--- | :--- | :--- | :--- |
-| 资产 | `ServerIcon` | 维护资产，探测，预览编译结果 | 资产总数 |
-| Skills | `PackageIcon` | 编译产物总览、Lint 健康度、业务包（P1） | 编译受阻的数量（红色） |
-| 挂载 | `CableIcon` | 看板和矩阵、Agent 视角、目标管理 | 失效与冲突的数量（红色） |
-| 活动 | `HistoryIcon` | 探测、编译、挂载的日志 | 无 |
-| 设置 | `SettingsIcon` | 通用、运行环境、Agent 目标、编译、探测、数据 | 无 |
+| 服务器 | `ServerIcon` | 录入、测试连接、探测、编辑服务器信息；分发开关、档位和临时解锁；处理 Agent 笔记；查看操作记录；预览 Skill | 服务器总数；有编译受阻时改为红色受阻数 |
+| Agent | `BotIcon` | 总 Skill 的全局内容（服务器之间的关系、运维约定）和预览；护栏的安装与状态；Agent 目标、启用开关、副本健康与修复 | 需要处理的问题数（副本缺失、被改动、冲突，护栏未生效），红色 |
+| 设置 | `SettingsIcon` | 通用、运行环境、ssh 配置、编译、探测、活动（含 Agent 操作记录）、数据、危险操作 | 无 |
 
 侧栏底部显示运行环境状态，例如「Windows 可用、WSL Ubuntu 可用」。点击后跳转到「设置 / 运行环境」。
 
@@ -424,206 +584,200 @@ description: Connection, directory and container topology, and guardrails for hk
 - 使用 `SidebarProvider` 和 `Sidebar`（`collapsible="icon"`），右侧是 `SidebarInset`。窗口最小尺寸 960×600。
 - 工具栏高 44px，从左到右依次是：`SidebarTrigger`、`Separator`、`Breadcrumb`（视图 / 当前对象）、弹性空白、当前视图的操作按钮（`ButtonGroup`）、命令面板按钮（带 `Kbd` 提示）。
 - 标题栏使用系统原生样式（MVP 不自定义标题栏）。
-- 切换一级视图时，各视图的选中项、筛选条件和滚动位置都要保留（记在 store 里），切回来时恢复原样。
+- 切换一级视图时，各视图的选中项、搜索词和滚动位置都要保留（记在 store 里），切回来时恢复原样。
 
-### 6.4 资产视图（核心编辑视图）
+### 6.4 服务器视图（核心视图）
+
+参考 Termius 的主机管理：服务器是唯一的主角，左边是卡片列表，点击后右边打开详情面板。详情用纵向的可折叠分段代替标签页，一屏内能看到这台服务器的全部要点。
 
 ```text
-+--------+--------------------------------------------------------------------------------------------+
-| 侧栏   | [=] 资产 / hk-edge               [探测] [保存 Ctrl+S] [...]    [预览 Ctrl+\] [Ctrl+K]      |
-|        +------------------------+--------------------------------------+---------------------------+
-| 资产 12| 搜索名称、别名、标签   | hk-edge  香港轻量反代与边缘节点      | SKILL.md  runtime  notes  |
-| Skills | [全部][VPS][域名][面板]| (o 生产) 已挂载 3  已探测 2 小时前   | [渲染][源码]  档位[只读 v]|
-| 挂载  1| 环境 v   标签 v   排序v| 概览  连接  路径  服务  红线  挂载   |---------------------------|
-|        |------------------------|--------------------------------------| 常驻~86 触发~412 按需~1.2k|
-| 活动   | 生产                   | 名称  [香港轻量反代与边缘节点     ]  | 描述 312/1024  [=====---] |
-| 设置   | > hk-edge      3 挂载  | Slug  [vps-hk-edge]  已挂载，已锁定  | 正文 42/60 行  [=======-] |
-|        |   香港轻量 - Ubuntu    | 环境  (生产)(预发)(开发)             |---------------------------|
-|        |   sg-db        1 挂载  | 用途  [承担 api/blog 的反代与     ]  | ---                       |
-|        |   新加坡库 - Debian    | 标签  [edge x][1panel x][+]          | name: vps-hk-edge         |
-|        | 开发                   |                                      | description: 香港边缘...  |
-|        |   dev-box   从未探测   |--------------------------------------| ---                       |
-|        |                        | 探测面板（可折叠，Ctrl+J）           | # hk-edge 环境概览        |
-|--------|                        | v 已解析别名 hk-edge (WSL)    0.1s   | ## 连接                   |
-| 环境   |                        | v 已连接                      0.8s   | ...                       |
-| Win ok |                        | v 已采集 4 个容器             1.2s   |---------------------------|
-| WSL ok |                        | ! 发现 2 处变更      [审阅]          | ~/.cloudlink/ [复制] |
-+--------+------------------------+--------------------------------------+---------------------------+
++----------+-----------------------------------------+------------------------------------------+
+| CloudLink| 搜索服务器、别名、标签      [+ 新建 v]  | hk-edge  香港边缘节点         (o 生产)   |
+|          |                                         | Ubuntu 24.04 · 2C/2G · 2 小时前探测      |
+| 服务器  3| 生产                                    | [测试连接] [探测] [预览 Skill] [...]     |
+| Agent   1| +----------------+ +----------------+   |------------------------------------------|
+| 设置     | | [U] hk-edge    | | [D] sg-db      |   | v Agent                                  |
+|          | | 香港边缘节点   | | 新加坡数据库   |   |   分发给 Agent          [====o] 开       |
+|          | | ● 已连接 只读  | | ● 已连接 只读  |   |   档位  (只读巡检) ( 标准运维 )          |
+|          | | 笔记 3         | | 已解锁 · 23 分 |   |   护栏  已生效    [临时解锁 30 分钟]     |
+|          | | 分发 [====o]   | | 分发 [====o]   |   |   Windows        已列入                  |
+|          | +----------------+ +----------------+   |   WSL · Ubuntu   未列入：WSL 中没有私钥  |
+|          | 开发                                    | v 笔记       3 条 Agent 笔记待处理       |
+|          | +----------------+                      | > 操作记录   今天 12 条，拦下 2 条       |
+|          | | [U] dev-box    |                      | v 连接                                   |
+|          | | 开发机         |                      |   root@203.0.113.10:22  私钥  [编辑]     |
+|----------| | ○ 未验证       |                      | > 基本信息   名称、用途、标签、厂商      |
+| Win  ok  | | 分发 [o====]   |                      | > 路径       2 条                        |
+| WSL  ok  | +----------------+                      | > 服务       4 个，1 个未发现            |
+|          |                                         | > 红线       2 条自定义 + 4 条内置       |
++----------+-----------------------------------------+------------------------------------------+
 ```
 
-**布局**：外层是 `ResizablePanelGroup`（水平），用 `useDefaultLayout({ id: "assets" })` 持久化。
+**布局**：外层是 `ResizablePanelGroup`（水平），用 `useDefaultLayout({ id: "servers" })` 持久化。列表 `"42%"`（最小 `"300px"`），详情弹性（最小 `"420px"`）。没有选中服务器时，详情面板显示 `Empty`：「选择一台服务器查看详情」。
 
-| 面板 | 默认 / 最小 / 最大 | 折叠 |
-| :--- | :--- | :--- |
-| 列表 | `"24%"` / `"220px"` / `"40%"` | 不可折叠 |
-| 编辑器 | 弹性 / `"420px"` | 不可折叠；内部再纵向切分出探测面板（默认 `"30%"`，可折叠，`Ctrl+J`） |
-| 预览 | `"34%"` / `"280px"` | 可折叠到 0。`Ctrl+\` 或工具栏按钮切换；窗口宽度小于 1200px 时默认折叠 |
+> 注意：react-resizable-panels v4 中，数字尺寸按**像素**计算，字符串尺寸才按百分比，所以必须写成 `"42%"` 这样的形式。
 
-> 注意：react-resizable-panels v4 中，数字尺寸按**像素**计算，字符串尺寸才按百分比，所以必须写成 `"24%"` 这样的形式。
+**列表**
 
-**列表面板**
+- 顶部只有一个搜索框（`InputGroup`，匹配名称、别名、标签、站点名）和主按钮「新建服务器」，旁边的 `DropdownMenu` 里有「从 ssh config 导入」。不再提供类型、环境、标签、排序筛选：v0.1 只有 VPS，按环境分组已经足够；服务器超过 20 台时再评估筛选。
+- 卡片按「生产 / 预发 / 开发」分组，组内按名称排序。卡片使用 `Card size="sm"`，网格 `grid-cols-[repeat(auto-fill,minmax(220px,1fr))]`。
+- 卡片内容：系统图标（由探测得到的发行版，没有探测时用 `ServerIcon`）、别名（等宽）、名称、连接状态（已连接 / 未验证 / 连接失败）、档位、「分发」`Switch`（`aria-label="将 hk-edge 分发给 Agent"`）。有待处理的 Agent 笔记时显示 `Badge variant="outline"`「笔记 3」；临时解锁期间显示 `Badge variant="warning"`「已解锁 · 23 分」。分发开关在卡片上直接可操作，点击开关不打开详情。
+- 卡片是可聚焦的按钮语义（`role="button"`、Enter 打开），选中项设置 `aria-current="true"`，使用 frost 底色和信号色描边。方向键在卡片之间移动焦点。
+- 右键卡片打开 `ContextMenu`：测试连接、探测、临时解锁 30 分钟（解锁期间为「立即锁回」）、复制别名、删除。
 
-- 顶部是 `ToggleGroup`（资产类型；P0 只启用 VPS，其余类型禁用，并用 Tooltip 说明「v0.5 提供」），以及两个 `DropdownMenu`：「环境」（Checkbox 项）和「标签」。
-- 列表本体使用 `Command`，设置 `shouldFilter={false}`，筛选由 Zustand 的 selector 完成，cmdk 只负责键盘导航和 listbox 语义。用 `CommandInput` 做搜索，`CommandGroup` 按「生产 / 预发 / 开发」分组。
-- 每个 `CommandItem` 包含：
-  - 左侧状态图标：表示探测状态，取值为从未探测、正常、已过期、失败。
-  - 主标题：资产名称。
-  - 副标题：别名（等宽字体）和操作系统。
-  - 右侧：挂载数量。
-- 当前打开的资产设置 `aria-current="true"`，使用 frost 底色和 `font-medium`。cmdk 的键盘高亮沿用默认的 `data-selected` 样式。两种状态要能区分开。
-- 列表上方放一个主按钮「新建资产」，附带的 `DropdownMenu` 里有「从 ssh config 导入」。
+**详情面板**
 
-**编辑器面板**
+- 头部：别名（Title 字号，等宽）、名称、环境徽章；第二行是系统摘要和探测时间（`Intl.RelativeTimeFormat`）；第三行是操作：「测试连接」「探测」「预览 Skill」和「更多」菜单（在文件夹中显示编译目录、删除服务器）。编译受阻或有 Lint 警告时，头部下方显示一行摘要，点击打开预览 Sheet 并定位到 Lint 项。
+- 正文是一组 `Collapsible` 分段。**Agent 分段固定在第一位并默认展开**；有待处理的 Agent 笔记时，笔记分段默认展开；连接分段默认展开；其余默认折叠，折叠状态按分段持久化。折叠时标题行右侧显示一句摘要（例如「4 个，1 个未发现」）。
 
-- 头部依次是：资产名（Title 字号）、环境徽章（描边加色点）、别名徽章（等宽字体）、探测状态和相对时间（`Intl.RelativeTimeFormat`）。右侧是「探测」「保存」两个按钮和一个「更多」菜单。更多菜单里有：复制 slug、在文件夹中显示编译目录、重命名迁移、删除资产（destructive，删除前弹出 `AlertDialog`，列出将被卸载的挂载）。
-- 正文是 `Tabs`（`<TabsList variant="line">`），每个标签页的内容如下。
-
-| 标签页 | 内容与组件 |
+| 分段 | 内容 |
 | :--- | :--- |
-| 概览 | 名称（`Input`）；Slug（`InputGroup`，等宽字体，失焦时校验；已挂载则锁定，右侧有「重命名」按钮，打开 `Dialog`）；环境（`ToggleGroup` 单选）；云厂商和地域（`Combobox`，可选值来自已有资产）；标签（`Combobox` 多选，配 `ComboboxChips`）；用途（`Textarea`，带字数统计，内容会进入 description）；附加说明（`Textarea`） |
-| 连接 | SSH 别名（`Combobox`，选项来自已解析的 ssh config，每项标注来源环境）；解析结果（只读的 `Item` 列表，展示 HostName、User、Port、ProxyJump，每行前有 `LockIcon`，旁边是「导出」`Switch`）；可达性（每个运行环境一行：「已定义」或「未定义，该环境的 Agent 无法连接」） |
-| 路径 | 可排序的键值行：拖拽手柄、用途（`Input`）、路径（`Input`，等宽字体）、删除按钮。「添加路径」按钮，以及「从面板模板添加」菜单（1Panel 和宝塔的常用目录） |
-| 服务 | `Table`，列为名称（等宽）、类型徽章、镜像、端口（`127.0.0.1:8080->8080` 格式）、角色（行内 `Input`）、关键（`Switch`）、来源徽章（探测 / 手动）、状态（「未发现」用琥珀色）。另有「手动添加」按钮 |
-| 红线 | 默认档位：用 `RadioGroup` 做两张选择卡（只读巡检 / 标准运维），卡片里说明这个档位会生成什么。自定义红线：可排序的 `Textarea` 列表，可增删。内置红线：放在 `Collapsible` 里只读展示。顶部有一条 `Alert`：「红线是写给 Agent 的指令，不是技术隔离。需要硬隔离时，请为只读场景配置低权限 SSH 用户。」 |
-| 挂载 | 本资产的挂载列表（目标、档位、状态），使用 `Item`；一个「挂载到…」`Combobox`；一个「在挂载中心查看」的链接 |
+| Agent | 「分发给 Agent」`Switch`（未验证或只用密码时禁用，旁边写明原因和处理入口）；档位 `ToggleGroup`（只读巡检 / 标准运维；生产服务器切到标准运维时弹 `AlertDialog`）；护栏一行：这台服务器所在运行环境的护栏状态（已生效 / 未安装 / 未生效，多个环境时取最差的一个，链接到 Agent 页），右侧是「临时解锁 30 分钟」按钮，解锁期间换成剩余时间和「立即锁回」，生产服务器解锁前弹 `AlertDialog`；列入情况：每个运行环境一行 `Item`，显示「已列入」或「未列入」，未列入时写明原因并提供处理入口。没有启用任何 Agent 时，显示「还没有启用的 Agent」并链接到 Agent 页 |
+| 笔记 | 顶部是待处理的 Agent 笔记（F-308）：每条一个 `Item`，显示日期和原文（纯文本，不渲染 Markdown），命中密钥或疑似注入时带 `Badge variant="warning"` 说明原因；操作是「并入」「编辑后并入」「忽略」，列表上方有「全部并入」。下面是笔记字段本身（`Textarea`），内容进入详情文件的 Notes 一节。详情有未保存的修改时，「并入」不可用，提示先保存或放弃 |
+| 操作记录 | 最近 50 条护栏记录（F-307），每条一行 `TraceLine`：时间、结果图标（放行 `CircleCheckIcon`、拦下 `ShieldXIcon`、解锁期间放行 `LockOpenIcon`）、命令（等宽、截断，可以展开）、工作目录（只显示文件夹名）。底部是「在活动中查看全部」，并注明「只记录经过护栏的命令（Claude Code）」 |
+| 连接 | managed：一行摘要 `user@host:port`、认证方式、写入的运行环境，「编辑」进入编辑态（字段同 6.5）；高级里有别名、跳板机，以及「导出到 Skill」的开关（解析后的连接信息、监听端口，F-105）。imported：显示 `ssh -G` 解析结果（只读，每行前有 `LockIcon`）和来源环境，并说明「连接信息由你的 ssh config 维护」 |
+| 基本信息 | 名称、环境标签、用途（进入总览表和 description，带字数统计）、标签、云厂商、地域 |
+| 路径 | 可排序的键值行：拖拽手柄、用途、路径（等宽）、删除。「添加路径」和「从面板模板添加」（1Panel、宝塔的常用目录） |
+| 服务 | `Table`：名称（等宽）、类型、镜像、端口（`127.0.0.1:8080->8080`）、角色（行内 `Input`）、关键（`Switch`，打开后护栏会拦下停止或删除它的命令）、来源（探测 / 手动）、状态（「未发现」用琥珀色）。「手动添加」按钮 |
+| 红线 | 自定义红线：可排序的 `Textarea` 列表，可增删。内置红线：只读展示。顶部 `Alert`：「红线是写给 Agent 的指令。Claude Code 上的护栏会拦下只读服务器上的写操作和明显危险的命令，能防手滑，防不了刻意绕过。需要硬隔离时，请为只读场景配置低权限 SSH 用户。」 |
 
-- 表单使用 react-hook-form 加 zodResolver，在失焦时校验。必填字段在标签后加「*」，并设置 `aria-required`。可排序的行由 `useFieldArray` 管理，拖拽结束后调用它的 `move()`。
-- 字段分散在多个标签页里，提交时出错的字段可能不在当前标签页。因此保存校验失败时，要做三件事：
-  1. 在每个出错的 `TabsTrigger` 上显示错误数量的 `Badge`。
-  2. 自动切换到第一个出错的标签页。
-  3. 等该标签页渲染完成后，再调用 RHF 的 `setFocus(name)`，把焦点移到出错字段。不能只依赖 `shouldFocusError`，因为未激活标签页里的字段可能还没挂载。
-- 保存期间，「保存」按钮显示 `Spinner` 并禁用，防止重复提交。
-- 有未保存修改时，标题旁显示「未保存」。按 `Ctrl+S` 保存；在有未保存修改的情况下离开当前资产，弹出 `AlertDialog`，选项为「放弃修改 / 继续编辑」。
-- 保存成功后，头部状态行显示「已保存，已编译」（带 `CircleCheckIcon`），不弹 Toast。编译受阻时，状态行显示红色「编译受阻：N 个错误」，点击后预览面板定位到对应的 Lint 项。
+- 编辑使用 react-hook-form 加 zodResolver，在失焦时校验。可排序的行由 `useFieldArray` 管理，拖拽结束后调用它的 `move()`。
+- **保存是显式的**：有未保存修改时，详情面板底部出现固定的操作条：「未保存的修改」、「放弃」和主按钮「保存」（`Ctrl+S`）。分发开关、档位、临时解锁，以及笔记的并入和忽略是例外，它们立即生效，不经过保存。
+- 保存校验失败时，展开出错字段所在的分段，并把焦点移到第一个出错字段。
+- 有未保存修改时切换服务器或离开视图，弹出 `AlertDialog`：「放弃修改 / 继续编辑」。
+- 保存成功后，操作条消失，头部状态显示「已保存，已编译」（带 `CircleCheckIcon`），不弹 Toast。
 
-**预览面板**
+**预览 Skill**（右侧 `Sheet`，宽度 `min(720px, 60vw)`，`Ctrl+\` 切换）
 
-- 头部有三部分：文件切换（`Tabs`：SKILL.md 和各个 references 文件）、档位选择（`Select`）、渲染与源码切换（`ToggleGroup`）。
-- 预算区：三项 Token 估算，用 `Item size="xs"` 加 `Tooltip`；两条 `Progress` 分别表示 description 字符数和正文行数（阈值规则见 DESIGN.md）。
-- Lint 区：用 `Item` 列表展示错误和警告，带图标。点击后定位到源码视图的对应行。
+- 头部：文件切换（`Tabs`：SKILL.md、这台服务器的详情文件、health-check.md；从 Agent 页打开时列出全部文件）、运行环境 `Select`（有多个运行环境时出现，默认 Windows）、渲染与源码切换（`ToggleGroup`）。档位不在这里切换，以详情面板为准。
+- 预算区：两条 `Progress`，分别表示 description 字符数和正文行数相对上限的占用（阈值规则见 DESIGN.md）。
+- Lint 区：用 `Item` 列表展示错误和警告。点击后切到源码视图并定位到对应行。
 - 内容区：渲染视图用 `streamdown`，外面包 `div.typeset`；源码视图用 `CodeBlock` 加 `useHighlightedCode(content, "markdown")` 和行号。
-- 底部：发布路径（等宽字体，截断显示），以及「复制路径」「在文件夹中显示」两个操作。
-- 有未保存修改时，标题显示「草稿预览」，并注明「保存后发布」。草稿预览的编译请求做 200ms 防抖，并且只取最后一次请求的结果，较早返回的结果直接丢弃。
+- 底部：编译目录（等宽，截断），「复制路径」「在文件夹中显示」。
+- 有未保存修改时，标题显示「草稿预览」，并注明「保存后发布」。草稿编译请求做 200ms 防抖，只取最后一次请求的结果。
 
-### 6.5 探测流程
+**探测流程**
 
-1. 点击「探测」后，编辑器底部的探测面板自动展开，用 `Trace` 实时显示每个步骤：解析别名、建立连接、采集系统信息、采集服务、采集监听端口、生成差异。运行中的步骤设置 `status="running"`，失败的设置 `status="error"`。每一步右侧的 `TraceDescription` 显示耗时。
-2. 探测过程中，「探测」按钮变为「取消探测」。用户可以离开当前资产，探测在后台继续。完成后用 Toast 通知，附「查看」按钮。
-3. 有差异时，面板切换到「审阅变更」：
+1. 点击「探测」后打开探测 `Sheet`，用 `Trace` 实时显示每个步骤：解析别名、建立连接、采集系统信息、采集服务、采集监听端口、合并与编译。运行中的步骤设置 `status="running"`，失败的设置 `status="error"`，`TraceDescription` 显示耗时。
+2. 探测过程中，「探测」按钮变为「取消探测」。用户可以关闭 Sheet 或切换服务器，探测在后台继续，卡片上显示 `Spinner`。完成后用 Toast 通知「探测了 hk-edge，更新了 3 处」，附「查看」和「撤销」按钮。
+3. 完成后，Sheet 显示本次更新：
 
 ```text
 +----------------------------------------------------------------------------+
-| 探测结果  hk-edge  2026-10-27 14:02  用时 3.1s                  [收起]     |
+| 探测完成  hk-edge  2026-10-31 14:02  用时 3.1s                      [x]    |
 +----------------------------------------------------------------------------+
-| [v]  + 新增服务   api-gateway  my-api:v1.2  127.0.0.1:8080->8080           |
-| [v]  ~ 系统       Ubuntu 22.04 -> Ubuntu 24.04                             |
-| [ ]  - 未发现     old-worker（保留标注，标记为「未发现」）                 |
-| [v]  ~ 监听端口   新增 9090/tcp                                            |
+| 已更新 3 处，已重新编译                                                    |
+|   + 新增服务   api-gateway  my-api:v1.2  127.0.0.1:8080->8080             |
+|   ~ 系统       Ubuntu 22.04 -> Ubuntu 24.04                               |
+|   - 未发现     old-worker（保留标注，标记为「未发现」）                   |
+| 待确认 1 处：疑似指令注入，没有自动合并                                    |
+|   [ ] + 新增服务   ignore-previous-instructions  alpine:3.20               |
 +----------------------------------------------------------------------------+
-| [查看探测脚本]  [全部忽略]                       [应用所选 3 项并编译]     |
+| [查看探测脚本]                           [撤销本次更新]  [合并所选]        |
 +----------------------------------------------------------------------------+
 ```
 
-- 每条变更是一个 `Item`，左侧是 `Checkbox`，展开后用 `CodeBlockLine`（`added` 或 `removed`）展示前后对比。
-- 没有差异时，面板只显示一行：「未发现变更，已更新探测时间」。
-- 失败时，`Trace` 的最后一步显示错误，下方用 `Alert variant="destructive"` 给出分类文案和建议（见 8.3）。如果建议需要用户在终端里执行命令，例如 `ssh hk-edge`，就用 `CodeBlock` 配复制按钮展示这条命令。
+- 已更新的每条是一个 `Item`，展开后用 `CodeBlockLine`（`added` 或 `removed`）展示前后对比。只有待确认的项带 `Checkbox`，「合并所选」只作用于它们。
+- 「撤销本次更新」恢复这次探测改动过的字段并重新编译，结果用 Toast 播报。只能撤销最近一次探测。
+- 没有变化时只显示一行：「未发现变化，已更新探测时间」。
+- 失败时，`Trace` 的最后一步显示错误，下方用 `Alert variant="destructive"` 给出分类文案和建议（见 8.3）。需要用户在终端里执行的命令用 `CodeBlock` 配复制按钮展示。
 
-### 6.6 挂载视图（Dispatcher）
+### 6.5 新建服务器与测试连接
 
-工具栏从左到右依次是：视图切换 `ToggleGroup`（看板 / 矩阵）、环境筛选 `Select`、「添加项目」按钮、「检查全部链接」（`RefreshCwIcon`）按钮，最右边是健康摘要，例如「12 个挂载，1 个失效，0 个冲突」，用状态徽章展示。
-
-只要有生产资产挂在全局目标上，工具栏下方就常驻一条 `Alert`（带 `ShieldAlertIcon`），文案为：「2 个生产资产挂在全局目标上，所有项目中对应的 Agent 都能看到它们。」右侧的 `AlertAction` 是「查看」，点击后切到矩阵视图，只显示这些挂载。这条提示不能关闭，全部取消后才会消失。
-
-**看板模式**
+点击「新建服务器」后，详情面板切换为新建表单。不用对话框：新建和编辑使用同一块区域，用户可以对照左边的列表。
 
 ```text
-+----------------------------------------------------------------------------------------------------+
-| [i] Agent 视角：Codex @ OpenPet-Desktop (WSL)  可见 2 个（项目 1、全局 1），1 个已失效  [退出视角] |
-+----------------------------+-----------------------------------------------------------------------+
-| 搜索 Skill                 | 全局 Agent                                                            |
-|                            +-----------------------------------+-----------------------------------+
-| 生产                       | Claude Code - Windows  [视角][...]| 通用 .agents - WSL Ubuntu [...]   |
-| :: vps-hk-edge 只读 可见   | ~\.claude\skills                  | ~/.agents/skills                  |
-| :: vps-sg-db 标准 已失效   | [眼] vps-hk-edge 已挂载(复制) [x] | [扳手] vps-dev-box  已挂载  [x]   |
-|                            | 拖入 Skill 以挂载                 | 拖入 Skill 以挂载                 |
-|                            +-----------------------------------------------------------------------+
-| 开发                       | 项目                                                                  |
-|                            +-----------------------------------+-----------------------------------+
-| :: vps-dev-box 标准 可见   | OpenPet-Desktop  WSL  [视角][...] | Blog-Astro  Windows  [视角][...]  |
-|                            | .claude + .agents  已排除 git     | .claude  已排除 git               |
-|                            | [扳手] vps-hk-edge  已挂载  [x]   | [!] blog-cdn  冲突  [查看]        |
-|                            | [眼] vps-sg-db  已失效  [修复]    | 拖入 Skill 以挂载                 |
-+----------------------------+-----------------------------------+-----------------------------------+
++------------------------------------------------------------+
+| 新建服务器                                           [x]   |
+|------------------------------------------------------------|
+| 名称 *      [香港边缘节点                              ]   |
+| 地址 *      [203.0.113.10                ]  端口 [22   ]   |
+| 用户 *      [root                                      ]   |
+| 认证方式    ( 私钥文件 )( ssh-agent )( 密码 )              |
+| 私钥        Windows    [C:\Users\me\.ssh\id_ed25519] [选择]|
+|             WSL Ubuntu [/home/me/.ssh/id_ed25519   ] [选择]|
+| 环境        ( 生产 )( 预发 )( 开发 )                       |
+| > 高级      别名 hk-edge · 跳板机 · 写入的运行环境         |
+|------------------------------------------------------------|
+| [测试连接]  ✓ 已连接 · 0.8s · Ubuntu 24.04                 |
+|                                     [取消]  [保存并探测]   |
++------------------------------------------------------------+
 ```
 
-- 左侧是 Skill 源列表，每项都可以拖拽：`useDraggable` 绑定在 `GripVerticalIcon` 手柄上。每项还有一个「挂载到…」`DropdownMenu`，菜单里用 Checkbox 项列出全部目标，这是不用拖拽的替代入口。
-- 右侧是目标卡片，使用 `Card size="sm"`，每张卡都是一个 `useDroppable` 区域。
-  - 卡片头：名称、运行环境、路径（等宽、截断）、`CardAction`。CardAction 里的菜单包含：以此视角查看（项目卡片上是子菜单，列出该环境中读取已启用约定目录的 Agent）、链接方式（自动 / 链接 / 复制，Radio 项）、在文件夹中显示、检查链接、移除目标。
-  - 卡片内容：一组挂载芯片（规格见 DESIGN.md）。没有挂载时显示「拖入 Skill 以挂载」。
-- 拖拽过程：
-  1. 拖起时，`DragOverlay` 渲染芯片样式的副本，略微放大并加 Lifted 阴影。
-  2. 悬停在某个目标上时，那张卡片用信号色高亮（`ring-2 ring-ring` 加 `bg-ring/8`）。
-  3. 放下后，依次进行三项校验：如果是生产资产挂到全局，弹 `AlertDialog` 确认；如果已经挂载过，用 Toast 提示「已在此目标挂载」；如果别名在该环境里不可达，弹 `AlertDialog` 说明风险，仍然可以继续。
-  4. 校验通过后执行挂载（乐观更新：芯片先以 `pending` 状态出现，带 `Spinner`）。成功后弹出 Toast，描述里写明该 Agent 怎样才会生效（规则见 F-303 AC4），例如「Claude Code 会话已在运行时，请执行 /reload-skills」。
-- 键盘：dnd-kit 的 `KeyboardSensor` 方案是空格拿起、方向键在目标之间移动、空格放下、Esc 取消。屏幕阅读器播报文案见 6.13。
-- 卸载：点击芯片上的关闭按钮后立即卸载，并弹出 Toast「已卸载 vps-hk-edge」，带「撤销」按钮（重新挂载）。
-- **Agent 视角**：在目标卡片的菜单里选「以此视角查看 > 某个 Agent」，或者在矩阵中点击列头（项目列会弹出 Agent 选择），就进入视角模式。可见集合的计算规则见 F-306，行为规范见 DESIGN.md 的 Agent Lens 一节。视角状态存放在 `useUIStore.lens = { targetId, agent }`。
+- 字段顺序与常见 SSH 客户端的新建主机一致：名称、地址、端口、用户、认证。别名默认由名称生成（转小写、空格换成连字符），实时显示在「高级」的折叠标题上。
+- 认证方式用 `ToggleGroup`：
+  - **私钥文件**：每个可用运行环境一行路径输入，带文件选择按钮（`@tauri-apps/plugin-dialog`）。WSL 的那一行可以「从 Windows 复制一份到 WSL」（复制到 `~/.ssh/` 并设置 600 权限），用于解决 `/mnt/c` 下权限过宽的问题。
+  - **ssh-agent**：说明「使用系统 ssh-agent 中已加载的密钥」，并显示 `ssh-add -l` 检测到的密钥数量。
+  - **密码**：密码输入框（`type="password"`，带显示切换）。下方常驻 `Alert`：「Agent 无法输入密码。测试连接通过后，可以一键改用密钥登录，否则这台服务器不能分发。」
+- 「测试连接」按钮在表单底部左侧，结果原地显示在按钮旁，不弹 Toast：
+  - 进行中：按钮内 `Spinner`，旁边「正在连接…」，按钮变为「取消」。
+  - 首次连接：弹出 `AlertDialog` 显示主机指纹（`SHA256:…`，等宽），选项「信任并继续 / 取消」。
+  - 成功：`CircleCheckIcon` 加「已连接 · 耗时 · 远端系统」。如果认证方式是密码，紧接着显示「改用密钥登录」按钮（F-108）。
+  - 失败：`CircleXIcon` 加分类文案和下一步（8.3），例如「认证失败：服务器拒绝了这把私钥。确认公钥已加入服务器的 ~/.ssh/authorized_keys。」
+- 主按钮：测试通过时为「保存并探测」；未测试或失败时为「保存」，点击后提示「连接未验证，保存后不能分发」，用户可以继续保存。
+- 首次写入托管 ssh 配置前，弹出 F-107 的 `AlertDialog`，展示将要加入 `~/.ssh/config` 开头的那一行，选项「加入 Include / 暂不加入」。
+- 编辑已有服务器的连接信息使用同一组字段。
 
-**矩阵模式**
+### 6.6 Agent 视图
+
+取代 v2 的挂载视图和 Agent 视角。页面是一列，三个分区各有一个 `h2`：交给 Agent 的内容、护栏、分发目标。
 
 ```text
-+--------------------------+--------------+--------------+--------------+--------------+--------------+
-| Skill / 目标             | Claude Code  | 通用 .agents | OpenPet-Desk | Blog-Astro   | infra-tools  |
-|                          | 全局 Win     | 全局 WSL     | 项目 WSL     | 项目 Win     | 项目 WSL     |
-+--------------------------+--------------+--------------+--------------+--------------+--------------+
-| vps-hk-edge   (o 生产)   | [开] 只读    | [关]         | [开] 标准    | [关]         | [关]         |
-| vps-sg-db     (o 生产)   | [关]         | [关]         | [开] 只读 !  | [关]         | [关]         |
-| vps-dev-box   (o 开发)   | [关]         | [开] 标准    | [关]         | [关]         | [开] 只读    |
-+--------------------------+--------------+--------------+--------------+--------------+--------------+
++----------+--------------------------------------------------------------------------------+
+| 侧栏     | Agent                                                [预览 Skill]  [检查全部]  |
+|          | 3 台服务器已列入 · 4 个目标已启用 · 1 个副本需要修复                           |
+|          |--------------------------------------------------------------------------------|
+|          | 交给 Agent 的内容                                                              |
+|          |   服务器之间的关系  [hk-edge reverse-proxies api.example.com to the API ... ]  |
+|          |   运维约定          1. Deploy with docker compose in /opt/apps/<name> ...      |
+|          |                     2. Tell the user before restarting anything on ...   [+]   |
+|          |   巡检清单          内置，Agent 巡检时只执行只读命令                  [查看]   |
+|          |--------------------------------------------------------------------------------|
+|          | 护栏（Claude Code）                                              [查看规则]    |
+|          |   Windows          已生效 · 今天拦下 2 条                            [移除]    |
+|          |   WSL · Ubuntu     未安装                                            [安装]    |
+|          |   护栏只解析命令文本，能防手滑，防不了刻意绕过。Codex 没有护栏。               |
+|          |--------------------------------------------------------------------------------|
+|          | 分发目标                                                    [+ 自定义目录]     |
+|          | Windows                                                                        |
+|          | +----------------------------------------------------------------------------+ |
+|          | | [Claude] Claude Code   ~\.claude\skills        已同步 3 台   [====o] 启用   | |
+|          | +----------------------------------------------------------------------------+ |
+|          | | [Agents] 通用（Codex 等）  ~\.agents\skills    未检测到      [o====] 停用   | |
+|          | +----------------------------------------------------------------------------+ |
+|          | WSL · Ubuntu-24.04                                                             |
+|          | +----------------------------------------------------------------------------+ |
+|          | | [Claude] Claude Code   ~/.claude/skills        副本缺失 [修复] [====o] 启用 | |
+|          | +----------------------------------------------------------------------------+ |
+|          | | [Agents] 通用（Codex 等）  ~/.agents/skills    已同步 2 台   [====o] 启用   | |
+|          | +----------------------------------------------------------------------------+ |
++----------+--------------------------------------------------------------------------------+
 ```
 
-- 使用 `Table` 放在 `ScrollArea` 里。第一列 sticky（`sticky left-0 bg-background`），列头按「全局 Agent」和「项目」分组。
-- 每个单元格包含：一个 `Switch`（`aria-label="将 vps-hk-edge 挂载到 OpenPet-Desktop"`），开启后出现档位图标按钮（`Button size="icon-xs" variant="ghost"`，点击打开带 Radio 项的 `DropdownMenu`），以及状态图标（失效或冲突，悬停时用 `Tooltip` 解释）。
-- 右键单元格打开 `ContextMenu`，菜单项有：切换档位、修复、在文件夹中显示。
-- 打开开关和在看板里拖拽走的是同一个挂载管线，二次确认规则也完全一样。
+- **交给 Agent 的内容**：「服务器之间的关系」（`Textarea`，带字数统计）；「运维约定」（可排序的 `Textarea` 列表，与红线编辑器相同）；「巡检清单」只读，「查看」打开预览 Sheet 并定位到 health-check.md。修改后底部出现与服务器详情相同的保存操作条，保存后重新编译。
+- **护栏**：每个有 Claude Code 目标的运行环境一行 `Item`：状态（已生效 / 未安装 / 未生效及原因 / 不可用及原因）、今天拦下的数量，操作是「安装」或「移除」。安装前弹 F-306 AC1 的 `AlertDialog`，用 `CodeBlock` 展示将要写入的 JSON 和备份位置。「查看规则」打开 `Sheet`，列出只读白名单和标准运维下拦下的命令类别（8.6）。分区底部常驻一行说明：「护栏只解析命令文本，能防手滑，防不了刻意绕过。Codex 没有护栏，它默认每条 ssh 都要你批准。」
+- **分发目标**：按运行环境分组，每个目标一张 `Card size="sm"`：Agent 图标与名称、目录（等宽、截断）、检测状态、副本状态（已同步 N 台 / 副本缺失 / 副本被改动 / 待同步 / 冲突），有问题时显示「修复」，以及启用 `Switch`。「更多」菜单：在文件夹中显示、检查；自定义目录额外有「移除」。
+- 停用目标前弹 `AlertDialog`（F-302 AC2）。
+- 顶部摘要中的问题数可点击，滚动到第一个有问题的位置。
 
-### 6.7 Skills 视图
-
-```text
-+--------+---------------------------------------------------------+-------------------------------------+
-| 侧栏   | 搜索   状态 [全部 v]                     [新建业务包 P1]| vps-hk-edge                  [...]  |
-|        +---------------------------------------------------------+-------------------------------------+
-|        | Skill          来源       变体        状态   常驻  挂载 | 来源 hk-edge  变体 只读、标准       |
-|        | vps-hk-edge    hk-edge    只读 标准   正常   ~86    3   | （与资产视图预览面板相同的组件）    |
-|        | vps-sg-db      sg-db      只读        警告   ~140   1   | 文件 / 预算 / Lint / 内容           |
-|        | vps-dev-box    dev-box    标准        受阻   -      0   |                                     |
-+--------+---------------------------------------------------------+-------------------------------------+
-```
-
-- 左边是 `Table`，可以按状态筛选。MVP 阶段表格不提供点击列头排序，需要排序的地方用「排序」下拉菜单代替，避免自己实现排序交互和 `aria-sort`。右边的详情直接复用资产视图的预览面板组件（`SkillPreview`），只额外增加「变体」和「挂载」两个摘要。
-- P1 的「新建业务包」在 `Dialog` 中完成：填写名称和 slug；用 `Combobox` 多选资产；成员顺序用 dnd-kit 的 sortable 调整；description 可以覆盖。
-
-### 6.8 活动视图
-
-- 按天分组，分页加载（每次 100 条，底部有「加载更多」按钮），不引入虚拟列表库。每条记录是一行 `TraceLine`。图标按类型区分：探测 `RadarIcon`、编译 `HammerIcon`、挂载 `LinkIcon`、卸载 `UnlinkIcon`、修复 `WrenchIcon`。标题写成完整的句子，例如「探测了 hk-edge，发现 2 处变更」；`TraceDescription` 显示耗时。
-- 有详情的记录用 `TraceCollapsible` 展开，里面用 `CodeBlock size="sm"` 展示执行过的命令清单或差异摘要。
-- 筛选：类型用 `ToggleGroup`，资产用 `Combobox`。
-
-### 6.9 设置视图
+### 6.7 设置视图
 
 左侧是用 `Item` 做的分区导航，右侧是对应表单（`FieldSet`）。
 
 | 分区 | 内容 |
 | :--- | :--- |
-| 通用 | 主题（跟随系统 / 浅色 / 深色）；编译产物语言（v0.1 固定英文，P1 起可切换）。v0.1 的界面只有简体中文，不提供界面语言切换 |
+| 通用 | 主题（跟随系统 / 浅色 / 深色）；编译产物语言（v0.1 固定英文，P1 起可切换）；新建非生产服务器的默认档位。v0.1 的界面只有简体中文 |
 | 运行环境 | 已检测到的环境列表，每项有启用开关；重新检测按钮 |
-| Agent 目标 | 全局目标列表；启用或创建目录；添加自定义目录；每个目标的链接方式（自动 / 链接 / 复制），Windows 上的「Junction（实验）」开关 |
-| 编译 | 正文行数上限（默认 60）；是否在 SKILL.md 中写入数据快照时间；默认档位 |
-| 探测 | 超时时间；查看探测脚本（`CodeBlock`，语言为 bash，只读）；主机密钥策略固定为严格校验，只展示，不提供选项 |
+| ssh 配置 | 每个运行环境一行：托管文件路径、是否已加入 Include（未加入时提供「加入 Include」按钮和手动添加的说明）、`known_hosts` 路径 |
+| 编译 | 正文行数上限（默认 100）；是否在 SKILL.md 中写入数据快照时间 |
+| 探测 | 超时时间；查看探测脚本（`CodeBlock`，语言为 bash，只读）；主机密钥策略固定为严格校验，只展示 |
+| 活动 | 活动日志和 Agent 操作记录（见下） |
 | 数据 | 数据目录；打开日志目录；导出或导入 JSON（P1） |
-| 危险操作 | 卸载全部挂载、清空数据。都使用 destructive 按钮并配 `AlertDialog`，确认时要求输入「卸载全部」 |
+| 危险操作 | 移除全部分发；清空数据（同时删除托管 ssh 配置、凭据库中的密码、护栏的 hook、笔记收件箱和操作记录）。都使用 destructive 按钮并配 `AlertDialog`，确认时要求输入「移除全部」或「清空数据」 |
 
-### 6.10 导入、添加项目、首次启动
+**活动日志**：按天分组，分页加载（每次 100 条，底部「加载更多」），不引入虚拟列表库。每条记录是一行 `TraceLine`，图标按类型区分：测试连接 `PlugIcon`、探测 `RadarIcon`、编译 `HammerIcon`、分发 `FolderSyncIcon`、移除 `FolderMinusIcon`、修复 `WrenchIcon`、ssh 配置 `FileCogIcon`、护栏 `ShieldIcon`、解锁 `LockOpenIcon`、笔记 `NotebookPenIcon`、Agent 操作 `TerminalIcon`。标题写成完整的句子，例如「探测了 hk-edge，更新了 2 处」「Agent 在 hk-edge 上执行的 `docker restart api` 被护栏拦下」。有详情的记录用 `TraceCollapsible` 展开。筛选：类型用 `ToggleGroup`（其中「Agent 操作」单独一项），服务器用 `Combobox`。
+
+### 6.8 导入与首次启动
 
 **从 ssh config 导入**（`Dialog`，宽度 lg）
 
@@ -638,103 +792,104 @@ description: Connection, directory and container topology, and guardrails for hk
 | [ ]  | sg-db            | 198.51.100.7       | deploy   | 2222 | Windows、WSL     | 已导入       |
 | [v]  | dev-box          | 192.0.2.44         | ubuntu   | 22   | Windows          | 新           |
 +--------------------------------------------------------------------------------------------------+
-| 已跳过 2 个通配 Host（Host *、Host *.internal）                     [ ] 导入后立即探测           |
+| 已跳过 2 个通配 Host（Host *、Host *.internal）                [v] 导入后测试连接并探测          |
 |                                                                         [取消]  [导入 2 台]      |
 +--------------------------------------------------------------------------------------------------+
 ```
 
 - 表格用 `Table` 配 `Checkbox`，表头的复选框可以全选。HostName 等信息只在本地展示。
-- 导入后，新资产在列表中以 Motion 的进入动画出现，并自动选中第一项。
+- 导入后，新卡片以 Motion 的进入动画出现，并自动选中第一台。
 
-**添加项目**（先用 `@tauri-apps/plugin-dialog` 的 `open({ directory: true })` 选目录，再打开 `Dialog`）
-
-- 表单字段：名称（默认取文件夹名）；路径（只读）；运行环境（按路径自动判断，只读）；约定目录（`Checkbox`：`.claude/skills`，说明「Claude Code」；`.agents/skills`，说明「Codex、Cursor、Gemini CLI、Copilot、OpenCode 等」）。软件根据仓库里已存在的目录预先勾选。
-- 一个 `Switch`：「把链接路径写入 .git/info/exclude（推荐）」。如果仓库不是 Git 仓库，这个开关禁用，并说明原因。
-
-**首次启动**：资产视图显示空状态，使用 `Empty` 组件：
+**首次启动**：服务器视图显示空状态，使用 `Empty` 组件：
 
 ```text
 +--------+-------------------------------------------------------------------------------------------+
 | 侧栏   |                                    [ServerIcon]                                           |
-|        |                               还没有任何云资产                                            |
-|        |  CloudLink 把服务器信息编译成 Agent 能读的 Skill，并且只挂给需要它的项目。           |
+|        |                               还没有服务器                                                |
+|        |   录入服务器并测试连接，CloudLink 会把它们编译成一个 Skill 交给本机的 Agent，             |
+|        |   并在 Claude Code 上用护栏守住档位。                                                     |
 |        |                                                                                           |
 |        |   (v) 1 检测运行环境与 Agent     已发现 Windows、WSL Ubuntu；Claude Code、Codex           |
-|        |   ( ) 2 从 ~/.ssh/config 导入主机                                   [开始导入]            |
-|        |   ( ) 3 探测并挂载到第一个项目                                                            |
+|        |   ( ) 2 新建第一台服务器并测试连接                               [新建服务器]             |
+|        |   ( ) 3 打开「分发给 Agent」                                                              |
+|        |   ( ) 4 为 Claude Code 安装护栏                                  [安装护栏]               |
 |        |                                                                                           |
-|        |                              或者 [手动新建资产]                                          |
+|        |                              或者 [从 ssh config 导入]                                    |
 +--------+-------------------------------------------------------------------------------------------+
 ```
 
 清单的每一步是一个 `Item`，`ItemMedia` 显示 `CircleCheckIcon` 或 `CircleDashedIcon`。全部完成后，这个清单不再出现。
 
-### 6.11 状态全集（每个视图都必须实现）
-
-| 场景 | 状态 | 呈现 |
-| :--- | :--- | :--- |
-| 首次加载数据 | 加载中 | 列表和编辑器用 `Skeleton`（超过 150ms 才显示）；按钮内用 `Spinner` |
-| 列表为空 | 空 | `Empty` 组件，写明下一步要做什么（例如导入、新建、添加项目） |
-| 筛选无结果 | 空 | `CommandEmpty`：「没有匹配的资产」，附「清除筛选」按钮 |
-| IPC 调用失败 | 错误 | `Alert variant="destructive"`，附「重试」；严重错误时追加「打开日志目录」 |
-| 对话框里有未提交的改动 | 防误关 | 关闭（Esc、点击遮罩、关闭按钮）前弹出 `AlertDialog`：「放弃更改 / 继续编辑」 |
-| 探测 | 运行中、成功、无变更、有变更、失败、已取消 | 见 6.5 |
-| 编译 | 正常、警告、受阻 | 编辑器头部状态行加预览面板的 Lint 区 |
-| 挂载 | `pending`、`ok`、`broken`、`conflict`、`stale-copy`、`alias-missing` | 挂载芯片和矩阵单元格的图标加状态词；状态词表见 6.13 |
-| 未保存修改 | 草稿 | 标题旁显示「未保存」，预览标为「草稿预览」 |
-| 长内容 | 溢出 | 名称和路径用 `truncate` 加 `Tooltip`；表格横向滚动；芯片自动换行 |
-| 窗口缩窄 | 小于 1200 / 1024px | 预览默认折叠 / 侧栏进入图标模式 |
-
-### 6.12 键盘与命令面板
+### 6.9 键盘与命令面板
 
 | 快捷键（macOS 用 Cmd） | 作用 |
 | :--- | :--- |
 | `Ctrl+K` | 打开命令面板（`CommandDialog`） |
-| `Ctrl+S` | 保存当前资产 |
+| `Ctrl+N` | 新建服务器 |
+| `Ctrl+S` | 保存当前服务器 |
 | `Ctrl+B` | 折叠或展开侧栏（shadcn Sidebar 内置） |
-| `Ctrl+\` | 折叠或展开预览面板 |
-| `Ctrl+J` | 折叠或展开探测面板 |
-| `/` | 聚焦列表搜索框 |
-| `Ctrl+1` 到 `Ctrl+5` | 切换一级视图 |
-| `Esc` | 关闭浮层，退出 Agent 视角，取消拖拽 |
+| `Ctrl+\` | 打开或关闭预览 Skill |
+| `/` | 聚焦服务器搜索框 |
+| `Ctrl+1` 到 `Ctrl+3` | 切换一级视图 |
+| `Esc` | 关闭浮层 |
 
-命令面板分四组：
+命令面板分三组：
 
-- **跳转**：五个视图。
-- **资产**：按名称或别名搜索后打开。
-- **操作**：新建资产、从 ssh config 导入、探测当前资产、探测全部、检查全部链接、切换主题。
-- **挂载**：「挂载当前 Skill 到…」，进入二级页列出全部目标。
+- **跳转**：三个视图，以及按名称或别名搜索的服务器。
+- **服务器**：新建服务器、从 ssh config 导入、测试连接、探测当前服务器、探测全部、切换当前服务器的分发开关、临时解锁当前服务器 30 分钟（解锁期间为「立即锁回」）。
+- **系统**：预览 Skill、检查全部分发、切换主题。
 
-### 6.13 文案规范与状态词表
+### 6.10 状态全集（每个视图都必须实现）
 
-- 界面状态词只用中文，禁止「Mounted (已挂载)」这种中英混写。专有名词保留英文：Skill、SSH、Agent、slug、Token。
-- 按钮写动作，例如「导入 2 台」「应用所选 3 项并编译」，不要写「确定」。
-- 错误文案写清楚两件事：出了什么问题，接下来怎么办。例如「hk-edge 拒绝了密钥认证。在终端运行 ssh-add -l 确认密钥已加载。」
+| 场景 | 状态 | 呈现 |
+| :--- | :--- | :--- |
+| 首次加载数据 | 加载中 | 卡片和详情用 `Skeleton`（超过 150ms 才显示）；按钮内用 `Spinner` |
+| 列表为空 | 空 | `Empty` 组件，写明下一步要做什么（新建或导入） |
+| 搜索无结果 | 空 | 「没有匹配的服务器」，附「清除搜索」按钮 |
+| IPC 调用失败 | 错误 | `Alert variant="destructive"`，附「重试」；严重错误时追加「打开日志目录」 |
+| 对话框或表单里有未提交的改动 | 防误关 | 关闭前弹出 `AlertDialog`：「放弃修改 / 继续编辑」 |
+| 测试连接 | 未验证、连接中、已连接、连接失败、已取消 | 见 6.5 |
+| 探测 | 运行中、已更新、无变化、有待确认项、失败、已取消、已撤销 | 见 6.4 探测流程 |
+| 编译 | 正常、警告、受阻 | 详情头部的摘要行、Agent 页顶部摘要，加预览 Sheet 的 Lint 区 |
+| 列入 | 已列入、未列入（带原因） | 详情 Agent 分段 |
+| 分发 | `pending`、`ok`、`missing`、`modified`、`outdated`、`conflict` | Agent 页目标卡片的图标加状态词；状态词表见 6.11 |
+| 护栏 | 已生效、未安装、未生效（带原因）、不可用（带原因） | Agent 页护栏分区；详情 Agent 分段的护栏行 |
+| 临时解锁 | 已解锁（剩余分钟数）、到期自动锁回 | 卡片徽章、详情 Agent 分段；到期时用 Toast 播报 |
+| Agent 笔记 | 无、待处理、需编辑（命中密钥）、疑似注入 | 卡片徽章、详情笔记分段 |
+| 操作记录 | 空（「还没有记录。只记录经过护栏的命令」）、有记录、有拦下 | 详情操作记录分段 |
+| 未保存修改 | 草稿 | 底部操作条，预览标为「草稿预览」 |
+| 长内容 | 溢出 | 名称、路径和命令用 `truncate` 加 `Tooltip`；表格横向滚动 |
+| 窗口缩窄 | 小于 1024px | 侧栏进入图标模式；卡片网格变为单列 |
+
+### 6.11 文案规范与状态词表
+
+- 界面状态词只用中文，禁止中英混写。专有名词保留英文：Skill、SSH、Agent、Token。
+- 按钮写动作，例如「保存并探测」「导入 2 台」「撤销本次更新」，不要写「确定」。
+- 错误文案写清楚两件事：出了什么问题，接下来怎么办。
+- 术语：界面上一律说「服务器」「分发」，不说「资产」「挂载」。护栏只叫「护栏」，不叫「防火墙」或「沙箱」，避免让人以为它是安全边界。
 
 | 对象 | 状态词 |
 | :--- | :--- |
-| 挂载 | 挂载中、已挂载、已挂载（复制）、已失效、冲突、复制模式待同步、别名不可达 |
+| 连接 | 未验证、连接中、已连接、连接失败 |
+| 列入 | 已列入、未列入 |
+| 分发 | 同步中、已同步、副本缺失、副本被改动、待同步、冲突 |
 | 探测 | 从未探测、探测中、正常、已过期（超过 30 天）、失败 |
 | 编译 | 正常、有警告、编译受阻 |
+| 护栏 | 已生效、未安装、未生效、不可用 |
+| 解锁 | 已解锁、已锁回 |
+| Agent 操作 | 已放行、已拦下、解锁期间放行 |
+| Agent 笔记 | 待处理、需编辑、已并入、已忽略 |
 | 环境 | 生产、预发、开发 |
 | 档位 | 只读巡检、标准运维 |
+| Agent 目标 | 已启用、已停用、未检测到 |
 
-dnd-kit 的屏幕阅读器播报文案：
-
-| 时机 | 文案 |
-| :--- | :--- |
-| 拿起 | 「已拿起 vps-hk-edge。用方向键选择目标，空格放下，Esc 取消。」 |
-| 悬停 | 「当前位于 OpenPet-Desktop。」 |
-| 放下 | 「已挂载到 OpenPet-Desktop。」 |
-| 取消 | 「已取消挂载。」 |
-
-### 6.14 可访问性
+### 6.12 可访问性
 
 - 达到 WCAG 2.2 AA。焦点环使用 Signal Cyan，在浅色主题下对比度为 3.6:1，在深色主题下为 8.3:1。
 - 所有纯图标按钮都要有 `aria-label` 和 `Tooltip`。
 - 状态必须同时用图标、文字和颜色表达，不能只靠颜色。
-- 拖拽有两种替代方式：键盘拖拽，以及矩阵视图和「挂载到…」菜单。
-- 异步操作的结果通过 Toast 播报（Toast 带 aria-live）。
+- v3 不再有拖拽分发，所有操作都能用键盘完成；路径、红线和运维约定的排序仍可拖拽，同时提供键盘排序（dnd-kit `KeyboardSensor`）。
+- 异步操作的结果通过 Toast 或原地状态播报。测试连接的结果区域设置 `aria-live="polite"`。临时解锁的剩余时间每分钟更新一次，不设置 `aria-live`；到期时用 Toast 播报「hk-edge 已自动锁回」。
 - 根节点设置 `MotionConfig reducedMotion="user"`，尊重系统的「减少动态效果」设置。
 - 最小点击目标为 24×24px（Nova 的 xs 尺寸）。
 - 在侧栏之前放一个「跳到主内容」链接，只有获得焦点时才显示。切换一级视图后，焦点移到新视图的标题上（标题设置 `tabIndex={-1}`）。视图标题用 `h1`，分区用 `h2`，层级不跳级。
@@ -836,33 +991,34 @@ pnpm dlx shadcn@4 mcp init --client claude
 | :--- | :--- | :--- |
 | 应用导航、侧栏折叠、计数徽章 | `Sidebar`（`collapsible="icon"`）、`SidebarMenuButton isActive`、`SidebarMenuBadge`、`SidebarTrigger` | 自写侧栏或折叠逻辑 |
 | 多栏布局、拖拽分隔条、面板折叠、布局持久化 | `ResizablePanelGroup`、`ResizablePanel`（`collapsible`、`minSize`、`panelRef`）、`ResizableHandle`。用 `const { defaultLayout, onLayoutChanged } = useDefaultLayout({ id })` 拿到两个值，传给 `ResizablePanelGroup`；每个面板都要有稳定的 `id`；折叠和展开调用 `panelRef.current.collapse()` 和 `expand()` | 自写分隔条；使用 CSS resize |
-| 可筛选、可用键盘导航的选择列表（资产列表、Skill 源列表） | `Command`（`shouldFilter={false}`）、`CommandInput`、`CommandList`、`CommandGroup`、`CommandItem`、`CommandEmpty` | 自写 roving tabindex 或方向键处理 |
+| 可用键盘导航的选择列表（命令面板、导入列表以外的 Combobox 选项） | `Command`（`shouldFilter={false}`）、`CommandInput`、`CommandList`、`CommandGroup`、`CommandItem`、`CommandEmpty` | 自写 roving tabindex 或方向键处理 |
+| 服务器卡片列表 | `Card size="sm"` 放在 CSS Grid 中；卡片间方向键导航用 `src/lib/grid-nav.ts` 中的一个小函数（按 DOM 顺序和列数计算），这是 7.3 里唯一允许的自写键盘逻辑 | 引入网格或虚拟列表库 |
 | 命令面板 | `CommandDialog` | 自写弹层 |
 | 快捷键 | `react-hotkeys-hook` 的 `useHotkeys("mod+k", fn, { preventDefault: true, enableOnFormTags: true })`。`mod` 同时匹配 Ctrl 和 Cmd。提示文字用 `Kbd` 或 `KbdGroup` | 自己监听 `window` 的 keydown |
 | 表单状态、校验、脏标记、动态行 | react-hook-form、`zodResolver`、`useFieldArray`；外观用 `Field`、`FieldLabel`、`FieldDescription`、`FieldError`、`FieldSet`、`FieldLegend` | 自写表单状态和校验；用占位符代替标签 |
-| 可排序列表（路径、红线、业务包成员） | `DndContext`、`SortableContext`（`verticalListSortingStrategy`）、`useSortable`，配合 `KeyboardSensor` 与 `sortableKeyboardCoordinates`、`restrictToVerticalAxis`；拖拽结束后调用 RHF 的 `move()`。`useFieldArray` 必须设置 `keyName: "key"` | HTML5 原生拖放；自写排序 |
-| 跨区域拖拽挂载 | `DndContext`、`useDraggable`、`useDroppable`、`DragOverlay`，`accessibility.announcements` 使用 6.13 的文案。`PointerSensor` 设置 `activationConstraint: { distance: 4 }`，指针移动超过 4px 才开始拖拽，避免误拖 | HTML5 原生拖放 |
-| 开关矩阵 | `Table`、`Switch`、`ScrollArea`，sticky 列用 Tailwind 的 `sticky left-0` | 自写网格或虚拟表格 |
+| 可排序列表（路径、红线、运维约定） | `DndContext`、`SortableContext`（`verticalListSortingStrategy`）、`useSortable`，配合 `KeyboardSensor` 与 `sortableKeyboardCoordinates`、`restrictToVerticalAxis`；拖拽结束后调用 RHF 的 `move()`。`useFieldArray` 必须设置 `keyName: "key"` | HTML5 原生拖放；自写排序 |
 | 状态徽章和环境徽章 | `Badge`。在 `badge.tsx` 的 cva 中新增 `success` 和 `warning` 变体（直接改源码） | 另外写一个 Pill 或 Tag 组件 |
-| 列表行、设置项、挂载芯片、清单项 | `Item` 系列（`ItemMedia`、`ItemContent`、`ItemTitle`、`ItemDescription`、`ItemActions`） | 自写行组件 |
-| 目标卡片（拖放区域） | `Card size="sm"`、`CardHeader`、`CardAction`、`CardContent` | 卡片里再嵌套卡片 |
+| 列表行、设置项、笔记条目、清单项 | `Item` 系列（`ItemMedia`、`ItemContent`、`ItemTitle`、`ItemDescription`、`ItemActions`） | 自写行组件 |
+| 服务器卡片、Agent 目标卡片 | `Card size="sm"`、`CardHeader`、`CardAction`、`CardContent` | 卡片里再嵌套卡片 |
 | 空状态 | `Empty`、`EmptyMedia`、`EmptyTitle`、`EmptyDescription`、`EmptyContent` | 只写一行「暂无数据」 |
 | 加载中 | `Skeleton`（首屏加载）、`Spinner`（按钮内或行内） | 自写 loading 动画 |
-| 步骤进度和日志行（探测、活动） | `Trace`、`TraceLine status`、`TraceCollapsible` | 自写 Stepper |
+| 步骤进度和日志行（探测、活动、操作记录） | `Trace`、`TraceLine status`、`TraceCollapsible` | 自写 Stepper |
 | 源码、diff、日志、命令展示 | `CodeBlock`、`CodeBlockLine variant`、`CodeBlockCopyButton`、`useHighlightedCode` | prism、highlight.js、CodeMirror、Monaco |
 | Markdown 渲染 | `streamdown`，外层包 `div.typeset` | react-markdown、`@tailwindcss/typography` |
 | 通知 | shadcn `Toast`（Base UI 实现）：`toast.add`、`toast.close`、`toast.promise`、`actionProps`。默认 5 秒后自动消失；带「撤销」按钮的 Toast 停留 8 秒。Toast 不抢焦点 | sonner、react-hot-toast、`alert()` |
 | 危险操作确认 | `AlertDialog` | `window.confirm` |
-| 较复杂的编辑流程（导入、添加项目、重命名、新建业务包） | `Dialog` | 自写模态框 |
+| 较复杂的编辑流程（导入） | `Dialog` | 自写模态框 |
+| 侧边浮层（预览 Skill、探测、护栏规则） | `Sheet`（`side="right"`） | 自写抽屉 |
+| 开关（分发、Agent 启用） | `Switch` | 用 Checkbox 或按钮模拟 |
 | 菜单 | `DropdownMenu`（Checkbox 和 Radio 项）、`ContextMenu` | 自写弹出菜单 |
 | 提示 | `Tooltip`（全局包一层 `TooltipProvider`） | 只写 `title` 属性 |
 | 选择器 | `Select`（固定选项）、`Combobox`（可搜索、多选标签、SSH 别名） | 自写下拉框 |
 | 分段选择 | `ToggleGroup` | 用按钮组模拟 |
 | 标签页 | `Tabs`，二级切换用 `<TabsList variant="line">` | 自写标签页 |
-| 折叠区域 | `Collapsible` | 自写折叠动画 |
+| 折叠区域（详情分段、高级设置） | `Collapsible` | 自写折叠动画 |
 | 滚动容器 | `ScrollArea` | 自定义滚动条 CSS |
 | 进度条（上限占用） | `Progress`。在 `progress.tsx` 中新增 `tone` 属性（default、warning、destructive），用来给指示条变色，见 7.6 | 自写进度条 |
-| 选择目录、在文件管理器中显示 | `@tauri-apps/plugin-dialog` 的 `open({ directory: true })`；`@tauri-apps/plugin-opener` 的 `revealItemInDir` | 无 |
+| 选择私钥文件或目录、在文件管理器中显示 | `@tauri-apps/plugin-dialog` 的 `open()`；`@tauri-apps/plugin-opener` 的 `revealItemInDir` | 无 |
 | 复制到剪贴板 | `CodeBlockCopyButton`，其他场景用 `navigator.clipboard.writeText` | 引入剪贴板库 |
 | 相对时间和数字格式化 | `Intl.RelativeTimeFormat`、`Intl.NumberFormat`，统一封装在 `src/lib/format.ts` | dayjs、date-fns、moment |
 | 主题切换 | shadcn Vite 模板自带的 `src/components/theme-provider.tsx`：用 `ThemeProvider` 包住根节点，在需要的地方调用 `useTheme().setTheme("system" \| "light" \| "dark")`。删除模板里默认的「按 d 键切换主题」那段监听，主题切换只放在设置页和命令面板里 | next-themes；在 store 里重新实现一套主题逻辑 |
@@ -924,20 +1080,25 @@ export default [
 
 | Store | 状态 | 动作 | 持久化 |
 | :--- | :--- | :--- | :--- |
-| `useUIStore` | `view`、`selectedAssetId`、`selectedSkillId`、`assetFilter`（query、types、envTags、tags）、`mountsMode`（board 或 matrix）、`lens`（`{ targetId, agent }` 或 null）、`commandOpen`。主题不放在这里，由 ThemeProvider 管理 | `setView`、`selectAsset`、`setFilter`、`setLens` | 只持久化 `mountsMode`、`assetFilter.types` 和 `assetFilter.envTags` |
-| `useAssetStore` | `byId`、`ids`、`status`、`error` | `load`、`save`（返回编译结果）、`remove`、`importHosts` | 否 |
-| `useProbeStore` | `runs`（按 runId 索引）、`activeRunByAsset` | `start`、`cancel`、`apply`；`_onProgress`、`_onFinished` 由事件桥调用 | 否 |
-| `useSkillStore` | `statusById`（每个变体的 Lint、Token、编译时间） | `refresh`、`_onCompiled` | 否 |
-| `useTargetStore` | `environments`、`targets` | `detect`、`addProject`、`removeTarget` | 否 |
-| `useMountStore` | `byId` | `mount`（乐观更新，失败时回滚并弹 Toast）、`unmount`（立即生效，Toast 提供撤销，撤销即重新挂载）、`setMode`、`checkAll`、`repair`；`_onChanged` | 否 |
+| `useUIStore` | `view`（servers、agents、settings）、`selectedAssetId`、`creating`（是否处于新建表单）、`query`、`sectionsOpen`（详情各分段的展开状态）、`previewOpen`、`previewEnvId`、`commandOpen`。主题不放在这里，由 ThemeProvider 管理 | `setView`、`selectAsset`、`startCreate`、`setQuery`、`toggleSection`、`openPreview` | 只持久化 `sectionsOpen` |
+| `useAssetStore` | `byId`、`ids`、`status`、`error` | `load`、`create`、`save`（返回编译结果）、`remove`、`importHosts`、`setDistribute`、`setMode`、`unlock`、`lock` | 否 |
+| `useConnectionStore` | `testsByKey`（按服务器 id 或新建表单的临时键索引：状态、耗时、远端系统、错误 id、待确认的主机指纹） | `test`、`cancel`、`trustHostKey`、`convertToKey` | 否 |
+| `useProbeStore` | `runs`（按 runId 索引，含已合并和待确认的变化）、`activeRunByAsset` | `start`、`cancel`、`confirmItems`、`undo`；`_onProgress`、`_onFinished` 由事件桥调用 | 否 |
+| `useSkillStore` | `config`（服务器之间的关系、运维约定）、`statusByEnv`（每个运行环境的编译状态） | `load`、`saveConfig`、`_onCompiled` | 否 |
+| `useTargetStore` | `environments`、`targets` | `detect`、`setEnabled`、`addCustom`、`removeCustom` | 否 |
+| `useDeliveryStore` | `byId`、`inclusions` | `checkAll`、`repair`；`_onChanged`。分发和列入都由后端计算，前端不单独创建 | 否 |
+| `useGuardStore` | `statusByEnv`、`rules` | `load`、`install`、`remove`；`_onChanged` | 否 |
+| `useNotesStore` | `byAsset`（待处理的笔记） | `load`、`merge`、`dismiss`；`_onNew` | 否 |
+| `useOperationStore` | `recentByAsset`（每台最近 50 条） | `load`、`_onNew` | 否 |
 | `useActivityStore` | `items` | `load`、`_onNew` | 否 |
 
 需要提供的 selector：
 
-- `selectFilteredAssets(state, filter)`：资产列表的筛选结果。
-- `selectMountsByTarget(targetId)`：某个目标下的挂载。
-- `selectVisibleSkills(lens)`：Agent 视角的可见集合，计算规则见 F-306。返回 `{ project: Skill[], global: Skill[], unhealthy: Mount[] }`。这是纯函数，必须有单元测试，至少覆盖「WSL 项目 + Windows 全局」和「Codex 与 Claude Code 读取不同约定目录」两种情况。
-- `selectHealth()`：返回失效、冲突、受阻的数量。
+- `selectServerGroups(state, query)`：按环境分组、按名称排序后的服务器列表（搜索匹配名称、别名、标签、站点名）。
+- `selectInclusionsByAsset(assetId)`：详情 Agent 分段使用。`selectDeliveriesByEnv()`：Agent 页使用。
+- `selectCanDistribute(asset)`：返回 `{ ok: true }` 或 `{ ok: false, reason }`（未验证、只有密码认证等）。纯函数，必须有单元测试。
+- `selectUnlockRemaining(asset, now)`：返回剩余分钟数，未解锁或已到期时返回 `null`。纯函数，必须有单元测试。
+- `selectHealth()`：返回副本问题、护栏问题和编译受阻的数量。
 
 ### 7.6 设计令牌落地（`src/index.css`）
 
@@ -1001,15 +1162,14 @@ function Progress({ className, children, value, tone = "default", ...props }:
 ### 7.7 动效规范
 
 - 动效只用 `motion/react`。`main.tsx` 的根节点包一层 `<MotionConfig reducedMotion="user" transition={{ duration: 0.18, ease: [0.25, 1, 0.5, 1] }}>`。
-- 只允许以下 5 个场景，范围之外不加动效：
+- 只允许以下 4 个场景，范围之外不加动效：
 
 | 场景 | 实现 | 时长 |
 | :--- | :--- | :--- |
-| 挂载芯片的进入和离开 | `AnimatePresence`，配合 `layout`、`initial={{opacity:0,y:4}}` | 进入 180ms，离开 120ms |
-| Agent 视角标记的出现和消失 | 可见与不可见的图标、描边包在 `AnimatePresence` 里，用 `initial={{opacity:0}}` 做透明度过渡；**禁止降低列表项本身的透明度**（会让对比度降到 2.34:1） | 150ms |
-| 拖起和放下 | `DragOverlay` 里的元素 `animate={{ scale: 1.02 }}` 加 Lifted 阴影；`dropAnimation` 使用 dnd-kit 默认值 | 150ms |
+| Agent 笔记条目的离开（并入或忽略后） | `AnimatePresence`，配合 `layout`、`exit={{opacity:0,y:-4}}` | 离开 120ms |
+| 测试连接结果出现 | 结果行包在 `motion.div` 里，`initial={{opacity:0}}` | 150ms |
 | 探测步骤逐条出现 | 新的 `TraceLine` 包在 `motion.div` 里，`initial={{opacity:0,y:4}}` | 150ms |
-| 导入后新增的列表项 | `AnimatePresence` | 180ms |
+| 新建或导入后新增的服务器卡片 | `AnimatePresence` | 180ms |
 
 - 浮层（Dialog、Popover、DropdownMenu、Tooltip、Sheet、Collapsible、Toast）使用组件自带的动画，禁止再用 Motion 包一层。
 - 禁止：页面加载时的错峰入场、悬停时放大回弹、`bounce` 大于 0 的 spring、装饰性的循环动画。
@@ -1028,21 +1188,42 @@ export const ipc = {
   saveAsset: (input: AssetInput) => invoke<SaveResult>("save_asset", { input }),
   deleteAsset: (id: string) => invoke<DeleteResult>("delete_asset", { id }),
   importHosts: (hosts: ImportHost[], probeAfter: boolean) => invoke<Asset[]>("import_hosts", { hosts, probeAfter }),
+  testConnection: (req: ConnectionTestRequest) => invoke<{ testId: string }>("test_connection", { req }),  // 结果经 connection://tested 返回
+  cancelConnectionTest: (testId: string) => invoke<void>("cancel_connection_test", { testId }),
+  trustHostKey: (testId: string, fingerprint: string) => invoke<void>("trust_host_key", { testId, fingerprint }),
+  setPassword: (assetId: string, password: string | null) => invoke<void>("set_password", { assetId, password }),  // 写入系统凭据库；null 为删除
+  convertToKeyAuth: (assetId: string) => invoke<Asset>("convert_to_key_auth", { assetId }),
+  getSshConfigStatus: () => invoke<SshConfigStatus[]>("get_ssh_config_status"),
+  addSshInclude: (envId: EnvId) => invoke<SshConfigStatus>("add_ssh_include", { envId }),
+  setDistribute: (assetId: string, on: boolean) => invoke<Inclusion[]>("set_distribute", { assetId, on }),
+  setMode: (assetId: string, mode: Mode) => invoke<SaveResult>("set_mode", { assetId, mode }),
+  unlockServer: (assetId: string) => invoke<{ unlockedUntil: string }>("unlock_server", { assetId }),  // 固定 30 分钟
+  lockServer: (assetId: string) => invoke<void>("lock_server", { assetId }),
   startProbe: (assetId: string) => invoke<{ runId: string }>("start_probe", { assetId }),
   cancelProbe: (runId: string) => invoke<void>("cancel_probe", { runId }),
-  applyProbe: (runId: string, changeIds: string[]) => invoke<SaveResult>("apply_probe", { runId, changeIds }),
-  previewCompile: (input: AssetInput, mode: Mode) => invoke<CompilePreview>("preview_compile", { input, mode }),
-  listSkills: () => invoke<SkillStatus[]>("list_skills"),
+  confirmProbeItems: (runId: string, changeIds: string[]) => invoke<SaveResult>("confirm_probe_items", { runId, changeIds }),  // 只用于待确认项
+  undoProbe: (runId: string) => invoke<SaveResult>("undo_probe", { runId }),
+  getSkillConfig: () => invoke<SkillConfig>("get_skill_config"),
+  saveSkillConfig: (input: SkillConfig) => invoke<CompileStatus[]>("save_skill_config", { input }),
+  previewSkill: (req: { envId: EnvId; asset?: AssetInput; config?: SkillConfig }) => invoke<CompilePreview>("preview_skill", { req }),  // 带草稿时预览草稿
+  getCompileStatus: () => invoke<CompileStatus[]>("get_compile_status"),
   listTargets: () => invoke<Target[]>("list_targets"),
-  inspectProject: (path: string) => invoke<ProjectInspection>("inspect_project", { path }),
-  addProjectTarget: (req: AddProjectRequest) => invoke<Target>("add_project_target", { req }),
-  removeTarget: (id: string) => invoke<void>("remove_target", { id }),
-  listMounts: () => invoke<Mount[]>("list_mounts"),
-  mount: (req: MountRequest) => invoke<Mount>("mount", { req }),
-  unmount: (mountId: string) => invoke<void>("unmount", { mountId }),
-  setMountMode: (mountId: string, mode: Mode) => invoke<Mount>("set_mount_mode", { mountId, mode }),
-  checkMounts: () => invoke<Mount[]>("check_mounts"),
-  repairMount: (mountId: string) => invoke<Mount>("repair_mount", { mountId }),
+  setTargetEnabled: (id: string, enabled: boolean) => invoke<Target>("set_target_enabled", { id, enabled }),
+  addCustomTarget: (req: { envId: EnvId; label: string; path: string }) => invoke<Target>("add_custom_target", { req }),
+  removeCustomTarget: (id: string) => invoke<void>("remove_custom_target", { id }),
+  listInclusions: () => invoke<Inclusion[]>("list_inclusions"),
+  listDeliveries: () => invoke<Delivery[]>("list_deliveries"),
+  checkDeliveries: () => invoke<Delivery[]>("check_deliveries"),
+  repairDelivery: (id: string) => invoke<Delivery>("repair_delivery", { id }),
+  removeAllDeliveries: () => invoke<void>("remove_all_deliveries"),
+  getGuardStatus: () => invoke<GuardStatus[]>("get_guard_status"),
+  installGuard: (envId: EnvId) => invoke<GuardStatus>("install_guard", { envId }),
+  removeGuard: (envId: EnvId) => invoke<GuardStatus>("remove_guard", { envId }),
+  getGuardRules: () => invoke<GuardRules>("get_guard_rules"),
+  listOperations: (q: OperationQuery) => invoke<Operation[]>("list_operations", { q }),
+  listNotes: (assetId?: string) => invoke<AgentNote[]>("list_notes", { assetId }),
+  mergeNotes: (items: { id: string; text?: string }[]) => invoke<SaveResult>("merge_notes", { items }),  // text 为编辑后的内容
+  dismissNotes: (ids: string[]) => invoke<void>("dismiss_notes", { ids }),
   listActivity: (q: ActivityQuery) => invoke<ActivityItem[]>("list_activity", { q }),
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (patch: Partial<Settings>) => invoke<Settings>("update_settings", { patch }),
@@ -1050,24 +1231,29 @@ export const ipc = {
 };
 
 export interface CompilePreview {
-  slug: string; mode: Mode;
-  files: { path: string; content: string; tokens: number }[];   // SKILL.md 排在第一个
-  budget: { resident: number; triggered: number; onDemand: number;
-            descriptionChars: number; bodyLines: number; bodyLineLimit: number };
-  lint: { id: LintId; level: "error" | "warning" | "info"; params?: Record<string, string | number>; file?: string; line?: number }[];
-  // 后端只返回 id 和参数，不返回中文句子；界面文案由 src/lib/copy.ts 按 id 映射（探测错误分类同理）
+  envId: EnvId;
+  files: { path: string; content: string }[];                   // SKILL.md 排在第一个
+  budget: { descriptionChars: number; descriptionLimit: number; bodyLines: number; bodyLineLimit: number };
+  lint: { id: LintId; level: "error" | "warning" | "info"; assetId?: string; params?: Record<string, string | number>; file?: string; line?: number }[];
+  // 后端只返回 id 和参数，不返回中文句子；界面文案由 src/lib/copy.ts 按 id 映射（探测错误分类、护栏原因同理）
   blocked: boolean;                                              // 有 error 级 Lint 时为 true，此时不会发布
 }
+
+export interface CompileStatus { envId: EnvId; blocked: boolean; errors: number; warnings: number; compiledAt: string | null }
 ```
 
 后端事件（只在 `src/lib/events.ts` 中订阅）：
 
 | 事件 | 载荷 |
 | :--- | :--- |
-| `probe://progress` | `{ runId, step, status, ms? }` |
-| `probe://finished` | `{ runId, status, error?, diff? }` |
-| `mounts://changed` | `{ mounts }` |
-| `compile://finished` | `{ skillId, mode, lint, tokens }` |
+| `probe://progress` | `{ runId, assetId, step, status, ms? }` |
+| `probe://finished` | `{ runId, assetId, status, error?, applied?, held? }`（`applied` 是已自动合并的变化，`held` 是待确认的变化） |
+| `connection://tested` | `{ testId, status, ms?, remoteOs?, error?, hostKey?: { fingerprint, known: "new" \| "changed" } }` |
+| `deliveries://changed` | `{ deliveries, inclusions }` |
+| `compile://finished` | `{ statuses }`（`CompileStatus[]`） |
+| `guard://changed` | `{ statuses }`（`GuardStatus[]`） |
+| `operations://new` | `{ assetId, count, denied }` |
+| `notes://new` | `{ assetId, count }` |
 | `activity://new` | `{ item }` |
 
 **Mock 模式**：运行 `pnpm dev:mock`（即 `vite --mode mock`，读取 `.env.mock` 中的 `VITE_MOCK=1`）后，前端在渲染之前调用 `@tauri-apps/api/mocks` 的 `mockIPC(handler, { shouldMockEvents: true })`，于是可以直接在普通浏览器里开发界面，也可以跑 Playwright。
@@ -1077,10 +1263,15 @@ Mock 夹具（`src/mocks/fixtures.ts`）必须覆盖下面这些状态：
 | 类别 | 夹具内容 |
 | :--- | :--- |
 | 运行环境 | Windows 和 WSL Ubuntu-24.04 |
-| 资产 | `hk-edge`：生产，已探测；`sg-db`：生产，探测会失败，错误为主机密钥未信任；`dev-box`：开发，从未探测 |
-| 目标 | Claude Code 全局（Windows）；通用 .agents 全局（WSL）；`OpenPet-Desktop` 项目（WSL，两个约定目录）；`Blog-Astro` 项目（Windows，只有 `.claude`） |
-| 挂载 | 至少包含一个 `ok`、一个 `broken`（sg-db 挂在 OpenPet 上）、一个 `conflict`（Blog-Astro 中已有手写的同名目录）、一个 `alias-missing`。Windows 目标上的挂载使用复制模式（`links[].kind = "copy"`），另有一个 `stale-copy`。还要准备一组「全局与项目档位不同」的挂载尝试，用来验证 F-303 AC2 的阻止逻辑 |
-| 探测 | 模拟 3 秒的进度事件；对 `hk-edge` 生成 4 处差异 |
+| 服务器 | `hk-edge`：生产，managed，私钥认证，已验证，已探测，分发开，只读，有 3 条待处理的 Agent 笔记（其中 1 条命中密钥）；`sg-db`：生产，imported，已验证，只读，分发开，探测会失败（主机密钥未信任），处于临时解锁中（剩 23 分钟）；`dev-box`：开发，managed，密码认证，未验证，分发关 |
+| 测试连接 | 新建表单中：地址含 `timeout` 时超时失败，含 `refused` 时连接被拒，用户为 `bad` 时认证失败，其余成功；首次测试一个新地址时先返回待确认的主机指纹 |
+| Agent 目标 | Claude Code（Windows，已检测，启用）；通用 .agents（Windows，未检测到，停用）；Claude Code（WSL，已检测，启用）；通用 .agents（WSL，已检测，启用）；一个自定义目录（Windows，启用） |
+| 列入与分发 | `hk-edge` 在 WSL 中未列入（WSL 中没有配置私钥）；副本状态覆盖 `ok`、`missing`、`modified`、`conflict`（目录中已有用户手写的 `cloudlink-servers`） |
+| 总 Skill | 示例的「服务器之间的关系」和 2 条运维约定；Windows 环境的编译有 1 条警告 |
+| 护栏 | Windows 已生效；WSL 未安装 |
+| 操作记录 | `hk-edge` 最近 20 条，其中 2 条被拦下（一条写操作、一条读取 `.env`）；`sg-db` 有解锁期间放行的记录 |
+| ssh 配置 | Windows 已加入 Include；WSL 未加入（用于验证 F-107 的同意对话框） |
+| 探测 | 模拟 3 秒的进度事件；对 `hk-edge` 自动更新 3 处，另有 1 处疑似注入的待确认项 |
 
 ### 7.9 目录结构
 
@@ -1091,16 +1282,15 @@ src/
   index.css  typeset.css
   components/ui/           shadcn 生成的组件（可以改源码，但禁止新增同类组件）
   components/theme-provider.tsx   shadcn Vite 模板自带（删掉其中按 d 键切换主题的监听）
-  components/app/          应用级组合组件：AppSidebar、CommandMenu、EnvBadge、StateBadge、MountChip、
-                           ContextBudget、SkillPreview、EmptyState
-  features/assets/         AssetsView、AssetList、AssetEditor（含各标签页）、ProbePanel、ImportDialog、RenameDialog
-  features/skills/         SkillsView、BundleDialog（P1）
-  features/mounts/         MountsView、BoardView、MatrixView、TargetCard、AddProjectDialog、useMountDnd
-  features/activity/       ActivityView
-  features/settings/       SettingsView 及各分区
-  stores/                  ui.ts、assets.ts、probe.ts、skills.ts、targets.ts、mounts.ts、activity.ts
+  components/app/          应用级组合组件：AppSidebar、CommandMenu、EnvBadge、StateBadge、SkillPreview、EmptyState
+  features/servers/        ServersView、ServerGrid、ServerCard、ServerDetail（含各分段，其中有 NotesSection、OperationsSection）、
+                           ServerForm（新建与编辑连接）、ConnectionTest、HostKeyDialog、UnlockControl、ProbeSheet、PreviewSheet、ImportDialog
+  features/agents/         AgentsView、SkillContentSection、GuardSection、GuardRulesSheet、TargetCard
+  features/settings/       SettingsView 及各分区（含 ActivitySection、SshConfigSection）
+  stores/                  ui.ts、assets.ts、connection.ts、probe.ts、skills.ts、targets.ts、deliveries.ts、guard.ts、notes.ts、
+                           operations.ts、activity.ts
   lib/                     ipc.ts、events.ts、utils.ts（cn）、format.ts（Intl）、schemas.ts（zod）、hotkeys.ts、
-                           copy.ts（全部界面文案，以及 Lint 和探测错误 id 到中文的映射）
+                           copy.ts（全部界面文案，以及 Lint、探测错误和护栏原因 id 到中文的映射）
   bindings/                ts-rs 生成的类型
   mocks/                   fixtures.ts、install.ts（mockIPC）
 ```
@@ -1108,10 +1298,10 @@ src/
 ### 7.10 完成定义（DoD）
 
 1. `pnpm typecheck`、`pnpm lint`、`pnpm build` 全部通过，ESLint 不出现 `no-restricted-imports` 告警。
-2. `pnpm dev:mock` 下，五个视图都能用夹具完整渲染，控制台没有报错。
-3. 6.11 中列出的每个状态，都能通过夹具或交互复现出来。
-4. 只用键盘就能完成以下操作：在资产列表中上下移动并打开资产，`Ctrl+K`，`Ctrl+S`，拖拽挂载（空格加方向键），用空格切换矩阵开关，退出 Agent 视角。
-5. Playwright 截图覆盖 4 个主要视图，浅色和深色各一套，宽度 1280 和 1024 各一套。截图中不出现文字溢出或遮挡，焦点环清晰可见。
+2. `pnpm dev:mock` 下，三个视图都能用夹具完整渲染，控制台没有报错。
+3. 6.10 中列出的每个状态，都能通过夹具或交互复现出来。
+4. 只用键盘就能完成以下操作：在服务器卡片之间移动并打开详情，`Ctrl+N` 新建并填写表单、测试连接、保存，用空格切换分发开关和 Agent 启用开关，`Ctrl+K`，`Ctrl+S`。
+5. Playwright 截图覆盖服务器（列表加详情）、新建服务器、Agent、设置 4 个画面，浅色和深色各一套，宽度 1280 和 1024 各一套。截图中不出现文字溢出或遮挡，焦点环清晰可见。
 6. 只修改了 7.6 列出的令牌，没有新增任何颜色值（用 `grep -E "oklch\(|#[0-9a-f]{3,6}"` 检查 `src/` 下除 `index.css` 和上游原样的 `typeset.css` 以外的文件，见 7.2 已知的坑第 10 条）。
 
 ### 7.11 给 Coding Agent 的执行入口
@@ -1127,41 +1317,36 @@ src/
 | 模块 | 职责 | 主要依赖 |
 | :--- | :--- | :--- |
 | `db` | SQLite（WAL 模式）、`schema_version` 与迁移 | `rusqlite`（bundled） |
-| `env` | 运行环境检测；WSL 发行版枚举（`wsl.exe -l -q`）；路径换算（`wslpath`） | 标准库 |
-| `ssh` | 枚举 Host 列表：用 `ssh2-config`，它支持 `Include`，并且可以通过 `home_dir` 解析 WSL 内的配置（但不支持 `Match` 和 Token）。获取某个别名的生效值：在对应运行环境里执行 `ssh -G <alias>`，这样 `Match` 和 Token 也能正确处理。探测时执行 ssh | `ssh2-config`、`tokio::process` |
-| `probe` | 内置并版本化的探测脚本；解析输出；生成差异 | 标准库 |
-| `compile` | 渲染模板（内置英文模板）；三层 Token 估算；Lint；密钥扫描；原子发布 | `minijinja`、`tiktoken-rs`（o200k，估算值）、gitleaks 规则集、`regex`、`sha2` |
-| `link` | 创建、检查、删除链接；所有权校验；受管复制（Windows 原生默认）；在 WSL 内创建符号链接（`wsl.exe -d <distro> -- ln -sfn`） | `junction`（仅实验选项）、`sha2`（副本内容哈希） |
+| `env` | 运行环境检测；WSL 发行版枚举（`wsl.exe -l -q`）；路径换算（`wslpath`）；检查 WSL 互操作是否可用（WSL 中的护栏依赖它） | 标准库 |
+| `ssh` | 枚举 Host 列表：用 `ssh2-config`，它支持 `Include`，并且可以通过 `home_dir` 解析 WSL 内的配置（但不支持 `Match` 和 Token）。获取某个别名的生效值：在对应运行环境里执行 `ssh -G <alias>`，这样 `Match` 和 Token 也能正确处理。写入托管配置 `cloudlink.conf`，管理 `~/.ssh/config` 开头的 Include 行（F-107）。测试连接与探测都调用系统 ssh | `ssh2-config`、`tokio::process` |
+| `secret` | 密码存取（Windows 凭据管理器，键为 `cloudlink:<assetId>`）；`SSH_ASKPASS` 辅助程序（应用自身以 `--askpass` 参数启动，经本地命名管道向主进程取一次性密码，不经命令行和环境变量传递明文）；生成 ed25519 密钥并安装公钥（F-108） | `keyring`、`ssh-key` |
+| `probe` | 内置并版本化的探测脚本；解析输出；自动合并（合并前保存快照，用于撤销）；疑似注入的值列为待确认 | 标准库 |
+| `compile` | 按运行环境渲染总 Skill（内置英文模板）；Lint；密钥扫描；原子发布 | `minijinja`、gitleaks 规则集、`regex`、`sha2` |
+| `deliver` | 受管复制：把各运行环境的编译产物写进已启用的目标（WSL 目标经 `\\wsl.localhost\<发行版>\` 路径写入）；所有权校验；冲突判定；列入计算；健康检查与修复 | `sha2`（副本内容哈希） |
+| `guard` | 写入护栏策略 `policy.json`；在各运行环境的 `~/.claude/settings.json` 中安装和移除 hook（WSL 经 `\\wsl.localhost\` 路径；同意、备份、原子写入、保留其余内容和键顺序）；把护栏程序复制到 `~/.cloudlink/bin/`；自检；临时解锁；读入护栏记录（F-307） | `serde_json`（`preserve_order`） |
+| `notes` | 读取笔记收件箱、扫描、并入与忽略（F-308） | 标准库 |
 | `ipc` | Tauri 命令与事件；类型导出 | `ts-rs` |
+| `cloudlink-guard`（独立的小程序） | 护栏本体：从标准输入读 hook 的 JSON，按 8.6 判定，输出拦截结果并追加记录。和 `guard` 模块共用规则 crate `guard-rules`；不联网、不读数据库，Windows 上从启动到退出不超过 50ms | `serde_json` |
 
-Rust 依赖锁定的主版本（2026-10-27 核实）：`tauri` 2.12、`tauri-build` 2.7、`rusqlite` 0.41（features = bundled）、`minijinja` 3、`tiktoken-rs` 0.12、`junction` 2、`ssh2-config` 0.9、`ts-rs` 12、`serde` 1、`serde_json` 1、`thiserror` 2、`tokio` 1、`ulid` 3、`regex` 1、`sha2` 0.11、`dirs` 7；开发依赖 `tempfile` 3。
+Rust 依赖锁定的主版本（2026-10-27 核实）：`tauri` 2.12、`tauri-build` 2.7、`rusqlite` 0.41（features = bundled）、`minijinja` 3、`ssh2-config` 0.9、`keyring` 3、`ssh-key` 0.6（features = ed25519）、`ts-rs` 12、`serde` 1、`serde_json` 1（features = preserve_order）、`thiserror` 2、`tokio` 1、`ulid` 3、`regex` 1、`sha2` 0.11、`dirs` 7；开发依赖 `tempfile` 3。v3 去掉了 `tiktoken-rs`（不再估算 Token）和 `junction`（不再使用链接）。
 
-Tauri 插件：`tauri-plugin-dialog`、`tauri-plugin-opener`、`tauri-plugin-window-state`、`tauri-plugin-single-instance`、`tauri-plugin-log`。**不向前端暴露 shell 插件和 fs 插件**：所有系统操作都由具名的 Rust 命令完成，capability 按最小权限配置。
+Tauri 插件：`tauri-plugin-dialog`、`tauri-plugin-opener`、`tauri-plugin-window-state`、`tauri-plugin-single-instance`、`tauri-plugin-log`。**不向前端暴露 shell 插件和 fs 插件**：所有系统操作都由具名的 Rust 命令完成，capability 按最小权限配置。护栏程序作为 sidecar 打包（`bundle.externalBin`，文件名带目标三元组后缀）。
 
-### 8.2 平台链接策略
+### 8.2 分发方式：一律受管复制
 
-| 软件运行在 | 目标所在的运行环境 | 默认方式 | 创建方式 |
-| :--- | :--- | :--- | :--- |
-| macOS 或 Linux（v0.5 / v1.0 起） | 同一系统 | 符号链接 | `symlink(target, link)`，链接整个目录，不链接单个文件 |
-| Windows | Windows 路径 | **受管复制** | 复制，并写入所有权标记；每次发布时同步 |
-| Windows | Windows 路径（用户手动启用「Junction（实验）」） | Junction | `junction::create(target, link)`，不需要管理员权限 |
-| Windows | WSL 路径（`\\wsl.localhost\<distro>\...`） | WSL 内部的符号链接 | `wsl.exe -d <distro> -- ln -sfn <wslpath(compiled)> <link>`；编译产物仍然只存一份，放在 Windows 侧，在 WSL 中通过 `/mnt/c/...` 访问 |
-| 任意 | 链接创建失败，或用户对该目标选择了「复制」 | 受管复制 | 同 Windows 路径 |
+v3 起不再使用符号链接和 Junction，所有目标都用受管复制。理由：
 
-Agent 对链接的支持情况（2026-10 核实），也就是上表这样取默认值的依据：
+- CloudLink 是总 Skill 唯一的写入方，每次发布都会同步全部副本，链接「改一处、处处生效」的好处用不上。
+- 链接在各 Agent 中的支持参差不齐：Claude Code 有 Junction 挂进来的 Skill 无法调用（#41177）、Node/Bun 把 Junction 识别为链接（#68318）、某些版本按 `isDirectory()` 过滤漏掉链接（#14836）等问题，自动更新还删过 `~/.claude/skills` 下的链接（#50052）。改用复制可以一并避开，还省掉了链接方式切换、WSL 路径换算和链接失效检测。
 
-| Agent | 目录符号链接 | Windows Junction |
-| :--- | :--- | :--- |
-| Claude Code | 官方文档写明支持，多个位置指向同一目标时只加载一次。但 #14836 仍有回归报告（某些版本按 `isDirectory()` 过滤，会漏掉链接）。#50052 报告过自动更新删掉了 `~/.claude/skills` 下的链接 | **有已知问题。** #41177：Junction 挂进来的 Skill 能列出，调用时却报「未知 Skill」。#68318：Node/Bun 把 Junction 识别为链接而不是目录 |
-| Codex | v0.80 起支持，会跟随链接目标；只认目录链接，不认链接的 `SKILL.md` 文件。监视器会递归跟随链接，链接到超大目录树可能卡住（#30795） | 未确认 |
-| Cursor、Copilot CLI | Cursor 2.5 修复了 `~/.cursor/skills` 的链接发现；Copilot CLI 也已修复（#1090） | 未确认 |
-| Gemini CLI | 支持 | 它自己的 `skills link` 在 Windows 上就是用 Junction 实现的 |
+| 目标所在的运行环境 | 写入方式 |
+| :--- | :--- |
+| Windows | 直接写入目标目录 |
+| WSL | 经 `\\wsl.localhost\<发行版>\<家目录>\...` 路径写入；发行版没有运行时，访问该路径会启动它 |
+| macOS、Linux（v0.5 / v1.0 起） | 直接写入目标目录 |
 
-补充说明：
-
-- 不在 `\\wsl$` 路径上从 Windows 侧直接创建链接，因为 Windows 无法在那里创建 Linux 符号链接。
-- WSL 关闭了 automount，或者自定义了挂载根目录时：通过 `wslpath -a` 换算路径。换算失败就降级为复制。
-- 健康检查（F-305）要能识别两种情况：链接被外部程序删掉（例如 Claude Code 的自动更新），以及副本被手动修改（内容哈希与所有权标记中记录的不一致）。两种情况都提供一键修复。
+- 每次发布先把新内容写到目标旁边的暂存目录，再整体交换（做法同 8.4），保证 Agent 不会读到写了一半的 Skill。
+- 副本里的 `.cloudlink.json` 记录写入时的内容哈希。健康检查（F-305）据此区分「副本缺失」、「副本被改动」（实际内容与标记中的哈希不一致）和「待同步」（标记中的哈希不是最新的编译结果）。
 
 ### 8.3 探测脚本规范
 
@@ -1174,8 +1359,8 @@ Agent 对链接的支持情况（2026-10 核实），也就是上表这样取默
 
 两者读取同一个 `~/.ssh/config`，但 ssh-agent 不是同一个。由此定出三条规则：
 
-1. Windows 原生环境的探测、`ssh -G` 和可达性校验，一律用系统 OpenSSH 的**绝对路径**，不依赖 PATH 顺序。设置里允许改为 Git for Windows 的 ssh。
-2. 把资产挂到 Windows 上的 Claude Code 目标时，如果该别名依赖 ssh-agent 里的密钥（`IdentityFile` 指向的密钥有口令，或者根本没写 `IdentityFile`），就在挂载提示里说明：「Claude Code 在 Windows 上使用 Git Bash 的 ssh，读不到 Windows ssh-agent 服务里的密钥。请在 ssh config 中用 `IdentityFile` 指向它能直接读取的密钥，或者在 Git Bash 中加载 agent。」
+1. Windows 原生环境的测试连接、探测和 `ssh -G`，一律用系统 OpenSSH 的**绝对路径**，不依赖 PATH 顺序。设置里允许改为 Git for Windows 的 ssh。
+2. 如果这台服务器依赖 ssh-agent 里的密钥（认证方式为 ssh-agent，或私钥有口令），并且 Windows 上启用了 Claude Code 目标，就在详情 Agent 分段的 Windows 一行里说明：「Claude Code 在 Windows 上使用 Git Bash 的 ssh，读不到 Windows ssh-agent 服务里的密钥。请在 ssh config 中用 `IdentityFile` 指向它能直接读取的密钥，或者在 Git Bash 中加载 agent。」
 3. P5 验收时，两条路径要分别验证一次。
 
 执行方式：
@@ -1185,6 +1370,8 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes <alias> '
 ```
 
 整个探测 30 秒超时，超时后终止进程。
+
+测试连接（F-106）使用同一套 ssh 调用，只执行 `true` 和 `cat /etc/os-release` 两条命令；managed 服务器在保存前测试时，用一份只含这台服务器的临时配置（`ssh -F <临时文件>`），保存后改用托管配置。首次连接使用 `StrictHostKeyChecking=yes` 先取回指纹（`ssh-keyscan` 加 `ssh-keygen -lf`），用户确认后再以 `accept-new` 写入 `known_hosts`。密码认证时去掉 `BatchMode=yes`，加 `PreferredAuthentications=password,keyboard-interactive` 和 `NumberOfPasswordPrompts=1`，并设置 `SSH_ASKPASS_REQUIRE=force`。
 
 采集清单（只用 POSIX sh，每一段命令失败都不影响其他段）：
 
@@ -1205,37 +1392,89 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes <alias> '
 
 **探测数据是不可信输入。** 容器名、镜像名、服务名都可能被服务器上的其他人控制。如果原样写进 SKILL.md，就等于让人往 Agent 的上下文里注入指令。因此编译时必须遵守三条规则：
 
-1. 名称类字段只有在全部字符属于 `[A-Za-z0-9._:/@-]` 时才原样保留；含其他字符的，在资产里标记为「已清洗」，并替换掉非法字符。
+1. 名称类字段只有在全部字符属于 `[A-Za-z0-9._:/@-]` 时才原样保留；含其他字符的，在服务器信息里标记为「已清洗」，并替换掉非法字符。
 2. 所有来自探测的值，在 Markdown 中一律用行内代码（反引号）或表格单元格输出，长度上限 128 个字符。
-3. Lint 增加一条规则「疑似指令注入」（警告级）：探测来源的值里出现类似指令的英文或中文短语时触发，例如 ignore previous、system prompt、忽略以上。
+3. Lint 增加一条规则「疑似指令注入」（警告级）：探测来源的值里出现类似指令的英文或中文短语时触发，例如 ignore previous、system prompt、忽略以上。触发的值不自动合并，要用户确认（F-103 AC5）。Agent 笔记（F-308）按同样的规则检查。
 
 错误分类：
 
 | stderr 匹配 | 分类 | 界面文案 | 建议 |
 | :--- | :--- | :--- | :--- |
-| `Permission denied (publickey` | 认证失败 | 「hk-edge 拒绝了密钥认证」 | 在终端运行 `ssh-add -l` 确认密钥已加载，再执行 `ssh hk-edge` 测试 |
-| `Host key verification failed` | 主机密钥未信任 | 「本机还不认识 hk-edge 的主机密钥」 | 在终端运行一次 `ssh hk-edge`，核对指纹后再探测。软件不会自动信任 |
+| `Permission denied (publickey` | 认证失败 | 「hk-edge 拒绝了密钥认证」 | 确认公钥已加入服务器的 `~/.ssh/authorized_keys`；认证方式为 ssh-agent 时，在终端运行 `ssh-add -l` 确认密钥已加载 |
+| `Permission denied (password` 或 `keyboard-interactive` | 密码错误 | 「hk-edge 拒绝了密码」 | 重新输入密码；确认服务器允许密码登录（`PasswordAuthentication yes`） |
+| `Host key verification failed` | 主机密钥未信任 | 「本机还不认识 hk-edge 的主机密钥」 | 点「测试连接」，核对指纹后信任。软件不会自动信任 |
 | `REMOTE HOST IDENTIFICATION HAS CHANGED` | 主机密钥变化 | 「hk-edge 的主机密钥变了，可能是重装了系统，也可能是中间人攻击」 | 核实之后手动更新 `known_hosts` |
-| `Could not resolve hostname` | 解析失败 | 「无法解析 hk-edge 的地址」 | 检查 ssh config 中的 HostName |
+| `Could not resolve hostname` | 解析失败 | 「无法解析 hk-edge 的地址」 | 检查地址是否填写正确（imported 服务器检查 ssh config 中的 HostName） |
 | `Connection timed out`，或连接阶段超时 | 连接超时 | 「连接 hk-edge 超时（10 秒）」 | 检查网络、防火墙和安全组 |
 | `Connection refused` | 连接被拒 | 「hk-edge 的 SSH 端口拒绝连接」 | 检查 sshd 是否运行、端口是否正确 |
-| 密钥需要口令，但 BatchMode 下无法交互输入 | 需要交互 | 「密钥需要输入口令，但当前无法交互」 | 用 ssh-agent 加载密钥 |
+| 密钥需要口令，但 BatchMode 下无法交互输入 | 需要交互 | 「密钥需要输入口令，但当前无法交互」 | 用 ssh-agent 加载密钥，并把认证方式改为 ssh-agent |
+| `Bad permissions` 或 `UNPROTECTED PRIVATE KEY FILE` | 私钥权限过宽 | 「私钥文件权限过宽，ssh 拒绝使用」 | WSL 中把私钥放到 `~/.ssh/` 并设置 600 权限（连接分段提供「复制到 WSL」） |
 | 某一段返回 `permission denied`（例如 docker） | 部分成功 | 「部分信息采集失败：docker 需要权限」 | 把用户加入 docker 组，或者忽略这一段 |
 
 ### 8.4 编译与原子发布
 
 1. **校验**：serde 加业务规则。
-2. **渲染**：使用 minijinja 模板，内置模板随应用版本一起发布。
+2. **渲染**：使用 minijinja 模板，内置模板随应用版本一起发布。每个运行环境渲染一份总 Skill，只包含该环境列入的服务器（3.4）；笔记收件箱的路径按该环境渲染成绝对路径。
 3. **Lint**：规则见 5.4。
-4. **写入暂存目录**：写到 `compiled/.staging/<mode>/<slug>-<随机后缀>/`，然后 fsync。
+4. **写入暂存目录**：写到 `compiled/.staging/<环境>-<随机后缀>/`，然后 fsync。
 5. **交换目录**：把旧目录重命名为 `.trash/...`，再把新目录重命名为正式路径，最后删除 `.trash`。Windows 上如果因为文件被占用导致重命名失败，就退避重试 3 次；仍然失败时保留旧产物，界面提示「编译受阻：目录被占用」。
-6. **发布结果**：写入所有权标记，发出 `compile://finished` 事件；如果有复制模式的挂载，同步这些副本。
+6. **发布结果**：写入所有权标记，发出 `compile://finished` 事件，然后按 8.2 同步该环境全部已启用目标的副本。
 
 ### 8.5 安全
 
 - 前端只能调用具名的 Tauri 命令。capability 中不授予 `shell:allow-execute`，也不开放任意文件系统读写。
 - CSP 禁止加载远程脚本。
-- 本软件自身需要的凭据（P2 的 Cloudflare Token）存放在系统钥匙串，不进入 SQLite。
+- 本软件自身需要的凭据（服务器密码、P2 的 Cloudflare Token）存放在系统凭据库，不进入 SQLite，不写日志。
+- 托管 ssh 配置和 `~/.ssh/config` 的写入都是原子的（写临时文件再重命名），修改用户 config 前先备份。
+- 修改 Claude Code 的 `settings.json` 时：先征得同意并备份；文件不是合法 JSON 时不做任何修改，只提示用户；只增删命令指向 `cloudlink-guard` 的那一条；原子写入。
+- 护栏策略 `policy.json` 含服务器地址，和 `data.db` 一样放在用户目录下的 `~/.cloudlink/`，不进入 Skill。
+- 笔记收件箱和护栏记录由 Agent 一侧写入，按不可信输入处理：长度上限、密钥扫描、疑似注入检查，界面上只以纯文本展示。
+
+### 8.6 护栏（F-306）
+
+**安装形态。** 在每个有 Claude Code 目标的运行环境中，往 `~/.claude/settings.json` 加入下面这一条（Windows 示例）：
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash",
+        "hooks": [ { "type": "command", "command": "C:/Users/me/.cloudlink/bin/cloudlink-guard.exe --env windows", "timeout": 10 } ] }
+    ]
+  }
+}
+```
+
+WSL 中的 `command` 是同一个 Windows 程序的 `/mnt/c/...` 路径，参数为 `--env wsl:<发行版>`，经 WSL 互操作运行，所以策略和记录只在 Windows 侧有一份。护栏程序按自身所在的位置找到 `policy.json` 和记录目录。互操作被关闭时，该环境的护栏状态为「不可用」。Claude Code 在 Windows 上用哪个 shell 执行 hook 命令、路径里有空格时怎样加引号，P4c 实测后写进本节。
+
+**判定流程。**
+
+1. 不是 Bash 调用，或者命令里没有出现 CloudLink 中任何服务器的别名或地址：立即退出，不判定、不记录。
+2. 解析命令。自写保守的 shell 词法分析，处理引号、转义、`;` `&&` `||` `|` `&`、换行、`$()`、反引号和重定向，从中找出 `ssh`、`scp`、`sftp`、`rsync` 的调用及目标服务器（别名、`user@别名`、地址）；`ssh -G` 这类不建立连接的调用不算。远端命令按同样的规则再拆成简单命令。没有找到发往这些服务器的调用（例如只是在本地文件里提到了别名）：退出，不记录。不用通用的 shell 解析库：护栏只需要识别命令边界和 ssh 调用，遇到不认识的结构一律按第 7 步处理，自写更小，也更容易用样本集覆盖。
+3. 目标服务器在临时解锁期内：放行，记为「解锁期间放行」。
+4. 任何档位：参数指向凭据文件（5.5 第 1 条列出的路径）的命令，以及 `docker inspect`、`env`、`printenv`，一律拦下。
+5. 只读巡检：远端命令里的每个简单命令都必须在只读白名单内；不能有输出重定向（重定向到 `/dev/null`，以及 `2>&1` 这类文件描述符复制除外）、`tee`、命令替换、`sudo` 或原地修改参数（如 `sed -i`）。`docker exec <容器> <命令>` 中的命令同样要在白名单内。没有远端命令（交互式登录）、经标准输入传入脚本（`sh -s`、`bash -s`、heredoc）、用 `sh -c` 或 `bash -c` 包装、文件传输（scp、sftp、rsync），都拦下。
+6. 标准运维：只拦下危险类别。删除数据：`docker compose down -v`、`docker volume rm` 和 `prune`、`docker system prune --volumes`、对根目录下前两级目录的 `rm -r`、`mkfs`、`dd of=/dev/…`、`wipefs`、`dropdb`、`redis-cli FLUSHALL` 等。重启或关闭主机。修改防火墙：`iptables`、`nft`、`ufw`、`firewall-cmd` 的非查询操作。修改 SSH 配置或 `authorized_keys`，停止或重启 sshd。停止、删除或 kill 标为「关键」的服务。
+7. 解析不了的结构：只读服务器上拦下；标准运维服务器上放行，记录中标注「未能解析」。
+
+**只读白名单**（v0.1 内置，v0.5 起可以自定义）：`uptime`、`nproc`、`free`、`df`、`du`、`ls`、`stat`、`cat`、`head`、`tail`、`less`、`grep`、`wc`（这几个只限非凭据路径）、`ps`、`top -b -n 1`、`ss`、`netstat`、`ip addr` 和 `ip route`（只限查看）、`uname`、`hostname`、`date`、`id`、`whoami`、`lsblk`、`findmnt`、`echo`、`command -v`、`which`、`systemctl` 的 `status`、`is-active`、`list-units`、`--failed`、`journalctl`（不含 `--vacuum`、`--rotate`、`--flush`）、`docker` 的 `ps`、`logs`、`stats --no-stream`、`images`、`version`、`info`、`docker compose` 的 `ps`、`logs`、`config --services`、`nginx -t`、`openssl s_client`、`openssl x509 -noout`、`curl -sI`。巡检清单（5.6）中的每条命令都必须能通过这份白名单，由单元测试保证。
+
+**输出。** 拦下时以退出码 0 输出：
+
+```json
+{ "hookSpecificOutput": { "hookEventName": "PreToolUse", "permissionDecision": "deny",
+  "permissionDecisionReason": "CloudLink guard: hk-edge is read-only, and `docker restart api` is not an inspection command. Describe the change to the user; they can unlock hk-edge in CloudLink for 30 minutes. Do not try to work around this block." } }
+```
+
+放行时不输出任何内容，交给 Claude Code 正常的权限流程：护栏只负责拦截，不替用户批准。拦截原因用英文写给 Agent，Claude Code 也会把它显示给用户。
+
+**记录。** 除第 1 步直接退出的情况外，每次判定都向 `~/.cloudlink/guard/log/<日期>.jsonl` 追加一行：时间、运行环境、`session_id`、`cwd`、服务器 id、脱敏后的命令、结果、原因 id。护栏程序内置一份精简的脱敏规则（常见 Token 格式、`password=` 赋值、私钥文件头），CloudLink 读入时再用完整规则集扫描一遍。
+
+**边界与失败处理。**
+
+- 护栏只看命令文本。把命令编码后再执行、先上传脚本再运行、借助其他工具连接服务器，都可能绕过它。界面和 Skill 都如实说明这一点，硬隔离仍要靠低权限 SSH 用户。
+- 护栏程序崩溃或超时时，Claude Code 按非阻断错误处理，命令会照常执行（出错即放行）。所以护栏程序只依赖标准库和 serde_json，用不少于 200 条的命令样本集测试，并由健康检查定期自检（F-306 AC5）。
+- `policy.json` 缺失或无法解析时，护栏认不出任何服务器，只能放行；自检会报告「护栏未生效」。CloudLink 用原子写入更新策略文件，避免出现写了一半的文件。
 
 ---
 
@@ -1243,12 +1482,12 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes <alias> '
 
 | 类别 | 要求 |
 | :--- | :--- |
-| 性能 | 冷启动不超过 1.5 秒（中端笔记本）；编译预览 p95 不超过 100ms；单次挂载 p95 不超过 500ms；检查 100 个挂载不超过 1 秒；首屏 JS 压缩后不超过 600KB（实测全量冒烟页面约 487KB gzip），预览面板用 `React.lazy` 拆分，streamdown 和 Shiki 的语言包按需加载 |
+| 性能 | 冷启动不超过 1.5 秒（中端笔记本）；20 台服务器的总 Skill 编译 p95 不超过 200ms；同步全部副本 p95 不超过 1 秒；检查全部分发不超过 1 秒；测试连接（网络正常时）在 3 秒内返回；护栏判定 p95 在 Windows 原生环境不超过 50ms，经 WSL 互操作不超过 300ms；首屏 JS 压缩后不超过 600KB（实测全量冒烟页面约 487KB gzip），预览面板用 `React.lazy` 拆分，streamdown 和 Shiki 的语言包按需加载 |
 | 可靠性 | SQLite 使用 WAL 模式；所有文件写入都是原子的；进程崩溃不留下半个产物 |
-| 隐私 | 零遥测；除 SSH 探测和用户主动开启的更新检查外不联网；日志中不记录原始探测输出和解析后的连接信息 |
+| 隐私 | 零遥测；除测试连接、SSH 探测和用户主动开启的更新检查外不联网；日志中不记录原始探测输出、密码和解析后的连接信息；操作记录和 Agent 笔记只存在本机，操作记录写入前脱敏，保留 30 天 |
 | 兼容性 | v0.1：Windows 10 21H2+ 和 Windows 11（WebView2），以及 WSL2。v0.5：macOS 13+。v1.0：Ubuntu 22.04+（WebKitGTK 4.1） |
 | 国际化 | v0.1 界面只有简体中文，全部界面文案集中放在 `src/lib/copy.ts`，便于以后国际化。编译产物默认英文（F-207） |
-| 可访问性 | WCAG 2.2 AA，见 6.14 |
+| 可访问性 | WCAG 2.2 AA，见 6.12 |
 | 可维护性 | 数据库带 `schema_version` 并支持迁移；模板版本号写入所有权标记，便于判断产物由哪个模板生成 |
 | 更新 | Tauri updater，安装包签名；更新检查需要用户主动开启 |
 
@@ -1258,9 +1497,9 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes <alias> '
 
 | 版本 | 里程碑 | 交付内容 | 平台 |
 | :--- | :--- | :--- | :--- |
-| v0.1（MVP） | 跑通「导入、探测、编译、挂载到项目」的闭环 | F-101、102、103、105；F-201 到 205；F-207（默认英文输出）；F-301 到 307；F-401、402、403、405 | Windows 10/11（原生 + WSL2） |
-| v0.5 | 多类资产和业务包 | F-104（Domain、Panel、Storage）；F-206 业务包；F-207 输出语言切换；F-404 JSON 导入导出 | 增加 macOS |
-| v1.0 | 生态扩展与硬约束 | F-208 文件化自定义模板；加密备份；硬约束辅助：生成低权限用户脚本、生成 Claude Code 权限规则，以及 Claude Code 专属的 `PreToolUse` hook 拦截（需要单独的变体，限制见评审报告 R-02）；Cloudflare DNS 只读同步；可选的官方精确 Token 计数 | 增加 Linux |
+| v0.1（MVP） | 跑通「录入、测试连接、探测、编译、分发给 Agent」的闭环，并让 Agent 在护栏内干活 | F-101 到 103、F-105 到 108；F-201 到 205；F-207（默认英文输出）；F-301 到 308；F-401、402、403、405 | Windows 10/11（原生 + WSL2） |
+| v0.5 | 多类资产与更多 Agent | F-104（Domain、Panel、Storage）；F-207 输出语言切换；F-404 JSON 导入导出；Cursor、Gemini CLI、GitHub Copilot、OpenCode 作为独立目标；护栏的只读白名单和危险命令可以自定义 | 增加 macOS |
+| v1.0 | 硬隔离辅助与生态扩展 | 加密备份；生成低权限 SSH 用户的辅助脚本；其他 Agent 提供同类 hook 时接入护栏；Cloudflare DNS 只读同步 | 增加 Linux |
 
 ---
 
@@ -1272,13 +1511,25 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes <alias> '
 | :--- | :--- | :--- |
 | 2026-10-27 | 交付形式：先完成评审、修订 PRD 和设计规范，再按执行计划实施 | 全部文档 |
 | 2026-10-27 | 桌面容器用 Tauri v2；前端从 Vue 3 改为 React 19 | 第七、八章 |
-| 2026-10-27 | 资产页采用多栏工作区（列表、编辑器、预览） | 6.4 |
+| 2026-10-27 | 资产页采用多栏工作区（列表、编辑器、预览）。**v3 已替换**为卡片列表加详情面板 | 6.4 |
 | 2026-10-27 | 产品名称定为 **CloudLink** | 全部文档；数据目录 `~/.cloudlink/`；所有权标记文件 `.cloudlink.json` |
 | 2026-10-27 | 编译产物默认使用**英文** | F-207、5.2、5.5 |
 | 2026-10-27 | **先做 Windows**（原生 + WSL2）；macOS 放到 v0.5，Linux 放到 v1.0 | 头部表格、第九、十章 |
-| 2026-10-27 | **允许**把生产资产挂到全局目标，但必须二次确认，并且常驻提示 | F-303 AC1、6.6 |
+| 2026-10-27 | 允许把生产资产挂到全局目标，但必须二次确认，并且常驻提示。**v3 已替换**：只有全局目标，安全提示改为生产服务器默认只读、切到标准运维需确认 | F-202 AC2 |
 | 2026-10-27 | 接受视觉方向「钢与信号」（Mist 冷钢、钢墨主按钮、Signal Cyan） | DESIGN.md |
 | 2026-10-27 | 用户画像确认无误 | 1.2、PRODUCT.md |
+| 2026-10-30 | **取消项目级挂载**，只分发到 Agent 全局目录；删除看板、矩阵、Agent 视角、添加项目、`.git/info/exclude`、全局与项目档位冲突规则 | 第三、四、六章 |
+| 2026-10-30 | 档位改为服务器属性，所有 Agent 共用；每台服务器一个「分发给 Agent」开关 | 3.3、F-202、F-303 |
+| 2026-10-30 | 导航改为「服务器 / Agent / 设置」，界面参考 Termius：卡片列表加右侧详情分段；取消 Skills 视图，活动并入设置；术语「资产→服务器」「挂载→分发」 | 第六章 |
+| 2026-10-30 | 服务器信息在界面里录入，测试连接通过后才能分发；保存是显式的 | F-106、6.5 |
+| 2026-10-30 | 录入的连接写进 CloudLink 托管的 `~/.ssh/cloudlink.conf`，经同意后在用户 `~/.ssh/config` 开头加 Include；Agent 照常用 `ssh <别名>` | F-107 |
+| 2026-10-30 | 认证支持私钥、ssh-agent 和密码。密码存系统凭据库，只供 CloudLink 使用；只用密码的服务器不能分发，提供「改用密钥登录」 | F-108 |
+| 2026-10-31 | 全部服务器编译成一个总 Skill（`cloudlink-servers`），每台服务器的详情放进参考文件；新增全局内容「服务器之间的关系」「运维约定」和内置巡检清单。取代「每台服务器一个 Skill」和 v0.5 的业务包 | F-201、第五章、6.6 |
+| 2026-10-31 | 护栏从 v1.0 提前到 v0.1：Claude Code 的 `PreToolUse` hook 按档位拦截 ssh 命令，并记录 Agent 执行过的命令；需要改东西时临时解锁 30 分钟 | F-306、F-307、8.6 |
+| 2026-10-31 | Agent 可以把学到的东西写进笔记收件箱，用户确认后并入服务器信息 | F-308 |
+| 2026-10-31 | 分发一律用受管复制，不再使用符号链接和 Junction | F-304、8.2 |
+| 2026-10-31 | v0.1 只支持 Claude Code 和读取 `~/.agents/skills` 的 Agent，其他 Agent 用自定义目录 | 4.5 |
+| 2026-10-31 | 去掉三层 Token 估算、业务包和自定义模板；探测结果自动合并、可以撤销，疑似注入的值仍要确认 | F-103、F-204、第十章 |
 
 ### 11.2 待决问题
 
@@ -1287,6 +1538,7 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes <alias> '
 | Q1 | CloudLink 的商标风险 | Dell（数据加密）、Mitel（通信）、Genetec（视频设备）、Texada（SaaS）都有叫 CloudLink 的产品，但都不在 AI 或开发者工具领域。正式发布前要做一次商标检索；npm 包名、域名、Tauri identifier 也要一并确认 |
 | Q2 | Logo 和品牌资产 | 需要你提供；在此之前，侧栏只显示文字名称 |
 | Q3 | 是否需要团队共享 | 当前定位是个人工具，v1.0 之后再评估 |
+| Q4 | 服务器监控（类似探针，查看各服务器的使用情况） | 2026-10-30 讨论后搁置，不进 v0.1。当时的方案是在服务器页加「信息 / 监控」切换：每台服务器一条 SSH 长连会话读取 `/proc`，服务器上不装代理，历史只在内存里保留 1 小时。对照哪吒监控和 Beszel，这个方案有几处缺口：应用关着时没有数据；看不到 Docker 容器的资源占用；只看根分区；认证失败后反复重连，可能触发 fail2ban。以后重新考虑时，先评估能否直接读取用户已经在用的探针（哪吒、Beszel）的数据。v3 的巡检清单（5.6）让 Agent 按需检查服务器状况，覆盖了一部分需求 |
 
 ---
 
@@ -1294,14 +1546,20 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes <alias> '
 
 | 术语 | 含义 |
 | :--- | :--- |
-| 资产 | 一台服务器，或一个域名、面板、存储 |
+| 服务器 | 被描述的云主机（数据模型中叫 Asset；v0.5 起还包括域名、面板、存储） |
 | Skill | 符合 Agent Skills 规范的目录，包含 `SKILL.md` 和可选的 `references/` |
-| 变体 | 同一个 Skill 在某个档位下的编译产物 |
-| 目标 | 挂载的位置，分为全局 Agent 目录和项目 |
-| 挂载 | 在目标位置创建一个指向变体的链接（或受管副本） |
-| 档位 | 只读巡检或标准运维 |
+| 总 Skill | CloudLink 编译出的唯一一个 Skill `cloudlink-servers`，每个运行环境一份 |
+| 列入 | 一台服务器出现在某个运行环境的总 Skill 中 |
+| Agent 目标 | 某个运行环境中某个 Agent 的全局 skills 目录 |
+| 分发 | 把总 Skill 以受管副本写进 Agent 目标 |
+| 托管 ssh 配置 | CloudLink 生成并维护的 `~/.ssh/cloudlink.conf`，经 Include 生效 |
+| 连接验证 | 最近一次测试连接或探测成功；未验证的服务器不能打开分发开关 |
+| 档位 | 只读巡检或标准运维，服务器的属性；在 Claude Code 上由护栏执行 |
 | 红线 | 写给 Agent 的禁止或约束条目，属于建议性约束 |
-| Agent 视角 | 从某个目标出发，查看它可以看见的全部 Skill |
+| 护栏 | 安装在 Claude Code 中、按档位拦截 ssh 命令的 hook |
+| 临时解锁 | 对一台服务器解除护栏 30 分钟，期间照常记录 |
+| 操作记录 | 护栏判定过的命令清单 |
+| Agent 笔记 | Agent 写进收件箱、等用户确认后并入服务器信息的条目 |
 
 ## 附录 B：相对 v1 的主要变更
 
@@ -1316,3 +1574,21 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes <alias> '
 7. 探测数据按不可信输入处理（防提示词注入）。
 8. 前端从 Vue 3 改为 React 19，并给出依赖白名单。
 9. UI 从「卡片网格 + 抽屉」改为多栏工作区；挂载中心同时提供看板和矩阵，并加入 Agent 视角。
+
+> 附录 B 记录的是 v2 相对 v1 的变化，其中第 1、3、4、5、6、9 条中关于挂载、变体、项目约定目录、链接方式、汇总清单和 Agent 视角的部分已被 v3 取代，见附录 C。
+
+## 附录 C：v3 相对 v2 的主要变更（2026-10-30 至 31）
+
+1. 取消项目级挂载：只分发到 Agent 的全局 skills 目录。删除项目目标、`.git/info/exclude`、全局与项目档位冲突规则、Agent 视角。理由：项目隔离只限制 Agent 知道什么，不限制它能连什么（`~/.ssh/config` 是全局的）；Skill 本身按需加载，常驻成本每台约 50–70 Token。
+2. 档位从「每个挂载一个」改为「每台服务器一个」，编译产物从 `compiled/<mode>/<slug>` 简化为 `compiled/<slug>`。安全提示从「生产资产挂到全局」改为「生产服务器默认只读，切到标准运维需确认」。
+3. 每台服务器一个「分发给 Agent」开关，分发到全部已启用的 Agent 目标；某个运行环境没有这台服务器的连接配置时记为「已跳过」并说明原因，取代 v2 的「别名不可达」状态。
+4. 服务器信息可以在界面里录入（地址、端口、用户、认证），测试连接通过后才能分发（F-106）。录入的连接写进托管 ssh 配置（F-107）。认证支持私钥、ssh-agent 和密码，密码存系统凭据库，并提供「改用密钥登录」（F-108）。
+5. 导航从五项减到三项：服务器 / Agent / 设置。服务器页参考 Termius，卡片列表加右侧详情分段，Agent 分段排第一；预览、Token 和 Lint 移到按需打开的 Sheet；删除看板、矩阵、拖拽分发；活动并入设置。
+6. 术语：界面上「资产」改为「服务器」，「挂载」改为「分发」。数据模型中 Asset 名称保留，Mount 改为 Delivery。
+7. 全部服务器编译成一个总 Skill（2026-10-31）：`SKILL.md` 是总览，每台服务器的详情放进参考文件，另有服务器之间的关系、运维约定和巡检清单。去掉 `slug` 和「修改 Skill 名」。v2 取消「全局汇总清单」的理由在 v3 已不成立（见 F-201）。
+8. 护栏与操作记录（2026-10-31）：Claude Code 的 `PreToolUse` hook 按档位拦截 ssh 命令并记录下来，可以临时解锁 30 分钟。原计划放在 v1.0 的 hook 拦截提前到 v0.1。
+9. Agent 笔记（2026-10-31）：Agent 把学到的东西写进收件箱，用户确认后并入服务器信息。
+10. 分发一律用受管复制；v0.1 只支持 Claude Code 和读取 `~/.agents/skills` 的 Agent（2026-10-31）。
+11. 去掉三层 Token 估算、业务包（F-206）和自定义模板（F-208）；探测结果改为自动合并、可以撤销（2026-10-31）。
+
+> 第 2、3 条中的 `compiled/<slug>` 目录和「已跳过」状态已被第 7、10 条取代：产物目录改为 `compiled/<运行环境>/cloudlink-servers`，服务器在某个运行环境中「未列入」。
