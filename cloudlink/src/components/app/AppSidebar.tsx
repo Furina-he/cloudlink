@@ -1,17 +1,8 @@
-import {
-  CableIcon,
-  CircleCheckIcon,
-  CircleXIcon,
-  HistoryIcon,
-  MonitorIcon,
-  PackageIcon,
-  ServerIcon,
-  SettingsIcon,
-  SquareTerminalIcon,
-  type LucideIcon,
-} from "lucide-react"
+import { BotIcon, CircleCheckIcon, CircleXIcon, ServerIcon, SettingsIcon, type LucideIcon } from "lucide-react"
+import { useMemo } from "react"
 import { useShallow } from "zustand/react/shallow"
 
+import { EnvIcon } from "@/components/app/StateBadge"
 import {
   Sidebar,
   SidebarContent,
@@ -29,50 +20,43 @@ import {
 import { copy, type ViewId } from "@/lib/copy"
 import { cn } from "@/lib/utils"
 import { useAssetStore } from "@/stores/assets"
-import { selectHealth, useMountStore } from "@/stores/mounts"
+import { useDeliveryStore } from "@/stores/deliveries"
+import { useGuardStore } from "@/stores/guard"
+import { selectHealth } from "@/stores/health"
 import { useSkillStore } from "@/stores/skills"
 import { useTargetStore } from "@/stores/targets"
 import { VIEWS, useUIStore } from "@/stores/ui"
 
 const NAV_ICON: Record<ViewId, LucideIcon> = {
-  assets: ServerIcon,
-  skills: PackageIcon,
-  mounts: CableIcon,
-  activity: HistoryIcon,
+  servers: ServerIcon,
+  agents: BotIcon,
   settings: SettingsIcon,
 }
 
-/** 侧栏计数（PRD 6.2）：资产总数；Skills 受阻数、挂载失效与冲突数大于 0 时用状态红 */
+/** 侧栏计数（PRD 6.2）：服务器总数，有编译受阻时改为红色受阻数；Agent 页需要处理的问题数（红色） */
 function useNavCounts(): Partial<Record<ViewId, { n: number; danger: boolean; label: string }>> {
-  const assetCount = useAssetStore((s) => (s.status === "ready" ? s.ids.length : null))
-  const broken = useMountStore((s) => {
-    const h = selectHealth(Object.values(s.byId), [])
-    return h.broken + h.conflict
-  })
-  const blocked = useSkillStore(
-    (s) => selectHealth([], Object.values(s.statusById)).blocked
-  )
+  const serverCount = useAssetStore((s) => (s.status === "ready" ? s.ids.length : null))
+  const deliveries = useDeliveryStore((s) => s.byId)
+  const guards = useGuardStore((s) => s.statusByEnv)
+  const statusByKey = useSkillStore((s) => s.statusByKey)
+  const health = useMemo(() => selectHealth(Object.values(deliveries), Object.values(guards), Object.values(statusByKey)), [deliveries, guards, statusByKey])
+  const problems = health.deliveryProblems + health.guardProblems
+  const blocked = health.blockedAssets
+
   return {
-    ...(assetCount !== null && {
-      assets: { n: assetCount, danger: false, label: copy.navBadge.assets(assetCount) },
-    }),
-    ...(blocked > 0 && {
-      skills: { n: blocked, danger: true, label: copy.navBadge.skills(blocked) },
-    }),
-    ...(broken > 0 && {
-      mounts: { n: broken, danger: true, label: copy.navBadge.mounts(broken) },
-    }),
+    ...(blocked > 0
+      ? { servers: { n: blocked, danger: true, label: copy.navBadge.blocked(blocked) } }
+      : serverCount !== null && { servers: { n: serverCount, danger: false, label: copy.navBadge.servers(serverCount) } }),
+    ...(problems > 0 && { agents: { n: problems, danger: true, label: copy.navBadge.agents(problems) } }),
   }
 }
 
+/** 侧栏底部的运行环境状态（PRD 6.2）：点击后跳到「设置 / 运行环境」 */
 function EnvStatus() {
-  const { environments, status } = useTargetStore(
-    useShallow((s) => ({ environments: s.environments, status: s.status }))
-  )
-  const openSettings = () => {
-    useUIStore.getState().setSettingsSection("environments")
-    useUIStore.getState().setView("settings")
-  }
+  const { environments, status } = useTargetStore(useShallow((s) => ({ environments: s.environments, status: s.status })))
+  // 切换视图可能被「未保存的修改」拦下：真的离开了再定位分区
+  const openSettings = () =>
+    useUIStore.getState().setView("settings", { then: () => useUIStore.getState().setSettingsSection("environments") })
 
   if (status === "idle" || status === "loading") {
     return <SidebarMenuSkeleton showIcon aria-label={copy.shell.envLoading} />
@@ -91,39 +75,23 @@ function EnvStatus() {
           tooltip={summary}
           onClick={openSettings}
           aria-label={`${copy.shell.envStatusLink}：${summary}`}
-          className="group-data-[collapsible=icon]:flex hidden"
+          className="hidden group-data-[collapsible=icon]:flex"
         >
-          {allOk ? (
-            <CircleCheckIcon className="text-success" />
-          ) : (
-            <CircleXIcon className="text-destructive" />
-          )}
+          {allOk ? <CircleCheckIcon className="text-success" /> : <CircleXIcon className="text-destructive" />}
         </SidebarMenuButton>
       </SidebarMenuItem>
-      {environments.map((e) => {
-        const EnvIcon = e.id === "windows" ? MonitorIcon : SquareTerminalIcon
-        return (
-          <SidebarMenuItem key={e.id} className="group-data-[collapsible=icon]:hidden">
-            <SidebarMenuButton size="sm" onClick={openSettings}>
-              <EnvIcon />
-              <span className="truncate">{copy.env.long(e.id)}</span>
-              <span
-                className={cn(
-                  "ml-auto flex shrink-0 items-center gap-1 text-xs",
-                  e.available ? "text-success" : "text-destructive"
-                )}
-              >
-                {e.available ? (
-                  <CircleCheckIcon className="size-3" />
-                ) : (
-                  <CircleXIcon className="size-3" />
-                )}
-                {e.available ? copy.shell.envAvailable : copy.shell.envUnavailable}
-              </span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        )
-      })}
+      {environments.map((e) => (
+        <SidebarMenuItem key={e.id} className="group-data-[collapsible=icon]:hidden">
+          <SidebarMenuButton size="sm" onClick={openSettings}>
+            <EnvIcon envId={e.id} />
+            <span className="truncate">{copy.env.long(e.id)}</span>
+            <span className={cn("ml-auto flex shrink-0 items-center gap-1 text-xs", e.available ? "text-success" : "text-destructive")}>
+              {e.available ? <CircleCheckIcon className="size-3" /> : <CircleXIcon className="size-3" />}
+              {e.available ? copy.shell.envAvailable : copy.shell.envUnavailable}
+            </span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      ))}
     </SidebarMenu>
   )
 }
@@ -136,9 +104,7 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
-        <div className="flex h-8 items-center px-2 text-sm font-semibold group-data-[collapsible=icon]:sr-only">
-          {copy.app.name}
-        </div>
+        <div className="flex h-8 items-center px-2 text-sm font-semibold group-data-[collapsible=icon]:sr-only">{copy.app.name}</div>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>

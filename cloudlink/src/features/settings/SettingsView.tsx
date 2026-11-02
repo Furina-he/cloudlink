@@ -1,62 +1,83 @@
-import { CircleXIcon } from "lucide-react"
-import { useEffect, useRef } from "react"
+import { useRef, type ReactNode } from "react"
 
+import type { Settings } from "@/bindings"
 import { useScrollRestore, useViewTitleFocus } from "@/components/app/ViewShell"
-import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useDelayedFlag } from "@/hooks/use-delayed-flag"
-import { copy, ipcErrorText } from "@/lib/copy"
+import { copy } from "@/lib/copy"
 import { cn } from "@/lib/utils"
 import { useSettingsStore } from "@/stores/settings"
 import { useUIStore, type SettingsSection } from "@/stores/ui"
-import {
-  AgentsSection,
-  CompileSection,
-  DangerSection,
-  DataSection,
-  EnvironmentsSection,
-  GeneralSection,
-  ProbeSection,
-} from "./sections"
+import { ActivitySection } from "./ActivitySection"
+import { CompileSection, ProbeSection } from "./CompileProbeSections"
+import { DangerSection } from "./DangerSection"
+import { DataSection } from "./DataSection"
+import { EnvironmentsSection } from "./EnvironmentsSection"
+import { GeneralSection } from "./GeneralSection"
+import { SshConfigSection } from "./SshConfigSection"
 
-const SECTIONS: SettingsSection[] = ["general", "environments", "agents", "compile", "probe", "data", "danger"]
+const SECTIONS: SettingsSection[] = ["general", "environments", "ssh", "compile", "probe", "activity", "data", "danger"]
 
-/** 设置视图（PRD 6.9）：左侧 Item 分区导航，右侧对应表单 */
+/** 依赖设置数据的分区；设置还没加载到时显示 Skeleton。加载失败由 App 顶部的 Alert 给出「重试」 */
+function SettingsGate({ children }: { children: (settings: Settings) => ReactNode }) {
+  const settings = useSettingsStore((s) => s.settings)
+  const failed = useSettingsStore((s) => s.status === "error")
+  const showSkeleton = useDelayedFlag(!settings && !failed)
+  if (settings) return children(settings)
+  return showSkeleton ? (
+    <div className="flex max-w-2xl flex-col gap-3" aria-busy="true" aria-label={copy.settings.loading}>
+      <Skeleton className="h-4 w-24" />
+      <Skeleton className="h-8" />
+      <Skeleton className="h-8" />
+    </div>
+  ) : null
+}
+
+function Content({ section }: { section: SettingsSection }) {
+  switch (section) {
+    case "ssh":
+      return <SshConfigSection />
+    case "activity":
+      return <ActivitySection />
+    case "danger":
+      return <DangerSection />
+    default:
+      return (
+        <SettingsGate>
+          {(s) =>
+            section === "general" ? (
+              <GeneralSection settings={s} />
+            ) : section === "environments" ? (
+              <EnvironmentsSection settings={s} />
+            ) : section === "compile" ? (
+              <CompileSection settings={s} />
+            ) : section === "probe" ? (
+              <ProbeSection settings={s} />
+            ) : (
+              <DataSection settings={s} />
+            )
+          }
+        </SettingsGate>
+      )
+  }
+}
+
+/** 设置视图（PRD 6.7）：左侧 Item 分区导航，右侧对应表单 */
 export function SettingsView({ focusTitle }: { focusTitle: boolean }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const titleRef = useRef<HTMLHeadingElement>(null)
   useViewTitleFocus(titleRef, focusTitle)
+  const getViewport = () => rootRef.current?.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]")
+  useScrollRestore("settings", getViewport)
 
   const section = useUIStore((s) => s.settingsSection)
-  const { settings, status, error } = useSettingsStore()
-  const showSkeleton = useDelayedFlag(!settings && status !== "error")
-  useEffect(() => {
-    void useSettingsStore.getState().load()
-  }, [])
-  useScrollRestore(
-    "settings",
-    () => rootRef.current?.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]"),
-    !!settings
-  )
-
-  const content = !settings ? null : section === "general" ? (
-    <GeneralSection />
-  ) : section === "environments" ? (
-    <EnvironmentsSection settings={settings} />
-  ) : section === "agents" ? (
-    <AgentsSection settings={settings} />
-  ) : section === "compile" ? (
-    <CompileSection settings={settings} />
-  ) : section === "probe" ? (
-    <ProbeSection settings={settings} />
-  ) : section === "data" ? (
-    <DataSection settings={settings} />
-  ) : (
-    <DangerSection />
-  )
+  const go = (id: SettingsSection) => {
+    useUIStore.getState().setSettingsSection(id)
+    const viewport = getViewport()
+    if (viewport) viewport.scrollTop = 0
+  }
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -69,17 +90,8 @@ export function SettingsView({ focusTitle }: { focusTitle: boolean }) {
             <Item
               key={id}
               size="xs"
-              render={
-                <button
-                  type="button"
-                  aria-current={section === id ? "page" : undefined}
-                  onClick={() => useUIStore.getState().setSettingsSection(id)}
-                />
-              }
-              className={cn(
-                "rounded-md text-left hover:bg-muted aria-[current=page]:bg-muted",
-                id === "danger" && "mt-2"
-              )}
+              render={<button type="button" aria-current={section === id ? "page" : undefined} onClick={() => go(id)} />}
+              className={cn("rounded-md text-left hover:bg-muted aria-[current=page]:bg-muted", id === "danger" && "mt-2")}
             >
               <ItemContent className="min-w-0">
                 <ItemTitle className={cn("text-sm", section === id && "font-medium", id === "danger" && "text-destructive")}>
@@ -93,26 +105,7 @@ export function SettingsView({ focusTitle }: { focusTitle: boolean }) {
       </nav>
       <ScrollArea ref={rootRef} className="min-h-0 flex-1">
         <div className="p-4">
-          {error && (
-            <Alert variant="destructive" className="max-w-2xl">
-              <CircleXIcon />
-              <AlertTitle>{copy.shell.loadFailed}</AlertTitle>
-              <AlertDescription>{ipcErrorText(error.id, error.params)}</AlertDescription>
-              <AlertAction>
-                <Button size="sm" variant="outline" onClick={() => void useSettingsStore.getState().load()}>
-                  {copy.shell.retry}
-                </Button>
-              </AlertAction>
-            </Alert>
-          )}
-          {showSkeleton && (
-            <div className="flex max-w-2xl flex-col gap-3" aria-busy="true" aria-label={copy.settings.loading}>
-              <Skeleton className="h-4 w-24" />
-              <Skeleton className="h-8" />
-              <Skeleton className="h-8" />
-            </div>
-          )}
-          {content}
+          <Content key={section} section={section} />
         </div>
       </ScrollArea>
     </div>

@@ -23,6 +23,7 @@ const banned = {
   ],
   patterns: [
     { group: ['@radix-ui/*', '@base-ui/react', '@base-ui/react/*'], message: '业务代码只能从 @/components/ui 引入组件' },
+    { group: ['@lobehub/*'], message: 'Agent 的品牌标识只在 @/components/app/AgentMark 中使用（DESIGN.md 例外），其余图标统一使用 lucide-react' },
     { group: ['react-icons', 'react-icons/*', '@heroicons/*', '@tabler/icons-react', '@phosphor-icons/*', '@iconify/*', '@hugeicons/*', '@remixicon/*'], message: '图标统一使用 lucide-react' },
     { group: ['@mui/*', 'antd', '@chakra-ui/*', '@mantine/*', '@headlessui/*', 'react-aria-components'], message: 'UI 统一使用 shadcn/ui' },
     { group: ['react-beautiful-dnd', '@hello-pangea/dnd', 'react-dnd', 'sortablejs', 'react-sortablejs'], message: '拖拽统一使用 dnd-kit' },
@@ -56,5 +57,10 @@ export default defineConfig([
     files: ['src/**/*.{ts,tsx}'],
     ignores: ['src/components/ui/**', 'src/lib/ipc.ts', 'src/lib/events.ts', 'src/mocks/**'],
     rules: { 'no-restricted-imports': ['error', banned] },
+  },
+  // 唯一可以引入品牌 Logo 的文件：服务器卡片上的 Agent 标识（2026-11-01 用户选定彩色品牌 Logo）
+  {
+    files: ['src/components/app/AgentMark.tsx'],
+    rules: { 'no-restricted-imports': ['error', { ...banned, patterns: banned.patterns.filter((p) => !p.group.includes('@lobehub/*')) }] },
   },
 ])

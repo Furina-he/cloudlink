@@ -3,32 +3,44 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 
 import type {
   ActivityItem,
-  Mount,
+  CompileStatus,
+  ConnectionTestedEvent,
+  Delivery,
+  GuardStatus,
+  Inclusion,
   ProbeFinishedEvent,
   ProbeProgressEvent,
 } from "@/bindings"
 import { useActivityStore } from "@/stores/activity"
-import { useMountStore } from "@/stores/mounts"
+import { useConnectionStore } from "@/stores/connection"
+import { useDeliveryStore } from "@/stores/deliveries"
+import { useGuardStore } from "@/stores/guard"
+import { useNotesStore } from "@/stores/notes"
+import { useOperationStore } from "@/stores/operations"
 import { useProbeStore } from "@/stores/probe"
-import { useSkillStore, type CompileFinishedEvent } from "@/stores/skills"
+import { useSkillStore } from "@/stores/skills"
 
 export async function subscribeBackendEvents(): Promise<UnlistenFn> {
   const offs = await Promise.all([
-    listen<ProbeProgressEvent>("probe://progress", (e) =>
-      useProbeStore.getState()._onProgress(e.payload)
+    listen<ProbeProgressEvent>("probe://progress", (e) => useProbeStore.getState()._onProgress(e.payload)),
+    listen<ProbeFinishedEvent>("probe://finished", (e) => useProbeStore.getState()._onFinished(e.payload)),
+    listen<ConnectionTestedEvent>("connection://tested", (e) => useConnectionStore.getState()._onTested(e.payload)),
+    listen<{ deliveries: Delivery[]; inclusions: Inclusion[] }>("deliveries://changed", (e) =>
+      useDeliveryStore.getState()._onChanged(e.payload)
     ),
-    listen<ProbeFinishedEvent>("probe://finished", (e) =>
-      useProbeStore.getState()._onFinished(e.payload)
+    listen<{ statuses: CompileStatus[] }>("compile://finished", (e) =>
+      useSkillStore.getState()._onCompiled(e.payload.statuses)
     ),
-    listen<{ mounts: Mount[] }>("mounts://changed", (e) =>
-      useMountStore.getState()._onChanged(e.payload.mounts)
+    listen<{ statuses: GuardStatus[] }>("guard://changed", (e) =>
+      useGuardStore.getState()._onChanged(e.payload.statuses)
     ),
-    listen<CompileFinishedEvent>("compile://finished", (e) =>
-      useSkillStore.getState()._onCompiled(e.payload)
+    listen<{ assetId: string; count: number; denied: number }>("operations://new", (e) =>
+      useOperationStore.getState()._onNew(e.payload.assetId)
     ),
-    listen<{ item: ActivityItem }>("activity://new", (e) =>
-      useActivityStore.getState()._onNew(e.payload.item)
+    listen<{ assetId: string; count: number }>("notes://new", (e) =>
+      useNotesStore.getState()._onNew(e.payload.assetId)
     ),
+    listen<{ item: ActivityItem }>("activity://new", (e) => useActivityStore.getState()._onNew(e.payload.item)),
   ])
   return () => offs.forEach((off) => off())
 }

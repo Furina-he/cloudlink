@@ -12,6 +12,7 @@ target/
 # Test & tooling output
 test-results/
 playwright-report/
+.playwright-mcp/
 coverage/
 *.log
 

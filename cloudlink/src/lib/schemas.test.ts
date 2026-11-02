@@ -1,42 +1,35 @@
 import { describe, expect, it } from "vitest"
 
 import {
-  assetFormSchema,
+  customTargetSchema,
   formatPorts,
   hostnameError,
+  hostSchema,
   parsePorts,
-  projectFormSchema,
   serviceDraftSchema,
   settingsNumbersSchema,
-  slugSchema,
-  uniqueSlugSchema,
+  skillConfigSchema,
 } from "./schemas"
 
 const err = (r: { success: boolean; error?: { issues: { message: string }[] } }) =>
   r.success ? null : r.error!.issues[0].message
 
-describe("slug 校验（PRD 5.1、5.4）", () => {
-  it("接受合法 slug", () => {
-    expect(slugSchema.safeParse("vps-hk-edge").success).toBe(true)
-    expect(slugSchema.safeParse("a".repeat(64)).success).toBe(true)
+describe("服务器地址（PRD 6.5）", () => {
+  it("接受域名、IPv4、IPv6", () => {
+    for (const host of ["edge.example.com", "203.0.113.10", "2001:db8::1", "[2001:db8::1]", "localhost"]) {
+      expect(hostSchema.safeParse(host).success).toBe(true)
+    }
   })
 
-  it("拒绝格式错误、超长与保留名", () => {
-    expect(err(slugSchema.safeParse("VPS"))).toBe("slug-format")
-    expect(err(slugSchema.safeParse("-a"))).toBe("slug-format")
-    expect(err(slugSchema.safeParse("a--b"))).toBe("slug-format")
-    expect(err(slugSchema.safeParse("a".repeat(65)))).toBe("slug-too-long")
-    expect(err(slugSchema.safeParse("synced"))).toBe("slug-reserved")
-  })
-
-  it("唯一性检查排除自身", () => {
-    const taken = [{ id: "a1", slug: "vps-hk-edge" }]
-    expect(err(uniqueSlugSchema(taken).safeParse("vps-hk-edge"))).toBe("slug-taken")
-    expect(uniqueSlugSchema(taken, "a1").safeParse("vps-hk-edge").success).toBe(true)
+  it("拒绝空值、URL 和带端口的写法", () => {
+    expect(err(hostSchema.safeParse("  "))).toBe("host-required")
+    expect(err(hostSchema.safeParse("https://example.com"))).toBe("host-format")
+    expect(err(hostSchema.safeParse("root@example.com"))).toBe("host-format")
+    expect(err(hostSchema.safeParse("example.com:22"))).toBe("host-format")
   })
 })
 
-describe("端口映射（PRD 6.4 服务页）", () => {
+describe("端口映射（PRD 6.4 服务分段）", () => {
   it("解析主机地址和协议，空串得到空列表", () => {
     expect(parsePorts("127.0.0.1:8080->8080, 80->80/udp")).toEqual([
       { hostIp: "127.0.0.1", hostPort: 8080, containerPort: 8080, proto: "tcp" },
@@ -54,55 +47,6 @@ describe("端口映射（PRD 6.4 服务页）", () => {
   it("格式化后可以再解析回来", () => {
     const text = "127.0.0.1:8080->8080, 0.0.0.0:53->53/udp"
     expect(formatPorts(parsePorts(text)!)).toBe(text)
-  })
-})
-
-describe("资产表单（PRD 6.4）", () => {
-  const base = {
-    name: "东京中转机",
-    slug: "vps-jp-relay",
-    envTag: "dev",
-    provider: "",
-    region: "",
-    tags: [],
-    summary: "",
-    servedHostnames: ["api.example.com"],
-    notes: "",
-    sshAlias: "jp-relay",
-    paths: [{ key: "p1", label: "站点", path: "/www", source: "manual" }],
-    services: [],
-    rules: [{ id: "r1", text: "禁止重启" }],
-    defaultMode: "read-only",
-    export: { resolvedConnection: false, listeningPorts: false, image: true },
-  }
-  const schema = assetFormSchema([{ id: "a1", slug: "vps-hk-edge" }])
-
-  it("合法输入通过", () => {
-    expect(schema.safeParse(base).success).toBe(true)
-  })
-
-  it("名称、别名必填；slug 不能与其他资产重复；路径和红线不能为空", () => {
-    const r = schema.safeParse({
-      ...base,
-      name: " ",
-      sshAlias: "",
-      slug: "vps-hk-edge",
-      paths: [{ ...base.paths[0], path: "" }],
-      rules: [{ id: "r1", text: "  " }],
-      servedHostnames: ["api.example.com", "203.0.113.10"],
-    })
-    expect(r.success).toBe(false)
-    // 和 RHF 一样，每个字段只看第一条错误
-    const byPath: Record<string, string> = {}
-    for (const i of r.error!.issues) byPath[i.path.join(".")] ??= i.message
-    expect(byPath).toMatchObject({
-      name: "name-required",
-      sshAlias: "alias-required",
-      slug: "slug-taken",
-      "paths.0.path": "path-required",
-      "rules.0.text": "rule-empty",
-      "servedHostnames.1": "hostname-ip",
-    })
   })
 })
 
@@ -136,18 +80,22 @@ describe("手动添加服务", () => {
   })
 })
 
-describe("P3 表单校验", () => {
-  it("添加项目至少要一个约定目录", () => {
-    const r = projectFormSchema.safeParse({ label: "infra-tools", conventions: [], gitExclude: true })
-    expect(r.success).toBe(false)
-    expect(r.error?.issues[0].message).toBe("convention-required")
-    expect(projectFormSchema.safeParse({ label: "x", conventions: ["claude"], gitExclude: false }).success).toBe(true)
+describe("Agent 页与设置", () => {
+  it("运维约定不能为空；关系可以为空", () => {
+    expect(skillConfigSchema.safeParse({ relationships: "", conventions: [] }).success).toBe(true)
+    expect(err(skillConfigSchema.safeParse({ relationships: "", conventions: [{ id: "c1", text: "  " }] }))).toBe("convention-empty")
+  })
+
+  it("自定义目录要有名称和目录", () => {
+    expect(customTargetSchema.safeParse({ label: "Cursor", path: "D:\\tools\\skills", envId: "windows" }).success).toBe(true)
+    expect(err(customTargetSchema.safeParse({ label: " ", path: "D:\\x", envId: "windows" }))).toBe("name-required")
+    expect(err(customTargetSchema.safeParse({ label: "x", path: "", envId: "windows" }))).toBe("dir-required")
   })
 
   it("正文行数上限和探测超时有合理范围", () => {
-    expect(settingsNumbersSchema.safeParse({ bodyLineLimit: 60, probeTimeoutSec: 30 }).success).toBe(true)
-    expect(settingsNumbersSchema.safeParse({ bodyLineLimit: 5, probeTimeoutSec: 30 }).error?.issues[0].message).toBe("body-line-limit")
-    expect(settingsNumbersSchema.safeParse({ bodyLineLimit: 60, probeTimeoutSec: 3600 }).error?.issues[0].message).toBe("probe-timeout")
+    expect(settingsNumbersSchema.safeParse({ bodyLineLimit: 100, probeTimeoutSec: 30 }).success).toBe(true)
+    expect(err(settingsNumbersSchema.safeParse({ bodyLineLimit: 5, probeTimeoutSec: 30 }))).toBe("body-line-limit")
+    expect(err(settingsNumbersSchema.safeParse({ bodyLineLimit: 100, probeTimeoutSec: 3600 }))).toBe("probe-timeout")
     expect(settingsNumbersSchema.safeParse({ bodyLineLimit: Number.NaN, probeTimeoutSec: 30 }).success).toBe(false)
   })
 })

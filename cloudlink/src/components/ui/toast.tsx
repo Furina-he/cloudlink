@@ -177,22 +177,35 @@ function ToastIcon({ type }: { type: string | undefined }) {
   )
 }
 
+/** 第二个动作（CloudLink：探测完成的 Toast 同时有「查看」和「撤销」，PRD 6.4），经 toast.add 的 data 传入 */
+export interface ToastData {
+  secondary?: { label: string; onClick: () => void }
+}
+
 function ToastList({ closeLabel }: { closeLabel?: string }) {
   const { toasts } = ToastPrimitive.useToastManager()
 
-  return toasts.map((toastItem) => (
-    <Toast key={toastItem.id} toast={toastItem}>
-      <ToastContent>
-        <ToastIcon type={toastItem.type} />
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <ToastTitle />
-          <ToastDescription />
-        </div>
-        <ToastAction />
-        <ToastClose aria-label={closeLabel} />
-      </ToastContent>
-    </Toast>
-  ))
+  return toasts.map((toastItem) => {
+    const secondary = (toastItem.data as ToastData | undefined)?.secondary
+    return (
+      <Toast key={toastItem.id} toast={toastItem}>
+        <ToastContent>
+          <ToastIcon type={toastItem.type} />
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <ToastTitle />
+            <ToastDescription />
+          </div>
+          {secondary && (
+            <Button variant="outline" size="sm" className="shrink-0" onClick={secondary.onClick}>
+              {secondary.label}
+            </Button>
+          )}
+          <ToastAction />
+          <ToastClose aria-label={closeLabel} />
+        </ToastContent>
+      </Toast>
+    )
+  })
 }
 
 function Toaster({

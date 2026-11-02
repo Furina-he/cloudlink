@@ -3,10 +3,6 @@ const LOCALE = "zh-CN"
 
 const relative = new Intl.RelativeTimeFormat(LOCALE, { numeric: "auto" })
 const integer = new Intl.NumberFormat(LOCALE, { maximumFractionDigits: 0 })
-const compact = new Intl.NumberFormat("en", {
-  notation: "compact",
-  maximumFractionDigits: 1,
-})
 const dateTime = new Intl.DateTimeFormat(LOCALE, {
   year: "numeric",
   month: "2-digit",
@@ -48,7 +44,7 @@ export function formatDateTime(iso: string): string {
   return dateTime.format(new Date(iso))
 }
 
-/** 活动视图按天分组的标题 */
+/** 活动按天分组的标题 */
 export function formatDay(iso: string): string {
   return day.format(new Date(iso))
 }
@@ -66,11 +62,6 @@ export function dayKey(iso: string): string {
 
 export function formatNumber(n: number): string {
   return integer.format(n)
-}
-
-/** Token 估算：「≈86」「≈1.2K」 */
-export function formatTokens(n: number): string {
-  return `≈${n < 1000 ? integer.format(n) : compact.format(n)}`
 }
 
 /** 耗时：「0.8s」「120ms」 */

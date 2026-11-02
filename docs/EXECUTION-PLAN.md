@@ -6,7 +6,15 @@
 >
 > **2026-10-30 方向调整：** P0 到 P3 已按 v2.1 完成并提交。PRD v3 取消了项目级挂载，界面改为「服务器 / Agent / 设置」，并加入界面录入和测试连接（见 PRD 附录 C）。新增 P3.5 把前端改到 v3；P4、P5 已按 v3 改写。P2、P3 的原始描述保留作为历史记录。
 >
-> **2026-10-31 收敛：** 全部服务器编译成一个总 Skill；Claude Code 护栏与操作记录、Agent 笔记提前到 v0.1；分发一律用受管复制；v0.1 只支持 Claude Code 和 `~/.agents/skills`；去掉 Token 估算（见 PRD 附录 C 第 7 到 11 条）。P3.5 到 P5 已同步，P4 拆成 P4a、P4b、P4c 三次会话。
+> **2026-10-31 收敛：** 全部服务器编译成一个总 Skill；Claude Code 护栏与操作记录、Agent 笔记提前到 v0.1；分发一律用受管复制；v0.1 只支持 Claude Code 和 `~/.agents/skills`；去掉 Token 估算（见 PRD 附录 C）。
+>
+> **2026-11-02 配电盘减负与云平台 CLI 改版（PRD v3.1）：**
+> 1. 首屏改为单栏全宽「服务器 (SSH) + 云平台 (CLI)」双闸刀回路行（行内直接切换档位与授权 Agent），未选中时隐藏右侧面板；
+> 2. 详情面板砍掉 8 层折叠手风琴，改为常驻控制头 + 3 个平铺 Tab（`画像与规则`、`连接配置`、`动态`），移除侧栏底部环境列表；
+> 3. **取消「临时解锁 30 分钟」**（生产环境处于「标准运维」时在回路行琥珀色高亮提醒）；
+> 4. 新建 SSH 服务器支持密码自动转免密密钥并启用一步到位；
+> 5. 接入 Cloudflare（`wrangler`）、Vercel（`vercel`）、Oracle Cloud（`oci`）三类云平台 CLI 资源（按已启用 Agent 的环境精准检测、范围圈定 Scope、服务器关联、护栏扩展），所有云平台与 Agent 一律使用官方品牌 Logo（`ProviderMark`、`AgentMark`）。
+> 新增 **P3.6** 完成前端 v3.1 改版，P4–P5 同步跟进。
 >
 > **冲突时的优先级：** PRD 第七章的硬约束 > DESIGN.md 的令牌 > PRD 其余章节 > 本计划的实施建议。
 >
@@ -34,9 +42,10 @@
 | P1 | 契约、Mock 与应用外壳 | 前端类型契约、IPC 封装、Mock 夹具、Zustand store、侧栏与命令面板 | M | P0 |
 | P2 | 资产视图（已完成，v2.1） | 列表、编辑器、预览、探测面板、导入、首次启动引导 | L | P1 |
 | P3 | 挂载、Skills、活动、设置（已完成，v2.1） | 看板、矩阵、Agent 视角、目标管理和其余视图 | L | P1 |
-| P3.5 | 前端改到 v3 | 契约与 Mock 改版；服务器视图（卡片加详情、新建与测试连接、笔记、操作记录、临时解锁）；Agent 视图（总 Skill 的全局内容、护栏、分发目标）；设置并入活动；删除项目级代码、Token 估算和链接方式 | L | P3 |
-| P4 | Rust 核心 | db、env、ssh、secret、compile、probe、deliver、guard、notes、ipc 十个模块，护栏程序 `cloudlink-guard`，以及测试 | L（拆成 P4a、P4b、P4c 三次会话） | P3.5 的契约 |
-| P5 | 联调与端到端验收 | 前端接入真实 IPC、WSL 测试靶机、手工验收清单 | M | P3.5、P4 |
+| P3.5 | 前端改到 v3.0（已完成） | 契约与 Mock 改版；服务器卡片加详情手风琴；Agent 视图；设置并入活动；删除项目级代码与 Token 估算 | L | P3 |
+| P3.6 | 前端改到 v3.1（配电盘减负 + 云 CLI） | 单列全宽双闸刀回路行（SSH + 云 CLI）；按需平推右侧面板（控制头 + 3 个平铺 Tab）；彻底移除 30 分钟临时解锁；SSH 一步到位自动转密钥；Cloudflare / Vercel / Oracle Cloud 环境向导与 Scope 圈定；`ProviderMark` 官方品牌 Logo | L | P3.5 |
+| P4 | Rust 核心 | db、env、ssh、cli、secret、compile、probe、deliver、guard、notes、ipc 模块，护栏程序 `cloudlink-guard`（覆盖 `ssh` + `wrangler/vercel/oci`），以及测试 | L（拆成 P4a、P4b、P4c 三次会话） | P3.6 的契约 |
+| P5 | 联调与端到端验收 | 前端接入真实 IPC、WSL 测试靶机与云 CLI 检测验收、手工验收清单 | M | P3.6、P4 |
 | P6 | 打磨与打包 | 无障碍、性能、文案修订、Windows 安装包 | S | P5 |
 
 **会话建议：**
@@ -289,13 +298,13 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
 **任务：**
 
 1. **契约与 Mock：**
-   - `src/bindings/`：Asset 增加 `connection.source/host/port/user/auth/proxyJump/verified` 和 `agent`（`distribute`、`mode`、`unlockedUntil`），去掉 `slug` 和 `guardrails.defaultMode`；Target 去掉 project 类型和 `linkMode`，增加 `enabled`、`detected`，AgentId 只保留 `claude-code`、`universal`、`custom`；Mount 改为 Delivery（每个目标一份副本，状态为 `ok`、`pending`、`missing`、`modified`、`outdated`、`conflict`）；新增 Inclusion、SkillConfig、CompileStatus、GuardStatus、GuardRules、Operation、AgentNote、ConnectionTestRequest、`connection://tested` 载荷、SshConfigStatus；CompilePreview 去掉 Token 字段。
+   - `src/bindings/`：Asset 增加 `connection.source/host/port/user/auth/proxyJump/verified` 和 `agent`（`agents`、`mode`、`unlockedUntil`；2026-11-01 由 `distribute` 改为按 Agent 点选），去掉 `slug` 和 `guardrails.defaultMode`；Target 去掉 project 类型和 `linkMode`，增加 `enabled`、`detected`，AgentId 只保留 `claude-code`、`universal`、`custom`；Mount 改为 Delivery（每个目标一份副本，状态为 `ok`、`pending`、`missing`、`modified`、`outdated`、`conflict`）；新增 Inclusion、SkillConfig、CompileStatus、GuardStatus、GuardRules、Operation、AgentNote、ConnectionTestRequest、`connection://tested` 载荷、SshConfigStatus；CompilePreview 去掉 Token 字段。
    - `ipc.ts` 和 `events.ts` 按 PRD 7.8 更新（9 个事件）；`copy.ts` 按 6.11 的状态词表和术语更新，加入护栏原因 id 的文案。
    - Mock 夹具按 PRD 7.8 的新表格重写，包括测试连接的几种结果、首次连接的主机指纹确认、Agent 笔记、操作记录和临时解锁。
 2. **store：** 按 PRD 7.5 改写。新增 `useConnectionStore`、`useDeliveryStore`、`useGuardStore`、`useNotesStore`、`useOperationStore`；删除 `selectVisibleSkills`、lens 状态和 Token 相关状态。`selectCanDistribute` 写单元测试（未验证、只用密码、已验证三种情况），`selectUnlockRemaining` 写单元测试（未解锁、解锁中、已到期）。
 3. **外壳：** 侧栏三项（服务器、Agent、设置），快捷键 `Ctrl+1` 到 `Ctrl+3`、`Ctrl+N`，命令面板按 6.9 分三组（含临时解锁和预览 Skill）。
 4. **服务器视图（6.4）：**
-   - 卡片网格按环境分组、搜索、卡片上的分发开关、笔记和解锁徽章、方向键导航。
+   - 卡片网格按环境分组、搜索、卡片上的 Agent 按钮（2026-11-01 取代分发开关）、笔记和解锁徽章、方向键导航。
    - 详情面板的分段：Agent 分段排第一，含护栏行、临时解锁和各运行环境的列入情况；笔记分段处理 Agent 笔记；操作记录分段。底部保存操作条。
    - 预览 Sheet：复用 P2 的 SkillPreview，改为总 Skill 的文件切换和运行环境选择，去掉 Token 估算。
    - 探测 Sheet：复用 P2 的探测组件，差异审阅改为「已更新、待确认、撤销」。
@@ -308,12 +317,50 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
 **验收门槛：**
 
 - PRD 6.10 的每个状态都能用夹具复现，逐条列出并截图；测试连接的五种结果（成功、超时、被拒、认证失败、首次指纹确认）和探测的三种结果（已更新、有待确认项、撤销）都能复现。
-- 只用键盘完成：`Ctrl+N` 新建服务器、填写、测试连接、保存；在卡片之间移动并打开详情；用空格切换分发开关和 Agent 启用开关；用命令面板临时解锁和锁回。
+- 只用键盘完成：`Ctrl+N` 新建服务器、填写、测试连接、保存；在卡片之间移动并打开详情；在卡片的 Agent 按钮之间用方向键移动、用空格切换（2026-11-01 取代分发开关），用空格切换 Agent 启用开关；用命令面板临时解锁和锁回。
 - 代码中不再出现 `lens`、`project`（Agent 目标语义下）、`Mount` 类型、`AddProjectDialog`、`linkMode`、`slug` 和 Token 估算（`grep` 结果附在汇报里）。
 - Playwright 截图：服务器（列表加详情）、新建服务器、Agent、设置，浅色和深色、1280 和 1024 宽度，存到 `cloudlink/e2e/__screenshots__/`。
 - `pnpm typecheck`、`pnpm lint`、`pnpm build`、`pnpm test` 全部通过。
 
+### P3.6 前端改到 v3.1：钢制配电盘减负与云平台 CLI（L）
+
+**目标：** 在 Mock 数据下实现 PRD v3.1 与 DESIGN.md 的「钢制配电盘（Steel Breaker Panel）」界面、一步到位新建流程、云平台 CLI（Cloudflare / Vercel / Oracle Cloud）接入，并彻底移除「30 分钟临时解锁」。
+
+**任务：**
+
+1. **移除 30 分钟临时解锁（减法）：**
+   - 从 `src/bindings/`、`ipc.ts`、`stores/assets.ts`、`copy.ts`、右键菜单、详情面板与命令面板中删除 `unlockedUntil`、`unlockServer`、`lockServer`、`selectUnlockRemaining`、`use-minute-tick` 及解锁相关对话框和徽章。
+   - `Operation.decision` 只保留 `"allowed" | "denied"`。
+2. **契约与 Mock 扩展（云平台 CLI）：**
+   - `Asset` 支持 `type: "vps" | "cli"`，新增 `CliProvider`（`"cloudflare" | "vercel" | "oracle"`）、`CliEnvState`（路径、版本、是否已登录、`whoami` 账号/团队名）、`CliScopeItem`（域名 Zone、Worker、Vercel 项目、OCI 实例及 `linkedAssetId`）。
+   - `ipc.ts` 新增 `detectCliEnvironment`、`refreshCliScope`、`openEnvTerminal`（拉起对应运行环境终端辅助安装/登录）。
+   - Mock 夹具加入 `cloudflare`（已就绪，关联 `hk-edge`）与 `vercel`（WSL 未登录，演示行内就地修复与向导刷新）。
+3. **官方品牌 Logo 组件 `ProviderMark.tsx`：**
+   - 新建 `src/components/app/ProviderMark.tsx`，封装 Cloudflare、Vercel（取自 `@lobehub/icons-static-svg`）与 Oracle Cloud（官方 Oracle SVG 置于 `src/assets/brands/oracle.svg`）的官方品牌 Logo。
+   - 更新 `eslint.config.js`，允许 `AgentMark.tsx` 和 `ProviderMark.tsx` 引入品牌 SVG，其余业务文件禁止直接引入。
+4. **首屏与回路行重构（单列双闸刀配电盘 + 按需平推面板）：**
+   - 侧栏：一级导航改为「资源 / Agent / 设置」，移除侧栏底部的 `EnvStatus` 常驻环境列表。
+   - 默认未选中任何资源且未处于新建态时，隐藏右侧检视面板，主列表单列全宽居中展示（「服务器 (SSH)」与「云平台 (CLI)」两组）。
+   - 实现 `BreakerRow`（替代原多列 `ServerCard`）：左侧展示图标（`OsMark` 或 `ProviderMark`）、环境色点、等宽标识、名称、状态行与异常就地动作按钮（`[测试连接]`、`[去登录]`）；右侧对齐展示**权限档位闸刀按钮**（点击切换 `只读巡检` ↔ `标准运维`，生产资源处于 `标准运维` 时琥珀色高亮提醒）与 **Agent 品牌开关（`AgentPicker`）**。
+5. **右侧检视面板重构（「常驻控制头 + 3 个平铺 Tab」）：**
+   - 删除 8 层 `Collapsible` 手风琴（`DetailSection`、`sectionsOpen`）。
+   - 常驻控制头：标识、名称、环境徽章、关闭面板 `[×]`、状态行、档位切换器、Agent 授权开关、`[⋯更多]` 菜单（收纳测试连接、重新探测、复制别名、预览 Skill、打开编译目录、删除）；底部仅在未列入或有 Lint 错误/警告时按需浮现提示条（「正常即隐身」）。
+   - 下方用 `<TabsList variant="line">` 平铺 3 个 Tab：`画像与规则`（用途、红线、服务与目录 / 云 CLI 资源勾选范围 Scope 与服务器关联）、`连接配置`（SSH 连接字段或 CLI 各环境检测状态与重检）、`动态`（合并待处理 Agent 笔记与最近 50 条操作记录，有待处理笔记时显示 `动态 (N)`）。
+6. **添加资源面板（SSH 一步到位 + 云平台 CLI 向导）：**
+   - 点击 `[ + 添加资源 ]` 展开右侧面板：先选类型（`SSH 服务器` 或官方 Logo 标识的 `Cloudflare` / `Vercel` / `Oracle Cloud`）。
+   - SSH 服务器表单：底部直接附带授权 Agent 与默认档位选择，主按钮为「连接并启用」（自动验证连接 → 若为密码自动转免密密钥 → 保存并探测）；连接失败时支持「仅保存（暂不启用）」。
+   - 云平台 CLI 向导：只检测已启用 Agent 所在的运行环境，展示版本与 `whoami` 账号，未安装/未登录时给单行命令与 `[打开终端]`（窗口聚焦自动重检），勾选公开的 Scope 范围后点击「保存并启用」。
+
+**验收门槛：**
+
+- 代码中不再出现 `unlockedUntil`、`unlockServer`、`lockServer`、`selectUnlockRemaining`、`DetailSection`（8 层手风琴）。
+- 首屏未选中时为单栏全宽配电盘，点击行或「+ 添加资源」无遮罩平推展开右侧面板，`Esc` 可收起；回路行内可直接切换档位（生产环境标准运维呈琥珀色提醒）和 Agent 开关。
+- Cloudflare、Vercel、Oracle Cloud、Claude Code、OpenAI 均使用官方品牌 Logo。
+- Playwright 截图更新并通过，`pnpm typecheck`、`pnpm lint`、`pnpm build`、`pnpm test` 全部通过。
+
 ### P4a Rust 核心：数据、环境、SSH、编译（L）
+
+> **P4 开工前必读：** 先通读 `docs/CC-SWITCH-EXPERIENCE.md`（第二、三、四章），重点对照其中列出的 6 个 `SSH_ASKPASS` / Windows OpenSSH / 凭据目标校验 / 路径重叠与测试隔离必改项。
 
 1. **骨架：**
    - 按 PRD 8.1 写好 Cargo 依赖（锁定主版本），搭好模块骨架，用 thiserror 定义错误类型。
@@ -332,7 +379,7 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
    - 托管配置（F-107）：整文件重写 `cloudlink.conf`（原子写入）；在用户 `~/.ssh/config` 开头加 Include 前先备份；用 `ssh -G` 回读校验。全部在临时 HOME 中测试。
    - 测试连接（F-106）：临时配置、主机指纹的取回与确认、超时和取消；错误按 8.3 分类。
 5. **secret（F-108）：**
-   - 密码存取（Windows 凭据管理器，`keyring`）；`SSH_ASKPASS` 辅助模式（应用以 `--askpass` 启动，经命名管道取一次性密码）。
+   - 密码存取（Windows 凭据管理器，`keyring`；单元测试下强制禁用原生凭据库并注入内存实现，在释放状态锁后再访问 OS 凭据库，未传新密码时先校验 `host/port/user/auth` 未变）；`SSH_ASKPASS` 辅助模式（在 `main.rs` 第一行按环境变量标记分流，不经过 `tauri-plugin-single-instance`；Windows 下用 `current_dir` + `./cloudlink.exe` 规避 OpenSSH 9.5 非 ASCII 路径破损，loopback `accept()` 后显式 `set_nonblocking(false)`，详见 `docs/CC-SWITCH-EXPERIENCE.md` 第二章）。
    - 生成 ed25519 密钥、经密码连接追加公钥（只追加一行并带 `cloudlink` 注释）、切换认证方式。
 6. **compile：**
    - 用 minijinja 渲染英文模板（总 Skill 的 SKILL.md、每台服务器的详情文件、health-check.md）和 description 模板，按运行环境输出到 `compiled/<环境>/cloudlink-servers/`；description 超长时按 PRD F-201 AC2 截断。
@@ -358,7 +405,7 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
 2. **deliver：**
    - 受管复制：把各运行环境的编译产物写进已启用的目标；WSL 目标经 `\\wsl.localhost\<发行版>\` 路径写入；先写暂存目录再整体交换。
    - 所有权标记 `.cloudlink.json`，以及冲突判定。
-   - 列入计算：分发开关 × 该环境是否有连接配置，不满足就记为未列入并给出原因 id。
+   - 列入计算：这台服务器是否点选了这个 Agent × 该环境是否有连接配置，每个「运行环境 × Agent」一行；不满足就记为未列入并给出原因 id。每个「运行环境 × Agent」编译一份总 Skill（2026-11-01）。
    - 健康检查四类问题：副本缺失、副本被改动、待同步、冲突，并重新计算列入情况；支持修复。
 3. **ipc：**
    - 实现 PRD 7.8 中除护栏、操作记录和笔记以外的命令和事件（这三部分在 P4c 实现）。
@@ -413,7 +460,7 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
    - [ ] 编辑服务器时，预览、预算和 Lint 实时更新。
    - [ ] 在服务器信息中写入 `password=xxx`，发布被阻断。
    - [ ] 打开分发后，Windows 和 WSL 的目标里都写入了 `cloudlink-servers` 副本；WSL 中没有私钥时，这台服务器在 WSL 中显示「未列入」及原因，WSL 的总 Skill 里也没有它。
-   - [ ] 未验证的服务器不能打开分发开关。
+   - [ ] 未验证的服务器不能分发给 Agent。
    - [ ] 给 `test-vps` 填一个承载的站点（例如 `test.example`），然后在 Claude Code 中不点名服务器，只说「test.example 打不开，帮我看看」，Agent 会加载 `cloudlink-servers` 并找到 `test-vps`：Windows 和 WSL 各验证一次。会话运行中途新建目录时，`/reload-skills` 的提示正确。如果安装了 Codex，也验证一次。
    - [ ] 生产服务器默认只读巡检；切到标准运维时出现二次确认，产物随之重新编译。
    - [ ] 手动删除一个副本、改动另一个副本，健康检查分别标为「副本缺失」「副本被改动」，「修复」能恢复（被改动的先提示会覆盖）。
@@ -487,7 +534,7 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
 
 ```text
 你在 D:\desk\Desktop\cloudlink 中实施 CloudLink v0.1（Windows 优先）。这是 Git 仓库，远端为 https://github.com/Furina-he/cloudlink 。
-先按顺序通读：README.md → PRODUCT.md → DESIGN.md → docs/PRD.md（重点是第三到第八章）→ docs/EXECUTION-PLAN.md。
+先按顺序通读：README.md → PRODUCT.md → DESIGN.md → docs/PRD.md（重点是第三到第八章）→ docs/EXECUTION-PLAN.md → docs/CC-SWITCH-EXPERIENCE.md。
 然后从 EXECUTION-PLAN 中第一个未完成的阶段开始执行（2026-10-30 时为 P3.5）。规则：
 1. 每个阶段只做这个阶段的任务。阶段结束时逐条运行验收门槛，把命令、结果和截图路径汇报给我；
    等我确认后再进入下一阶段，git commit 也要等我确认。

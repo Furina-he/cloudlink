@@ -6,76 +6,102 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener"
 import type {
   ActivityItem,
   ActivityQuery,
-  AddAgentTargetRequest,
-  AddProjectRequest,
+  AddCustomTargetRequest,
+  AgentNote,
   Asset,
   AssetInput,
   CompilePreview,
+  CompileStatus,
+  ConnectionTestRequest,
+  Delivery,
   DeleteResult,
   EnvId,
   Environment,
+  GuardRules,
+  GuardStatus,
   ImportHost,
+  Inclusion,
   IpcError,
   Mode,
-  Mount,
-  MountRequest,
-  ProjectInspection,
+  Operation,
+  OperationQuery,
+  PreviewRequest,
   SaveResult,
   Settings,
-  SkillStatus,
+  SkillConfig,
+  SshConfigStatus,
   SshHostList,
   Target,
-  UpdateTargetPatch,
 } from "@/bindings"
 
 export const ipc = {
   detectEnvironments: () => invoke<Environment[]>("detect_environments"),
-  listSshHosts: (envId?: EnvId) =>
-    invoke<SshHostList>("list_ssh_hosts", { envId }),
+  listSshHosts: (envId?: EnvId) => invoke<SshHostList>("list_ssh_hosts", { envId }),
   listAssets: () => invoke<Asset[]>("list_assets"),
   saveAsset: (input: AssetInput) => invoke<SaveResult>("save_asset", { input }),
-  deleteAsset: (id: string) => invoke<DeleteResult>("delete_asset", { id }),
+  /** removeGeneratedKey：一并删除 CloudLink 生成或复制的密钥（F-101 AC2，2026-10-31 补充） */
+  deleteAsset: (id: string, opts: { removeGeneratedKey: boolean }) =>
+    invoke<DeleteResult>("delete_asset", { id, opts }),
   importHosts: (hosts: ImportHost[], probeAfter: boolean) =>
     invoke<Asset[]>("import_hosts", { hosts, probeAfter }),
-  startProbe: (assetId: string) =>
-    invoke<{ runId: string }>("start_probe", { assetId }),
+  /** 结果经 connection://tested 返回 */
+  testConnection: (req: ConnectionTestRequest) => invoke<{ testId: string }>("test_connection", { req }),
+  cancelConnectionTest: (testId: string) => invoke<void>("cancel_connection_test", { testId }),
+  trustHostKey: (testId: string, fingerprint: string) => invoke<void>("trust_host_key", { testId, fingerprint }),
+  /** 写入系统凭据库；null 为删除 */
+  setPassword: (assetId: string, password: string | null) => invoke<void>("set_password", { assetId, password }),
+  convertToKeyAuth: (assetId: string) => invoke<Asset>("convert_to_key_auth", { assetId }),
+  /** F-108 AC4：复制到该发行版的 ~/.ssh/，600 权限，重名加后缀；返回副本路径（2026-10-31 补充） */
+  copyKeyToWsl: (req: { source: string; envId: EnvId }) => invoke<{ path: string }>("copy_key_to_wsl", { req }),
+  getSshConfigStatus: () => invoke<SshConfigStatus[]>("get_ssh_config_status"),
+  addSshInclude: (envId: EnvId) => invoke<SshConfigStatus>("add_ssh_include", { envId }),
+  /** 把服务器分发给某个 Agent，或者停止分发（F-303）；返回这台服务器的列入情况 */
+  setDistribute: (assetId: string, agentKey: string, on: boolean) => invoke<Inclusion[]>("set_distribute", { assetId, agentKey, on }),
+  setMode: (assetId: string, mode: Mode) => invoke<SaveResult>("set_mode", { assetId, mode }),
+  /** 固定 30 分钟 */
+  unlockServer: (assetId: string) => invoke<{ unlockedUntil: string }>("unlock_server", { assetId }),
+  lockServer: (assetId: string) => invoke<void>("lock_server", { assetId }),
+  startProbe: (assetId: string) => invoke<{ runId: string }>("start_probe", { assetId }),
   cancelProbe: (runId: string) => invoke<void>("cancel_probe", { runId }),
-  applyProbe: (runId: string, changeIds: string[]) =>
-    invoke<SaveResult>("apply_probe", { runId, changeIds }),
-  previewCompile: (input: AssetInput, mode: Mode) =>
-    invoke<CompilePreview>("preview_compile", { input, mode }),
-  listSkills: () => invoke<SkillStatus[]>("list_skills"),
+  /** 只用于待确认项 */
+  confirmProbeItems: (runId: string, changeIds: string[]) =>
+    invoke<SaveResult>("confirm_probe_items", { runId, changeIds }),
+  undoProbe: (runId: string) => invoke<SaveResult>("undo_probe", { runId }),
+  getSkillConfig: () => invoke<SkillConfig>("get_skill_config"),
+  saveSkillConfig: (input: SkillConfig) => invoke<CompileStatus[]>("save_skill_config", { input }),
+  /** 带草稿时预览草稿 */
+  previewSkill: (req: PreviewRequest) => invoke<CompilePreview>("preview_skill", { req }),
+  getCompileStatus: () => invoke<CompileStatus[]>("get_compile_status"),
   listTargets: () => invoke<Target[]>("list_targets"),
-  inspectProject: (path: string) =>
-    invoke<ProjectInspection>("inspect_project", { path }),
-  addProjectTarget: (req: AddProjectRequest) =>
-    invoke<Target>("add_project_target", { req }),
-  removeTarget: (id: string) => invoke<void>("remove_target", { id }),
-  // 以下四个命令是 P3 的契约扩展（2026-10-29 用户确认），PRD 7.8 中没有
-  updateTarget: (id: string, patch: UpdateTargetPatch) =>
-    invoke<Target>("update_target", { id, patch }),
-  addAgentTarget: (req: AddAgentTargetRequest) =>
-    invoke<Target>("add_agent_target", { req }),
-  unmountAll: () => invoke<void>("unmount_all"),
-  /** 清空数据：卸载全部挂载、删除资产与目标、恢复默认设置 */
-  resetData: () => invoke<void>("reset_data"),
-  listMounts: () => invoke<Mount[]>("list_mounts"),
-  mount: (req: MountRequest) => invoke<Mount>("mount", { req }),
-  unmount: (mountId: string) => invoke<void>("unmount", { mountId }),
-  setMountMode: (mountId: string, mode: Mode) =>
-    invoke<Mount>("set_mount_mode", { mountId, mode }),
-  checkMounts: () => invoke<Mount[]>("check_mounts"),
-  repairMount: (mountId: string) => invoke<Mount>("repair_mount", { mountId }),
-  listActivity: (q: ActivityQuery) =>
-    invoke<ActivityItem[]>("list_activity", { q }),
+  setTargetEnabled: (id: string, enabled: boolean) => invoke<Target>("set_target_enabled", { id, enabled }),
+  addCustomTarget: (req: AddCustomTargetRequest) => invoke<Target>("add_custom_target", { req }),
+  removeCustomTarget: (id: string) => invoke<void>("remove_custom_target", { id }),
+  listInclusions: () => invoke<Inclusion[]>("list_inclusions"),
+  listDeliveries: () => invoke<Delivery[]>("list_deliveries"),
+  checkDeliveries: () => invoke<Delivery[]>("check_deliveries"),
+  repairDelivery: (id: string) => invoke<Delivery>("repair_delivery", { id }),
+  removeAllDeliveries: () => invoke<void>("remove_all_deliveries"),
+  getGuardStatus: () => invoke<GuardStatus[]>("get_guard_status"),
+  installGuard: (envId: EnvId) => invoke<GuardStatus>("install_guard", { envId }),
+  removeGuard: (envId: EnvId) => invoke<GuardStatus>("remove_guard", { envId }),
+  getGuardRules: () => invoke<GuardRules>("get_guard_rules"),
+  listOperations: (q: OperationQuery) => invoke<Operation[]>("list_operations", { q }),
+  listNotes: (assetId?: string) => invoke<AgentNote[]>("list_notes", { assetId }),
+  /** text 为编辑后的内容 */
+  mergeNotes: (items: { id: string; text?: string }[]) => invoke<SaveResult>("merge_notes", { items }),
+  dismissNotes: (ids: string[]) => invoke<void>("dismiss_notes", { ids }),
+  listActivity: (q: ActivityQuery) => invoke<ActivityItem[]>("list_activity", { q }),
   getSettings: () => invoke<Settings>("get_settings"),
-  updateSettings: (patch: Partial<Settings>) =>
-    invoke<Settings>("update_settings", { patch }),
+  updateSettings: (patch: Partial<Settings>) => invoke<Settings>("update_settings", { patch }),
   getProbeScript: () => invoke<string>("get_probe_script"),
+  /** 清空数据（P3 契约扩展，2026-10-29 用户确认；v3 起同时删除托管 ssh 配置、凭据库中的密码、护栏 hook、收件箱和操作记录） */
+  resetData: () => invoke<void>("reset_data"),
   /** 在文件管理器中显示（PRD 7.3：plugin-opener 的 revealItemInDir） */
   revealInDir: (path: string) => revealItemInDir(path),
   /** 选择目录（PRD 7.3：plugin-dialog 的 open({ directory: true })）；取消时返回 null */
   pickDirectory: () => open({ directory: true, multiple: false }),
+  /** 选择私钥文件（PRD 6.5）；取消时返回 null */
+  pickFile: () => open({ directory: false, multiple: false }),
 }
 
 /** 把 invoke 的拒绝值规整为 IpcError。后端约定抛出 { id, params } */

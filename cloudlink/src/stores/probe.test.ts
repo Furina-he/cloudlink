@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest"
 
 import { isProbing, selectActiveRun, useProbeStore } from "./probe"
 
-beforeEach(() => useProbeStore.setState({ runs: {}, activeRunByAsset: {} }))
+beforeEach(() => useProbeStore.setState({ runs: {}, activeRunByAsset: {}, starting: [] }))
 
 describe("探测事件（载荷带 assetId）", () => {
   it("后端发起的探测（导入后立即探测）也能归到对应资产", () => {

@@ -3,17 +3,23 @@ import {
   CircleDashedIcon,
   CircleXIcon,
   ClockIcon,
-  Link2OffIcon,
+  FileWarningIcon,
+  MonitorIcon,
+  ShieldCheckIcon,
+  ShieldOffIcon,
+  ShieldXIcon,
+  SquareTerminalIcon,
   TriangleAlertIcon,
   type LucideIcon,
 } from "lucide-react"
 import type { ReactNode } from "react"
 
-import type { Mount, MountStatus, ProbeState } from "@/bindings"
+import type { DeliveryStatus, GuardState, ProbeState } from "@/bindings"
 import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
 import { copy } from "@/lib/copy"
 import { cn } from "@/lib/utils"
+import type { ConnState } from "@/stores/assets"
 
 export type StateTone = "success" | "warning" | "danger" | "neutral"
 
@@ -51,25 +57,37 @@ export function StateBadge({
   )
 }
 
-export const MOUNT_STATE: Record<MountStatus, { tone: StateTone; icon: LucideIcon | null }> = {
-  ok: { tone: "success", icon: CircleCheckIcon },
-  pending: { tone: "neutral", icon: null },
-  broken: { tone: "danger", icon: Link2OffIcon },
-  conflict: { tone: "warning", icon: TriangleAlertIcon },
-  "stale-copy": { tone: "warning", icon: ClockIcon },
-  "alias-missing": { tone: "danger", icon: CircleXIcon },
+/** 状态的图标 + 文字（不加底色），用在卡片和列表行里 */
+export function StateText({ tone, icon: Icon, children, className }: { tone: StateTone; icon: LucideIcon; children: ReactNode; className?: string }) {
+  return (
+    <span className={cn("inline-flex min-w-0 items-center gap-1", TONE_TEXT[tone], className)}>
+      <Icon className="size-3.5 shrink-0" aria-hidden />
+      <span className="truncate">{children}</span>
+    </span>
+  )
 }
 
-/** 挂载状态（PRD 6.13 状态词表）；复制模式的正常挂载写作「已挂载（复制）」 */
-export function MountStatusBadge({ mount, className }: { mount: Mount; className?: string }) {
-  const { tone, icon } = MOUNT_STATE[mount.status]
-  const isCopy = mount.links.length > 0 && mount.links.every((l) => l.kind === "copy")
-  const text = mount.status === "ok" && isCopy ? copy.mountOkCopy : copy.mountStatus[mount.status]
-  return (
-    <StateBadge tone={tone} icon={icon} className={className}>
-      {text}
-    </StateBadge>
-  )
+export const CONN_STATE: Record<ConnState, { tone: StateTone; icon: LucideIcon }> = {
+  connected: { tone: "success", icon: CircleCheckIcon },
+  unverified: { tone: "neutral", icon: CircleDashedIcon },
+  failed: { tone: "danger", icon: CircleXIcon },
+  changed: { tone: "warning", icon: TriangleAlertIcon },
+}
+
+export const DELIVERY_STATE: Record<DeliveryStatus, { tone: StateTone; icon: LucideIcon | null }> = {
+  ok: { tone: "success", icon: CircleCheckIcon },
+  pending: { tone: "neutral", icon: null },
+  missing: { tone: "danger", icon: CircleXIcon },
+  modified: { tone: "warning", icon: FileWarningIcon },
+  outdated: { tone: "warning", icon: ClockIcon },
+  conflict: { tone: "warning", icon: TriangleAlertIcon },
+}
+
+export const GUARD_STATE: Record<GuardState, { tone: StateTone; icon: LucideIcon }> = {
+  active: { tone: "success", icon: ShieldCheckIcon },
+  "not-installed": { tone: "neutral", icon: ShieldOffIcon },
+  broken: { tone: "danger", icon: ShieldXIcon },
+  unavailable: { tone: "neutral", icon: ShieldOffIcon },
 }
 
 export const PROBE_STATE: Record<ProbeState, { tone: StateTone; icon: LucideIcon }> = {
@@ -79,30 +97,18 @@ export const PROBE_STATE: Record<ProbeState, { tone: StateTone; icon: LucideIcon
   failed: { tone: "danger", icon: CircleXIcon },
 }
 
-/** 探测状态图标；探测中显示 Spinner。附屏幕阅读器文字，颜色不是唯一线索 */
-export function ProbeStateIcon({
-  state,
-  probing,
-  className,
-}: {
-  state: ProbeState
-  probing?: boolean
-  className?: string
-}) {
-  const label = probing ? copy.probing : copy.probeState[state]
-  if (probing) {
-    return (
-      <span className={cn("flex shrink-0", className)}>
-        <Spinner aria-hidden className="text-muted-foreground" />
-        <span className="sr-only">{label}</span>
-      </span>
-    )
-  }
-  const { tone, icon: Icon } = PROBE_STATE[state]
+/** 运行环境图标（DESIGN.md 图标表）：Windows 用 MonitorIcon，WSL 用 SquareTerminalIcon */
+export function EnvIcon({ envId, className }: { envId: string; className?: string }) {
+  const Icon = envId === "windows" ? MonitorIcon : SquareTerminalIcon
+  return <Icon className={cn("size-4 shrink-0", className)} aria-hidden />
+}
+
+/** 护栏状态徽章（6.11 状态词表） */
+export function GuardBadge({ state, className }: { state: GuardState; className?: string }) {
+  const { tone, icon } = GUARD_STATE[state]
   return (
-    <span className={cn("flex shrink-0", className)}>
-      <Icon aria-hidden className={cn("size-4", TONE_TEXT[tone])} />
-      <span className="sr-only">{label}</span>
-    </span>
+    <StateBadge tone={tone} icon={icon} className={className}>
+      {copy.guardState[state]}
+    </StateBadge>
   )
 }

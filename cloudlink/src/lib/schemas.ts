@@ -1,45 +1,32 @@
-// zod 校验（PRD 3.3、5.1、5.4）
+// zod 校验（PRD 3.3、6.4、6.5）。消息是 copy.ts 中 validation 的 key，表单层负责映射成中文
 import { z } from "zod"
 
 import type { PortMapping } from "@/bindings"
 
-export const SLUG_MAX = 64
-export const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/
-/** synced 是 Claude Code 在 ~/.claude/skills 下的保留目录名 */
-export const RESERVED_SLUGS = ["synced"] as const
 export const DESCRIPTION_MAX = 1024
 
-/** 消息是 copy.ts 中 validation 的 key，表单层负责映射成中文 */
-export const slugSchema = z
-  .string()
-  .min(1, "slug-required")
-  .max(SLUG_MAX, "slug-too-long")
-  .regex(SLUG_PATTERN, "slug-format")
-  .refine(
-    (v) => !(RESERVED_SLUGS as readonly string[]).includes(v),
-    "slug-reserved"
-  )
+/** ssh 的 Host 别名：不能有空格和通配符（*、?、!），也不能有引号和 # */
+export const ALIAS_PATTERN = /^[A-Za-z0-9._-]+$/
 
-/** 唯一性需要全部资产，作为工厂函数提供；编辑时排除自身 id */
-export function uniqueSlugSchema(
-  taken: { id: string; slug: string }[],
-  selfId?: string
-) {
-  return slugSchema.refine(
-    (v) => !taken.some((a) => a.slug === v && a.id !== selfId),
-    "slug-taken"
-  )
-}
+/** 服务器地址：域名、IPv4 或 IPv6（可带方括号）。不收 URL */
+const HOST_PATTERN = /^(\[[0-9a-fA-F:.]+\]|[0-9a-fA-F:]*:[0-9a-fA-F:.]+|[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*)$/
 
-export const sshAliasSchema = z
-  .string()
-  .min(1, "alias-required")
-  // 空串只报「必填」，不再重复报格式错误
-  .regex(/^[^\s*?!]*$/, "alias-format")
+export const hostSchema = z.string().trim().min(1, "host-required").regex(HOST_PATTERN, "host-format")
+
+export const portSchema = z
+  .number({ error: "port-format" })
+  .int("port-format")
+  .min(1, "port-format")
+  .max(65535, "port-format")
 
 export const guardrailRuleSchema = z.object({
   id: z.string(),
   text: z.string().trim().min(1, "rule-empty"),
+})
+
+export const conventionSchema = z.object({
+  id: z.string(),
+  text: z.string().trim().min(1, "convention-empty"),
 })
 
 export const assetPathSchema = z.object({
@@ -84,39 +71,90 @@ export const serviceSchema = z.object({
   sanitized: z.boolean().optional(),
 })
 
-/**
- * 资产编辑器的表单（PRD 6.4）。探测信息、解析快照、时间戳由后端维护，不在表单里；
- * 云厂商和地域用空串表示「未填」
- */
-export function assetFormSchema(
-  taken: { id: string; slug: string }[],
-  selfId?: string
-) {
-  return z.object({
-    name: z.string().trim().min(1, "name-required"),
-    slug: uniqueSlugSchema(taken, selfId),
-    envTag: z.enum(["prod", "staging", "dev"]),
-    provider: z.string().trim(),
-    region: z.string().trim(),
-    tags: z.array(z.string()),
-    summary: z.string(),
-    // 写进 description 和 runtime-topology.md；不收 IP（PRD 原则 2：拓扑最小披露）
-    servedHostnames: z.array(hostnameSchema),
-    notes: z.string(),
-    sshAlias: sshAliasSchema,
-    paths: z.array(assetPathSchema),
-    services: z.array(serviceSchema),
-    rules: z.array(guardrailRuleSchema),
-    defaultMode: z.enum(["read-only", "standard"]),
-    export: z.object({
-      resolvedConnection: z.boolean(),
-      listeningPorts: z.boolean(),
-      image: z.boolean(),
-    }),
-  })
+/** 别名唯一性与冲突检查需要的上下文 */
+export interface AliasContext {
+  /** 其他服务器的别名（F-101 AC1，不区分大小写） */
+  taken: string[]
+  /** 各运行环境用户 ssh config 里已有的 Host（F-107 AC3）；导入的服务器不检查 */
+  sshHosts: { alias: string; definedIn: string[] }[]
+  /** 编辑中服务器自己的别名，不算冲突 */
+  selfAlias?: string
 }
 
-export type AssetFormValues = z.infer<ReturnType<typeof assetFormSchema>>
+/**
+ * 服务器表单（PRD 6.4、6.5）。managed 才校验连接字段；imported 的连接信息由用户的 ssh config 维护。
+ * 云厂商和地域用空串表示「未填」
+ */
+export function serverFormSchema(ctx: AliasContext) {
+  return z
+    .object({
+      source: z.enum(["managed", "imported"]),
+      alias: z.string().trim(),
+      connection: z.object({
+        host: z.string().trim(),
+        // 输入框为空或不是数字时 valueAsNumber 得到 NaN；收下它，交给下面的 superRefine 报 port-format
+        port: z.union([z.number(), z.nan()]),
+        user: z.string().trim(),
+        method: z.enum(["key", "agent", "password"]),
+        identityFile: z.record(z.string(), z.string()),
+        password: z.string(),
+        passwordSaved: z.boolean(),
+        proxyJump: z.string().trim(),
+        definedIn: z.array(z.string()),
+      }),
+      name: z.string().trim().min(1, "name-required"),
+      envTag: z.enum(["prod", "staging", "dev"]),
+      summary: z.string(),
+      tags: z.array(z.string()),
+      provider: z.string().trim(),
+      region: z.string().trim(),
+      servedHostnames: z.array(hostnameSchema),
+      notes: z.string(),
+      paths: z.array(assetPathSchema),
+      services: z.array(serviceSchema),
+      rules: z.array(guardrailRuleSchema),
+      export: z.object({
+        resolvedConnection: z.boolean(),
+        listeningPorts: z.boolean(),
+        image: z.boolean(),
+      }),
+    })
+    .superRefine((v, issue) => {
+      const add = (path: (string | number)[], message: string) => issue.addIssue({ code: "custom", path, message })
+      const alias = v.alias
+      if (!alias) add(["alias"], "alias-required")
+      else if (!ALIAS_PATTERN.test(alias)) add(["alias"], "alias-format")
+      else if (ctx.taken.some((a) => a.toLowerCase() === alias.toLowerCase())) add(["alias"], "alias-taken")
+      if (v.source !== "managed") return
+
+      const c = v.connection
+      const host = hostSchema.safeParse(c.host)
+      if (!host.success) add(["connection", "host"], host.error.issues[0].message)
+      if (!portSchema.safeParse(c.port).success) add(["connection", "port"], "port-format")
+      if (!c.user) add(["connection", "user"], "user-required")
+      if (c.definedIn.length === 0) add(["connection", "definedIn"], "envs-required")
+      // 运行环境 id 里有点号（wsl:Ubuntu-24.04），不能作为表单路径的一段，错误挂在整个 identityFile 上
+      if (c.method === "key" && !c.definedIn.some((env) => c.identityFile[env]?.trim())) {
+        add(["connection", "identityFile"], "key-required")
+      }
+      if (c.method === "password" && !c.passwordSaved && !c.password) add(["connection", "password"], "password-required")
+      // F-107 AC3：与要写入的运行环境里已有的 Host 重名
+      const self = ctx.selfAlias?.toLowerCase()
+      const clash = alias.toLowerCase() !== self && ctx.sshHosts.find(
+        (h) => h.alias.toLowerCase() === alias.toLowerCase() && h.definedIn.some((env) => c.definedIn.includes(env))
+      )
+      if (clash && alias) add(["alias"], "alias-conflict")
+    })
+}
+
+export type ServerFormValues = z.infer<ReturnType<typeof serverFormSchema>>
+
+/** Agent 页「交给 Agent 的内容」（F-201 AC1） */
+export const skillConfigSchema = z.object({
+  relationships: z.string(),
+  conventions: z.array(conventionSchema),
+})
+export type SkillConfigValues = z.infer<typeof skillConfigSchema>
 
 // ---------- 端口映射：「127.0.0.1:8080->8080, 80->80/udp」 ----------
 
@@ -170,40 +208,7 @@ export function serviceDraftSchema(existing: { kind: string; name: string }[]) {
 
 export type ServiceDraft = z.infer<ReturnType<typeof serviceDraftSchema>>
 
-export type ValidationKey =
-  | "slug-required"
-  | "slug-too-long"
-  | "slug-format"
-  | "slug-reserved"
-  | "slug-taken"
-  | "alias-required"
-  | "alias-format"
-  | "rule-empty"
-  | "path-label-required"
-  | "path-required"
-  | "name-required"
-  | "service-name-required"
-  | "service-duplicate"
-  | "ports-format"
-  | "slug-same"
-  | "hostname-format"
-  | "hostname-ip"
-  | "convention-required"
-  | "dir-required"
-  | "body-line-limit"
-  | "probe-timeout"
-
-// ---------- P3：添加项目、自定义全局目录、设置 ----------
-
-/** 添加项目（PRD 6.10）：至少写入一个约定目录 */
-export const projectFormSchema = z.object({
-  label: z.string().trim().min(1, "name-required"),
-  conventions: z.array(z.enum(["claude", "agents"])).min(1, "convention-required"),
-  gitExclude: z.boolean(),
-})
-export type ProjectFormValues = z.infer<typeof projectFormSchema>
-
-/** 自定义全局目录（F-301 AC、PRD 6.9） */
+/** 自定义目录（F-301 AC、PRD 6.6） */
 export const customTargetSchema = z.object({
   label: z.string().trim().min(1, "name-required"),
   path: z.string().min(1, "dir-required"),
@@ -211,9 +216,35 @@ export const customTargetSchema = z.object({
 })
 export type CustomTargetValues = z.infer<typeof customTargetSchema>
 
-/** 设置 / 编译、探测（PRD 6.9）：在合理范围内的整数 */
+/** 设置 / 编译、探测（PRD 6.7）：在合理范围内的整数 */
 export const settingsNumbersSchema = z.object({
   bodyLineLimit: z.number({ error: "body-line-limit" }).int("body-line-limit").min(20, "body-line-limit").max(500, "body-line-limit"),
   probeTimeoutSec: z.number({ error: "probe-timeout" }).int("probe-timeout").min(10, "probe-timeout").max(120, "probe-timeout"),
 })
 export type SettingsNumbers = z.infer<typeof settingsNumbersSchema>
+
+export type ValidationKey =
+  | "name-required"
+  | "host-required"
+  | "host-format"
+  | "port-format"
+  | "user-required"
+  | "alias-required"
+  | "alias-format"
+  | "alias-taken"
+  | "alias-conflict"
+  | "key-required"
+  | "password-required"
+  | "envs-required"
+  | "rule-empty"
+  | "convention-empty"
+  | "path-label-required"
+  | "path-required"
+  | "service-name-required"
+  | "service-duplicate"
+  | "ports-format"
+  | "hostname-format"
+  | "hostname-ip"
+  | "dir-required"
+  | "body-line-limit"
+  | "probe-timeout"

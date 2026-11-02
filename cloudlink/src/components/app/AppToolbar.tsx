@@ -18,20 +18,22 @@ import {
 } from "@/components/ui/tooltip"
 import { copy } from "@/lib/copy"
 import { KEY_HINT } from "@/lib/hotkeys"
+import { cn } from "@/lib/utils"
 import { useAssetStore } from "@/stores/assets"
-import { useSkillStore } from "@/stores/skills"
 import { useUIStore } from "@/stores/ui"
 
-/** 面包屑第二级：当前对象（资产名、Skill slug） */
-function useCurrentObject(): string | null {
+/** 面包屑第二级（PRD 6.3）：服务器视图是别名（等宽）或「新建服务器」，设置视图是当前分区 */
+function useCurrentObject(): { text: string; mono: boolean } | null {
   const view = useUIStore((s) => s.view)
   const selectedAssetId = useUIStore((s) => s.selectedAssetId)
-  const creatingAsset = useUIStore((s) => s.creatingAsset)
-  const selectedSkillId = useUIStore((s) => s.selectedSkillId)
-  const asset = useAssetStore((s) => (selectedAssetId ? s.byId[selectedAssetId]?.name : undefined))
-  const skill = useSkillStore((s) => (selectedSkillId ? s.statusById[selectedSkillId]?.slug : undefined))
-  if (view === "assets") return creatingAsset ? copy.editor.newTitle : (asset ?? null)
-  if (view === "skills") return skill ?? null
+  const creating = useUIStore((s) => s.creating)
+  const section = useUIStore((s) => s.settingsSection)
+  const alias = useAssetStore((s) => (selectedAssetId ? s.byId[selectedAssetId]?.connection.sshAlias : undefined))
+  if (view === "servers") {
+    if (creating) return { text: copy.detail.newTitle, mono: false }
+    return alias ? { text: alias, mono: true } : null
+  }
+  if (view === "settings") return { text: copy.settings.section[section], mono: false }
   return null
 }
 
@@ -61,7 +63,7 @@ export function AppToolbar() {
             <>
               <BreadcrumbSeparator />
               <BreadcrumbItem className="min-w-0">
-                <BreadcrumbPage className="truncate">{current}</BreadcrumbPage>
+                <BreadcrumbPage className={cn("truncate", current.mono && "font-mono")}>{current.text}</BreadcrumbPage>
               </BreadcrumbItem>
             </>
           )}

@@ -12,6 +12,8 @@
     --font-mono: "JetBrains Mono Variable", "Cascadia Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
     --color-success: var(--success);
     --color-warning: var(--warning);
+    --color-agent-claude: var(--agent-claude);
+    --color-agent-openai: var(--agent-openai);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -70,6 +72,9 @@
     --destructive: oklch(0.577 0.245 27.325);
     --success: oklch(0.508 0.118 165.612);
     --warning: oklch(0.555 0.163 48.998);
+    /* Agent 标识色（DESIGN.md 例外，只用于服务器卡片上点亮的 Agent 按钮）：Claude 橙压暗到 0.56，Logo 在 15% 自身色底上 4.04:1、在 frost 上 3.66:1；OpenAI 绿只做底色，Logo 用墨色 */
+    --agent-claude: oklch(0.56 0.15 40);
+    --agent-openai: oklch(0.6 0.13 168);
     --border: oklch(0.925 0.005 214.3);
     --input: oklch(0.925 0.005 214.3);
     --ring: oklch(0.609 0.126 221.723);            /* 覆盖：Signal Cyan */
@@ -107,6 +112,9 @@
     --destructive: oklch(0.704 0.191 22.216);
     --success: oklch(0.765 0.177 163.223);
     --warning: oklch(0.828 0.189 84.429);
+    /* Claude Logo 在 15% 自身色底上 5.26:1（card）、4.45:1（muted） */
+    --agent-claude: oklch(0.72 0.14 42);
+    --agent-openai: oklch(0.74 0.13 168);
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 15%);
     --ring: oklch(0.715 0.143 215.221);
