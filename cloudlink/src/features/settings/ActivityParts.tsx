@@ -3,11 +3,11 @@ import {
   FolderMinusIcon,
   FolderSyncIcon,
   HammerIcon,
-  LockOpenIcon,
   NotebookPenIcon,
   PlugIcon,
   RadarIcon,
   ShieldIcon,
+  SquareTerminalIcon,
   TerminalIcon,
   WrenchIcon,
   type LucideIcon,
@@ -23,7 +23,7 @@ import { TraceCollapsible, TraceCollapsibleContent, TraceCollapsibleTrigger, Tra
 import { copy } from "@/lib/copy"
 import { formatDuration, formatTime } from "@/lib/format"
 import { useActivityStore } from "@/stores/activity"
-import { useAssetStore } from "@/stores/assets"
+import { handleOf, useAssetStore } from "@/stores/assets"
 
 /** 图标按类型区分（PRD 6.7） */
 const KIND_ICON: Record<ActivityKind, LucideIcon> = {
@@ -35,13 +35,14 @@ const KIND_ICON: Record<ActivityKind, LucideIcon> = {
   repair: WrenchIcon,
   "ssh-config": FileCogIcon,
   guard: ShieldIcon,
-  unlock: LockOpenIcon,
+  mode: WrenchIcon,
+  cli: SquareTerminalIcon,
   note: NotebookPenIcon,
   "agent-op": TerminalIcon,
 }
 
 /** CloudLink 自己的操作；「Agent 操作」单独一项（PRD 6.7） */
-const OWN_KINDS: ActivityKind[] = ["connection", "probe", "compile", "deliver", "remove", "repair", "ssh-config", "guard", "unlock", "note"]
+const OWN_KINDS: ActivityKind[] = ["connection", "probe", "compile", "deliver", "remove", "repair", "ssh-config", "guard", "mode", "cli", "note"]
 const AGENT_KIND: ActivityKind = "agent-op"
 
 /** 一条记录是一行 TraceLine；有详情的用 TraceCollapsible 展开，里面是命令清单、差异摘要或完整命令 */
@@ -129,11 +130,11 @@ export function ActivityFilters() {
           items={assets}
           value={selected}
           onValueChange={(a: Asset | null) => void load({ ...query, assetId: a?.id })}
-          itemToStringLabel={(a: Asset) => a.connection.sshAlias}
+          itemToStringLabel={(a: Asset) => handleOf(a)}
           isItemEqualToValue={(a: Asset, b: Asset) => a.id === b.id}
           filter={(a: Asset, q: string) => {
             const needle = q.trim().toLowerCase()
-            return !needle || a.connection.sshAlias.toLowerCase().includes(needle) || a.name.toLowerCase().includes(needle)
+            return !needle || handleOf(a).toLowerCase().includes(needle) || a.name.toLowerCase().includes(needle)
           }}
           autoHighlight
         >
@@ -150,7 +151,7 @@ export function ActivityFilters() {
             <ComboboxList>
               {(a: Asset) => (
                 <ComboboxItem key={a.id} value={a}>
-                  <span className="truncate font-mono">{a.connection.sshAlias}</span>
+                  <span className="truncate font-mono">{handleOf(a)}</span>
                   <span className="ml-auto shrink-0 truncate text-xs text-muted-foreground">{a.name}</span>
                 </ComboboxItem>
               )}

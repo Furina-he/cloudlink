@@ -17,7 +17,7 @@ function mergeNotes(items: { id: string; text?: string }[]) {
   asset.notes = [asset.notes.trim(), ...lines].filter(Boolean).join("\n")
   asset.updatedAt = now()
   notes.forEach((n) => (n.status = "merged"))
-  logActivity({ kind: "note", assetId: asset.id, messageId: "notes-merged", params: { alias: asset.connection.sshAlias, count: items.length }, ok: true })
+  logActivity({ kind: "note", assetId: asset.id, messageId: "notes-merged", params: { alias: aliasOf(asset.id), count: items.length }, ok: true })
   return { asset, statuses: recompile() }
 }
 
@@ -44,7 +44,7 @@ function opToActivity(o: Operation): ActivityItem {
     kind: "agent-op",
     at: o.at,
     assetId: o.assetId,
-    messageId: o.decision === "denied" ? "agent-op-denied" : o.decision === "unlocked" ? "agent-op-unlocked" : "agent-op-allowed",
+    messageId: o.decision === "denied" ? "agent-op-denied" : "agent-op-allowed",
     params: { alias: aliasOf(o.assetId), command: remote.length > 60 ? `${remote.slice(0, 59)}…` : remote, reason: o.reasonId ?? "" },
     detail: `${o.command}\ncwd: ${o.cwd}\nsession: ${o.sessionId}`,
     ok: o.decision !== "denied",
@@ -61,6 +61,7 @@ function listActivity(q: ActivityQuery) {
 /** 清空数据：同时删除托管 ssh 配置、凭据库中的密码、护栏的 hook、笔记收件箱和操作记录；检测到的 Agent 目标保留 */
 function resetData() {
   db.assets = []
+  db.cliMachine = structuredClone(fx.cliMachine)
   db.deliveries = []
   db.notes = []
   db.operations = []

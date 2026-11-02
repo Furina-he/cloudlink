@@ -1,47 +1,73 @@
 import { describe, expect, it } from "vitest"
 
-import type { Asset } from "@/bindings"
+import type { CliAsset, CliEnvState, ServerAsset } from "@/bindings"
 import * as fx from "@/mocks/fixtures"
-import { collectValues, connState, selectCanDistribute, selectServerGroups, selectUnlockRemaining } from "./assets"
+import {
+  cliEnvStatus,
+  collectValues,
+  connState,
+  handleOf,
+  isProdWritable,
+  isServer,
+  selectCanDistribute,
+  selectCliAccount,
+  selectCliProblem,
+  selectResourceGroups,
+} from "./assets"
 
 const byId = Object.fromEntries(fx.assets.map((a) => [a.id, a]))
 const ids = fx.assets.map((a) => a.id)
-const [hkEdge, sgDb, devBox] = ["ast_hk_edge", "ast_sg_db", "ast_dev_box"].map((id) => byId[id])
+const servers = fx.assets.filter(isServer)
+const [hkEdge, sgDb, devBox] = ["ast_hk_edge", "ast_sg_db", "ast_dev_box"].map((id) => byId[id] as ServerAsset)
+const [cloudflare, vercel] = ["ast_cloudflare", "ast_vercel"].map((id) => byId[id] as CliAsset)
 
-/** 在夹具上改连接或 Agent 字段 */
-const withConn = (a: Asset, patch: Partial<Asset["connection"]>): Asset => ({ ...a, connection: { ...a.connection, ...patch } })
-const withAgent = (a: Asset, patch: Partial<Asset["agent"]>): Asset => ({ ...a, agent: { ...a.agent, ...patch } })
+/** 在夹具上改连接或 CLI 状态 */
+const withConn = (a: ServerAsset, patch: Partial<ServerAsset["connection"]>): ServerAsset => ({ ...a, connection: { ...a.connection, ...patch } })
+const withEnvs = (a: CliAsset, envStates: CliAsset["cli"]["envStates"]): CliAsset => ({ ...a, cli: { ...a.cli, envStates } })
+const env = (patch: Partial<CliEnvState>): CliEnvState => ({ installed: true, authenticated: true, expired: false, checkedAt: fx.ago(fx.MIN), ...patch })
 
-describe("服务器列表（PRD 6.4）", () => {
-  it("按生产、预发、开发分组，空组不出现", () => {
-    const groups = selectServerGroups({ byId, ids }, "")
-    expect(groups.map((g) => g.env)).toEqual(["prod", "dev"])
-    expect(groups[0].assets.map((a) => a.id).sort()).toEqual(["ast_hk_edge", "ast_sg_db"])
+describe("资源配电盘（PRD 6.4）", () => {
+  it("分成服务器和云平台两组；组内按生产、预发、开发，再按名称排序", () => {
+    const { servers: s, clis } = selectResourceGroups({ byId, ids }, "")
+    // 中文名称按拼音：香港（xiang）在新加坡（xin）之前
+    expect(s.map((a) => a.id)).toEqual(["ast_hk_edge", "ast_sg_db", "ast_dev_box"])
+    expect(clis.map((a) => a.id)).toEqual(["ast_cloudflare", "ast_vercel"])
   })
 
-  it("组内按名称排序", () => {
-    const named = (id: string, name: string) => ({ ...hkEdge, id, name })
-    const list = [named("b", "Beta"), named("a", "Alpha"), named("c", "Gamma")]
-    const groups = selectServerGroups({ byId: Object.fromEntries(list.map((a) => [a.id, a])), ids: list.map((a) => a.id) }, "")
-    expect(groups[0].assets.map((a) => a.name)).toEqual(["Alpha", "Beta", "Gamma"])
-  })
-
-  it("搜索匹配名称、别名、标签、站点名，不区分大小写", () => {
-    const idsOf = (q: string) => selectServerGroups({ byId, ids }, q).flatMap((g) => g.assets.map((a) => a.id))
+  it("搜索匹配名称、别名、标签、站点名，云平台还匹配 CLI 名、账号和已选范围，不区分大小写", () => {
+    const idsOf = (q: string) => {
+      const g = selectResourceGroups({ byId, ids }, q)
+      return [...g.servers, ...g.clis].map((a) => a.id)
+    }
     expect(idsOf("1PANEL")).toEqual(["ast_hk_edge"])
     expect(idsOf("dev-box")).toEqual(["ast_dev_box"])
     expect(idsOf("blog.example")).toEqual(["ast_hk_edge"])
     expect(idsOf("新加坡")).toEqual(["ast_sg_db"])
-    expect(idsOf("nothing-like-this")).toEqual([])
+    expect(idsOf("wrangler")).toEqual(["ast_cloudflare"])
+    expect(idsOf("my-team")).toEqual(["ast_vercel"])
+    expect(idsOf("api-gateway")).toEqual(["ast_cloudflare"])
+    // 没勾选的范围不公开，也搜不到
+    expect(idsOf("personal-blog")).toEqual([])
+  })
+
+  it("资源的标识：服务器是别名，云平台是云厂商", () => {
+    expect(handleOf(hkEdge)).toBe("hk-edge")
+    expect(handleOf(cloudflare)).toBe("cloudflare")
   })
 
   it("候选值去重、排序，跳过空值", () => {
-    expect(collectValues(fx.assets, (a) => [a.provider])).toEqual(["AWS Lightsail", "Tencent Cloud"])
-    expect(collectValues(fx.assets, (a) => a.tags)).toEqual(["1panel", "db", "edge"])
+    expect(collectValues(servers, (a) => [a.provider])).toEqual(["AWS Lightsail", "Tencent Cloud"])
+    expect(collectValues(servers, (a) => a.tags)).toEqual(["1panel", "db", "edge"])
+  })
+
+  it("生产资源处于标准运维时琥珀色提醒，非生产或只读巡检不提醒", () => {
+    expect(isProdWritable(sgDb)).toBe(true)
+    expect(isProdWritable(hkEdge)).toBe(false)
+    expect(isProdWritable(devBox)).toBe(false)
   })
 })
 
-describe("分发开关能否打开（F-303 AC1）", () => {
+describe("能否分发给新的 Agent（F-303 AC1）", () => {
   it("验证通过即可打开，imported 也一样", () => {
     expect(selectCanDistribute(hkEdge)).toEqual({ ok: true })
     expect(selectCanDistribute(sgDb)).toEqual({ ok: true })
@@ -58,33 +84,38 @@ describe("分发开关能否打开（F-303 AC1）", () => {
     const failed = withConn(hkEdge, { verified: { ok: false, at: fx.ago(fx.MIN), envIds: ["windows"] } })
     expect(selectCanDistribute(failed)).toEqual({ ok: false, reason: "failed" })
   })
-})
 
-describe("临时解锁的剩余时间（F-306 AC2）", () => {
-  const now = Date.parse("2026-10-31T12:00:00Z")
-  const until = (ms: number) => withAgent(hkEdge, { unlockedUntil: new Date(now + ms).toISOString() })
-
-  it("未解锁时为 null", () => {
-    expect(selectUnlockRemaining(hkEdge, now)).toBeNull()
-  })
-
-  it("剩余分钟数向上取整", () => {
-    expect(selectUnlockRemaining(until(22.5 * fx.MIN), now)).toBe(23)
-    expect(selectUnlockRemaining(until(30 * fx.MIN), now)).toBe(30)
-    expect(selectUnlockRemaining(until(1000), now)).toBe(1)
-  })
-
-  it("时钟稍旧时也不超过 30 分钟", () => {
-    expect(selectUnlockRemaining(until(30 * fx.MIN + 20_000), now)).toBe(30)
-  })
-
-  it("到期后为 null", () => {
-    expect(selectUnlockRemaining(until(0), now)).toBeNull()
-    expect(selectUnlockRemaining(until(-fx.MIN), now)).toBeNull()
+  it("云平台：至少一个运行环境已就绪即可；全部未就绪时说明原因", () => {
+    expect(selectCanDistribute(cloudflare)).toEqual({ ok: true })
+    expect(selectCanDistribute(vercel)).toEqual({ ok: true })
+    const none = withEnvs(vercel, { windows: env({ authenticated: false }), [fx.WSL]: env({ installed: false, authenticated: false }) })
+    expect(selectCanDistribute(none)).toEqual({ ok: false, reason: "cli-not-ready" })
+    expect(selectCanDistribute(withEnvs(vercel, {}))).toEqual({ ok: false, reason: "cli-not-ready" })
   })
 })
 
-describe("连接状态（F-106 AC5）", () => {
+describe("云平台 CLI 的状态（F-104、6.11）", () => {
+  it("未安装优先于登录状态；登录已过期单独一种", () => {
+    expect(cliEnvStatus(env({}))).toBe("ready")
+    expect(cliEnvStatus(env({ installed: false, authenticated: true }))).toBe("not-installed")
+    expect(cliEnvStatus(env({ authenticated: false }))).toBe("not-logged-in")
+    expect(cliEnvStatus(env({ authenticated: true, expired: true }))).toBe("expired")
+  })
+
+  it("回路行就地修复：第一个有问题的运行环境，Windows 在前；全部就绪时为 null", () => {
+    expect(selectCliProblem(cloudflare)).toBeNull()
+    expect(selectCliProblem(vercel)).toEqual({ envId: fx.WSL, status: "not-logged-in" })
+    const both = withEnvs(vercel, { [fx.WSL]: env({ authenticated: false }), windows: env({ installed: false, authenticated: false }) })
+    expect(selectCliProblem(both)).toEqual({ envId: "windows", status: "not-installed" })
+  })
+
+  it("账号取第一个已就绪环境的 whoami", () => {
+    expect(selectCliAccount(vercel)).toBe("my-team")
+    expect(selectCliAccount(withEnvs(vercel, { windows: env({ authenticated: false, account: "old" }) }))).toBeUndefined()
+  })
+})
+
+describe("连接状态（F-106 AC4）", () => {
   it("已连接、连接失败、未验证", () => {
     expect(connState(hkEdge)).toBe("connected")
     expect(connState(withConn(hkEdge, { verified: { ok: false, at: fx.ago(fx.MIN), envIds: ["windows"] } }))).toBe("failed")

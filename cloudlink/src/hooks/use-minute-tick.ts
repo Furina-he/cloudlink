@@ -28,7 +28,7 @@ function subscribe(onChange: () => void) {
 const getSnapshot = () => now
 
 /**
- * 每 30 秒更新一次的当前时间（毫秒）。「2 小时前」、临时解锁的剩余分钟数跟着刷新；
+ * 每 30 秒更新一次的当前时间（毫秒）。「2 小时前」这类相对时间跟着刷新；
  * 时间放在 store 外部，渲染时不直接调用 Date.now()
  */
 export function useMinuteTick(): number {

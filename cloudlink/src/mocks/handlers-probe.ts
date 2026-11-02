@@ -1,22 +1,22 @@
 // Mock 命令：探测（F-103）。3 秒的进度事件；自动合并，合并前保存快照用于撤销；疑似注入的值列为待确认
 import { emit } from "@tauri-apps/api/event"
 
-import type { Asset, ProbeChange, ProbeError, ProbeStep } from "@/bindings"
+import type { ProbeChange, ProbeError, ProbeStep, ServerAsset } from "@/bindings"
 import * as fx from "./fixtures"
-import { assetById, db, fail, logActivity, newId, now, recompile } from "./state"
+import { db, fail, logActivity, newId, now, recompile, serverById } from "./state"
 
 const STEPS: ProbeStep[] = ["resolve-alias", "connect", "collect-system", "collect-services", "collect-ports", "merge"]
 const STEP_MS = 500
 
-type Snapshot = Pick<Asset, "facts" | "services" | "listeningPorts" | "probe">
+type Snapshot = Pick<ServerAsset, "facts" | "services" | "listeningPorts" | "probe">
 const runs = new Map<string, { assetId: string; timers: number[] }>()
 /** 每台服务器最近一次探测的快照，只能撤销最近一次（F-103 AC4） */
 const snapshots = new Map<string, { runId: string; snapshot: Snapshot; held: ProbeChange[] }>()
 
-const trustKey = (a: Asset) => `${a.connection.definedIn[0] ?? "windows"}:${a.connection.source === "managed" ? a.connection.host : a.connection.sshAlias}`
+const trustKey = (a: ServerAsset) => `${a.connection.definedIn[0] ?? "windows"}:${a.connection.source === "managed" ? a.connection.host : a.connection.sshAlias}`
 
 /** hk-edge：系统 22.04 → 24.04、新增 api-gateway、old-worker 未发现（PRD 6.4 示例） */
-function hkEdgeChanges(a: Asset): ProbeChange[] {
+function hkEdgeChanges(a: ServerAsset): ProbeChange[] {
   if (a.facts.os === "Ubuntu 24.04 LTS") return []
   a.facts = { ...a.facts, os: "Ubuntu 24.04 LTS", kernel: "6.8.0-45-generic" }
   a.services = a.services.map((s) => (s.name === "old-worker" ? { ...s, missing: true } : { ...s, lastSeenAt: now() }))
@@ -25,7 +25,7 @@ function hkEdgeChanges(a: Asset): ProbeChange[] {
 }
 
 /** 从未探测过的服务器：第一次采集到系统信息，之后再探测就是「未发现变化」 */
-function firstProbeChanges(a: Asset): ProbeChange[] {
+function firstProbeChanges(a: ServerAsset): ProbeChange[] {
   if (a.facts.os) return []
   a.facts = { os: "Ubuntu 22.04.4 LTS", kernel: "5.15.0-122-generic", arch: "x86_64", cpuCores: 4, memoryTotalMiB: 7940, diskTotalGiB: 100, panel: null }
   a.listeningPorts = [{ addr: "0.0.0.0", port: 22, proto: "tcp" }]
@@ -33,7 +33,7 @@ function firstProbeChanges(a: Asset): ProbeChange[] {
 }
 
 export function startProbe(assetId: string) {
-  const asset = assetById(assetId)
+  const asset = serverById(assetId)
   const alias = asset.connection.sshAlias
   const runId = newId("prb")
   const run = { assetId, timers: [] as number[] }
@@ -98,7 +98,7 @@ function latest(runId: string) {
 
 function confirmItems(runId: string, changeIds: string[]) {
   const { assetId, held } = latest(runId)
-  const asset = assetById(assetId)
+  const asset = serverById(assetId)
   for (const c of held.filter((x) => changeIds.includes(x.id))) {
     if (c.field === "service" && c.kind === "added") {
       asset.services.push({ kind: "docker", name: c.label, image: c.after, ports: [], critical: false, source: "probe", lastSeenAt: now(), missing: false })
@@ -110,7 +110,7 @@ function confirmItems(runId: string, changeIds: string[]) {
 
 function undoProbe(runId: string) {
   const { assetId, snapshot } = latest(runId)
-  const asset = assetById(assetId)
+  const asset = serverById(assetId)
   Object.assign(asset, structuredClone(snapshot))
   asset.updatedAt = now()
   snapshots.delete(assetId)

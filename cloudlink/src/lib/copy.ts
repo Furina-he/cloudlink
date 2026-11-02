@@ -5,6 +5,8 @@ import type {
   AgentId,
   AgentNoteFlag,
   AuthMethod,
+  CliProvider,
+  CliScopeKind,
   DeliveryStatus,
   DistributeBlockReason,
   EnvId,
@@ -27,8 +29,8 @@ import type {
 } from "@/bindings"
 import type { PanelTemplateId } from "@/lib/panelTemplates"
 import type { ValidationKey } from "@/lib/schemas"
-import type { ConnState } from "@/stores/assets"
-import type { DetailSection, SettingsSection } from "@/stores/ui"
+import type { CliEnvStatus, ConnState } from "@/stores/assets"
+import type { DetailTab, SettingsSection } from "@/stores/ui"
 
 type Params = Record<string, string | number> | undefined
 type Msg = (p: Params) => string
@@ -42,7 +44,7 @@ const AGENT_LABEL: Record<AgentId, string> = {
   universal: "通用（Codex 等）",
   custom: "自定义目录",
 }
-/** 服务器卡片上 Agent 按钮的短名称；自定义目录用用户填的名称 */
+/** 回路行上 Agent 按钮的短名称；自定义目录用用户填的名称 */
 const AGENT_SHORT: Record<Exclude<AgentId, "custom">, string> = {
   "claude-code": "Claude Code",
   universal: "通用",
@@ -118,6 +120,8 @@ const INCLUSION_REASON: Record<InclusionReasonId, Msg> = {
   "not-written": (p) => `连接没有写入 ${envOf(p)}`,
   "include-missing": (p) => `${envOf(p)} 的 ~/.ssh/config 还没有 Include 托管配置`,
   "no-key-in-env": (p) => `${envOf(p)} 中没有配置私钥`,
+  "cli-not-installed": (p) => `${envOf(p)} 没有安装 ${v(p, "cli")}`,
+  "cli-not-logged-in": (p) => `${envOf(p)} 的 ${v(p, "cli")} 还没有登录`,
 }
 
 /** 护栏未生效、不可用的原因（F-306 AC5） */
@@ -133,6 +137,7 @@ const DISTRIBUTE_BLOCK: Record<DistributeBlockReason, string> = {
   unverified: "连接还没有通过验证，先测试连接",
   failed: "最近一次连接失败，测试连接通过后才能分发",
   "password-only": "只用密码认证，Agent 无法输入密码；先改用密钥登录",
+  "cli-not-ready": "CLI 还没有在任何运行环境里就绪；先安装并登录",
 }
 
 export type ViewId = "servers" | "agents" | "settings"
@@ -140,45 +145,40 @@ export type ViewId = "servers" | "agents" | "settings"
 export const copy = {
   app: { name: "CloudLink", skipToMain: "跳到主内容" },
 
-  nav: { servers: "服务器", agents: "Agent", settings: "设置" } satisfies Record<ViewId, string>,
+  nav: { servers: "资源", agents: "Agent", settings: "设置" } satisfies Record<ViewId, string>,
 
   navBadge: {
-    servers: (n: number) => `共 ${n} 台服务器`,
-    blocked: (n: number) => `${n} 台服务器导致编译受阻`,
+    servers: (n: number) => `共 ${n} 项资源`,
+    blocked: (n: number) => `${n} 项资源导致编译受阻`,
     agents: (n: number) => `${n} 个问题需要处理`,
   },
 
   shell: {
-    toggleSidebar: "折叠或展开侧栏",
+    nav: "主导航",
     openCommand: "打开命令面板",
-    breadcrumb: "当前位置",
-    envStatusTitle: "运行环境",
-    envAvailable: "可用",
-    envUnavailable: "不可用",
-    envStatusLink: "查看运行环境设置",
-    envLoading: "正在检测运行环境",
     loadFailed: "加载数据失败",
     retry: "重试",
   },
 
   command: {
     title: "命令面板",
-    description: "搜索视图、服务器或操作",
-    placeholder: "输入视图、服务器名称、别名或操作",
+    description: "搜索视图、资源或操作",
+    placeholder: "输入视图、资源名称、标识或操作",
     empty: "没有匹配的命令",
-    groups: { navigate: "跳转", servers: "服务器", system: "系统" },
+    groups: { navigate: "跳转", servers: "资源", system: "系统" },
     // 中文和英文之间留一个空格（「前往 Agent」），与其余文案一致
     goTo: (view: string) => (/^[A-Za-z]/.test(view) ? `前往 ${view}` : `前往${view}`),
     actions: {
-      newServer: "新建服务器",
+      newServer: "添加 SSH 服务器",
+      addCli: (name: string) => `添加云平台 CLI：${name}`,
       importSsh: "从 ssh config 导入",
       testCurrent: "测试当前服务器的连接",
+      recheckCli: "重新检测当前云平台 CLI",
       probeCurrent: "探测当前服务器",
       probeAll: "探测全部",
-      distributeTo: (agent: string) => `把当前服务器分发给 ${agent}`,
-      stopTo: (agent: string) => `当前服务器停止分发给 ${agent}`,
-      unlock: "临时解锁当前服务器 30 分钟",
-      lock: "立即锁回当前服务器",
+      distributeTo: (agent: string) => `把当前资源分发给 ${agent}`,
+      stopTo: (agent: string) => `当前资源停止分发给 ${agent}`,
+      setMode: (mode: string) => `把当前资源切换为「${mode}」`,
       preview: "预览 Skill",
       checkAll: "检查全部分发",
       theme: "切换主题",
@@ -205,7 +205,7 @@ export const copy = {
     standard: "允许常规部署和重启服务。删除数据、改防火墙或 SSH 配置、停止关键服务、重启主机前，必须先征得你同意。",
   } satisfies Record<Mode, string>,
 
-  /** 卡片和详情的连接状态（6.11 状态词表）。changed 仍是「未验证」，另附一句提示（F-106 AC5） */
+  /** 回路行和详情的连接状态（6.11 状态词表）。changed 仍是「未验证」，另附一句提示（F-106 AC4） */
   connState: {
     connected: "已连接",
     unverified: "未验证",
@@ -218,13 +218,6 @@ export const copy = {
   auth: { key: "私钥文件", agent: "ssh-agent", password: "密码" } satisfies Record<AuthMethod, string>,
 
   distributeBlock: DISTRIBUTE_BLOCK,
-  /** 卡片上代替 Agent 按钮的短说明 */
-  distributeBlockShort: {
-    unverified: "先测试连接才能分发",
-    failed: "连接失败，测试通过后才能分发",
-    "password-only": "先改用密钥登录才能分发",
-  } satisfies Record<DistributeBlockReason, string>,
-
   inclusion: { included: "已列入", excluded: "未列入" },
   inclusionReason: INCLUSION_REASON,
   /** 未列入时的处理入口 */
@@ -233,6 +226,8 @@ export const copy = {
     "not-written": "编辑连接",
     "include-missing": "加入 Include",
     "no-key-in-env": "配置私钥",
+    "cli-not-installed": "去安装",
+    "cli-not-logged-in": "去登录",
   } as Partial<Record<InclusionReasonId, string>>,
 
   delivery: {
@@ -244,7 +239,7 @@ export const copy = {
     conflict: "冲突",
   } satisfies Record<DeliveryStatus, string>,
   deliveryOk: (n: number) => `已同步 ${n} 台`,
-  deliveryNone: "还没有分发给它的服务器",
+  deliveryNone: "还没有分发给它的资源",
   deliveryDetail: {
     pending: "正在写入副本。",
     ok: "",
@@ -267,10 +262,10 @@ export const copy = {
   } satisfies Record<GuardState, string>,
   guardDetail: GUARD_DETAIL,
 
-  decision: { allowed: "已放行", denied: "已拦下", unlocked: "解锁期间放行" } satisfies Record<OperationDecision, string>,
+  decision: { allowed: "已放行", denied: "已拦下" } satisfies Record<OperationDecision, string>,
   /** 护栏拦下或标注的原因（8.6） */
   guardReason: {
-    "read-only": "只读巡检的服务器，这不是巡检类命令",
+    "read-only": "只读巡检的资源，这不是巡检类命令",
     "credential-read": "读取凭据文件",
     "volume-delete": "删除数据卷",
     "data-delete": "删除数据",
@@ -280,6 +275,9 @@ export const copy = {
     "critical-service": "停止或删除标为「关键」的服务",
     "file-transfer": "只读服务器上的文件传输",
     interactive: "只读服务器上的交互式登录或经标准输入执行脚本",
+    "cli-env-export": "导出云平台 CLI 的凭据",
+    "cli-write": "只读巡检的云平台，这不是查询或日志命令",
+    "cli-destroy": "删库、删站或销毁云资源",
     unparsed: "无法确认是只读命令",
   } satisfies Record<GuardReasonId, string>,
   unparsedAllowed: "未能解析，已放行",
@@ -303,12 +301,12 @@ export const copy = {
 
   /** Lint 规则（PRD 5.4）。带 alias 参数时主语是这台服务器 */
   lint: {
-    "description-too-long": (p) => `description 有 ${v(p, "chars")} 个字符，已截断到 1024 以内。缩短用途可以让更多服务器写进描述`,
+    "description-too-long": (p) => `description 有 ${v(p, "chars")} 个字符，已截断到 1024 以内。缩短用途可以让更多资源写进描述`,
     "secret-detected": (p) => `${subject(p)}第 ${v(p, "line")} 行疑似包含密钥（${v(p, "rule")}），已阻断发布`,
     "export-disabled-field": (p) => `已关闭导出的「${v(p, "field")}」出现在 ${v(p, "alias")} 的产物中，已阻断发布`,
     "missing-reference": (p) => `引用的 ${v(p, "path")} 不存在`,
     "body-too-long": (p) => `SKILL.md 正文 ${v(p, "lines")} 行，超过上限 ${v(p, "limit")} 行`,
-    "prod-standard-no-guardrails": (p) => `${v(p, "alias")} 是生产服务器，使用标准运维档，但没有自定义红线，建议补充`,
+    "prod-standard-no-guardrails": (p) => `${v(p, "alias")} 是生产资源，使用标准运维档，但没有自定义红线，建议补充`,
     "probe-stale": (p) => `${v(p, "alias")} 的探测数据已有 ${v(p, "days")} 天，建议重新探测`,
     "suspected-injection": (p) => `${subject(p)}里的「${v(p, "value")}」疑似包含指令，请核实`,
   } satisfies Record<LintId, Msg>,
@@ -317,9 +315,9 @@ export const copy = {
   /** IPC 错误（后端只给 id） */
   ipcError: {
     "not-found": () => "对象不存在，可能已被删除。刷新后重试。",
-    "alias-taken": (p) => `别名 ${v(p, "alias")} 已被其他服务器使用，请换一个。`,
+    "alias-taken": (p) => `${v(p, "alias")} 已被其他资源使用，请换一个。`,
     "alias-conflict": (p) => `${envOf(p)} 的 ssh config 里已有 Host ${v(p, "alias")}，请换一个别名。`,
-    "cannot-distribute": (p) => DISTRIBUTE_BLOCK[v(p, "reason") as DistributeBlockReason] ?? "这台服务器还不能分发",
+    "cannot-distribute": (p) => DISTRIBUTE_BLOCK[v(p, "reason") as DistributeBlockReason] ?? "这项资源还不能分发",
     "password-missing": () => "凭据库里没有这台服务器的密码，先填写密码并测试连接。",
     "connection-failed": (p) => `${sshTitle(p)}。认证方式没有切换。`,
     "settings-invalid": (p) => `${v(p, "path")} 不是合法的 JSON，CloudLink 没有修改它。修好后再试。`,
@@ -348,63 +346,162 @@ export const copy = {
     reveal: "在文件夹中显示",
   },
 
-  /** 服务器列表（PRD 6.4） */
+  /** 资源配电盘（PRD 6.4） */
   servers: {
-    newServer: "新建服务器",
-    moreCreate: "更多新建方式",
+    add: "添加资源",
+    addServer: "添加服务器",
+    addCli: "云平台",
     importSsh: "从 ssh config 导入",
-    searchPlaceholder: "搜索服务器、别名、标签、站点",
-    searchLabel: "搜索服务器",
-    gridLabel: (env: string) => `${env}服务器`,
-    noMatch: "没有匹配的服务器",
+    searchPlaceholder: "搜索资源",
+    searchLabel: "搜索资源",
+    groupServers: "服务器",
+    groupClis: "云平台",
+    noMatch: "没有匹配的资源",
+    noServers: "还没有服务器",
+    noClis: "还没有接入云平台",
+    connectCli: "连接云平台 CLI",
     clearSearch: "清除搜索",
-    loading: "正在加载服务器",
-    loadFailedTitle: "没能加载服务器",
-    loadFailedDescription: "用上方提示里的「重试」再加载一次；仍然失败时，打开日志目录查看原因。",
-    noSelectionTitle: "选择一台服务器查看详情",
-    noSelectionDescription: "左边的卡片可以用方向键移动，按 Enter 打开。",
-    cardOpen: (alias: string, name: string, state: string) => `${alias}，${name}，${state}`,
+    loading: "正在加载资源",
+    loadFailedTitle: "没能加载资源",
+    rowOpen: (handle: string, name: string, state: string) => `${handle}，${name}，${state}`,
+    modeToggle: (handle: string, mode: string, next: string) => `${handle} 当前是${mode}，点击切换为${next}`,
+    prodWritable: "生产环境已开启写权限",
     agentsLabel: (alias: string) => `将 ${alias} 分发给哪些 Agent`,
     agentToggle: (alias: string, agent: string) => `将 ${alias} 分发给 ${agent}`,
     noAgents: "没有启用的 Agent",
     notesBadge: (n: number) => `笔记 ${n}`,
-    unlockedBadge: (min: number) => `已解锁 · ${min} 分`,
+    linkedTo: (aliases: string) => `关联 ${aliases}`,
     probingLabel: "探测中",
     osLabel: (os: string) => `系统：${os}`,
   },
 
-  /** 首次启动（PRD 6.8） */
-  onboarding: {
-    title: "还没有服务器",
-    description: "录入服务器并测试连接，CloudLink 会把它们编译成一个 Skill 交给本机的 Agent，并在 Claude Code 上用护栏守住档位。",
-    checklist: "开始使用",
-    steps: {
-      detect: "检测运行环境与 Agent",
-      create: "新建第一台服务器并测试连接",
-      distribute: "在服务器卡片上选择 Agent",
-      guard: "为 Claude Code 安装护栏",
-    },
-    detecting: "正在检测…",
-    detected: (envs: string, agents: string) =>
-      agents ? `已发现 ${envs}；${agents}` : `已发现 ${envs}；还没有检测到 Agent`,
-    createHint: "填写地址、用户和认证方式，测试连接通过后保存。",
-    distributeHint: "点亮卡片上的 Agent（例如 Claude Code），这台服务器就写进它的总 Skill。",
-    guardHint: "只读巡检的服务器上，Agent 的写操作会被拦下。",
-    newServer: "新建服务器",
-    installGuard: "安装护栏",
-    or: "或者",
-    importSsh: "从 ssh config 导入",
-    guardNoTarget: "没有启用 Claude Code 目标，这一步可以跳过。",
-    guardUnavailable: "护栏在这些运行环境里不可用，详见 Agent 页。",
-    done: "已完成",
-    todo: "未完成",
+  /** 云平台 CLI（F-104、6.5） */
+  cli: {
+    name: { cloudflare: "Cloudflare", vercel: "Vercel", oracle: "Oracle Cloud" } satisfies Record<CliProvider, string>,
+    blurb: {
+      cloudflare: "域名 DNS、Workers、Pages、D1",
+      vercel: "前端项目部署、域名与运行日志",
+      oracle: "云主机实例启停、防火墙安全列表与网络",
+    } satisfies Record<CliProvider, string>,
+    status: {
+      ready: "已就绪",
+      "not-installed": "未安装",
+      "not-logged-in": "未登录",
+      expired: "登录已过期",
+    } satisfies Record<CliEnvStatus, string>,
+    checking: "检测中",
+    unchecked: "尚未检测",
+    fix: {
+      "not-installed": "去安装",
+      "not-logged-in": "去登录",
+      expired: "去登录",
+    } satisfies Record<Exclude<CliEnvStatus, "ready">, string>,
+    /** 回路行：「WSL 未登录」 */
+    envProblem: (env: string, status: string) => `${env} ${status}`,
+    kind: {
+      zone: "域名 (Zones)",
+      worker: "Workers",
+      pages: "Pages",
+      project: "项目",
+      instance: "计算实例",
+    } satisfies Record<CliScopeKind, string>,
+    kindCount: {
+      zone: (n: number) => `${n} 个域名`,
+      worker: (n: number) => `${n} 个 Worker`,
+      pages: (n: number) => `${n} 个 Pages 项目`,
+      project: (n: number) => `${n} 个项目`,
+      instance: (n: number) => `${n} 台实例`,
+    } satisfies Record<CliScopeKind, (n: number) => string>,
+    scopeNone: "未选资源",
+    versionAccount: (version: string, account?: string) => (account ? `${version} · ${account}` : version),
+    envCheckTitle: "运行环境检查（仅检测已启用 Agent 的环境）",
+    envCheckLabel: "各运行环境的 CLI 状态",
+    autoRefreshHint: "在终端完成操作后切回本窗口，将自动刷新状态。",
+    noAgentEnvs: "还没有启用的 Agent，先到 Agent 页启用一个，这里才知道要检测哪个运行环境。",
+    goAgents: "前往 Agent 页",
+    openTerminal: "打开终端",
+    switchAccount: "打开终端切换账号",
+    terminalOpened: (env: string) => `已打开 ${env} 的终端，完成后切回本窗口`,
+    recheck: "重新检测",
+    refreshScope: "刷新资源范围",
+    copyCommand: "复制命令",
+    installGuide: "安装指引",
+    installMethod: "安装方式",
+    requires: { node: "需要先装好 Node.js", python: "需要先装好 Python 3" },
+    commandCopied: "已复制命令",
+    scopeTitle: "允许 Agent 操作的资源范围（未勾选的不公开）",
+    scopeHint: "勾选立即生效，并重新编译。",
+    selectAll: "全选",
+    clearAll: "全不选",
+    scopeLoading: "正在拉取账号下的资源…",
+    scopeEmpty: "账号下没有可选的资源。",
+    scopeWaiting: "至少一个运行环境就绪后，才能拉取账号下的资源。",
+    linked: (alias: string) => `已关联服务器 ${alias}`,
+    addAsServer: "同时加为 SSH 服务器",
+    accountTitle: { cloudflare: "接入哪个账号", vercel: "接入哪个团队", oracle: "接入哪个 Profile" } satisfies Record<CliProvider, string>,
+    accountAdded: "已添加",
+    allAccountsAdded: (login: string) => `这次登录下的账号都已接入。要接入别的账号，先在终端运行 ${login} 换一个登录，再重新检测。`,
+    pathLabel: "路径",
+    accountLabel: "账号",
+    versionLabel: "版本",
+    loginHintOci: "使用长效的 ~/.oci/config，不用 1 小时过期的临时 session。",
+    saveEnable: "保存并启用",
+    saving: "正在保存",
+    notReadyHint: "至少一个运行环境就绪后才能启用。",
+    enabled: (name: string) => `已接入 ${name}`,
+    delete: "移除云平台",
+    deleteTitle: (name: string) => `移除 ${name}？`,
+    deleteDescription: "它会从总 Skill 中移除。不会卸载本机的 CLI，也不会退出 CLI 的登录。",
+    removed: (name: string) => `已移除 ${name}`,
+    detectFailed: "检测失败，稍后再试。",
+    nameHint: "写进总览表，默认是云平台的名称。",
   },
 
-  /** 服务器详情（PRD 6.4） */
+  /** 添加资源（PRD 6.5） */
+  create: {
+    title: "添加资源",
+    titleSsh: "添加 SSH 服务器",
+    titleCli: (name: string) => `添加 ${name}`,
+    back: "返回选择类型",
+    directGroup: "直连服务器",
+    cliGroup: "云平台 CLI",
+    ssh: "SSH 服务器",
+    sshBlurb: "VPS 或云主机。填地址和认证方式，一步连接并启用",
+    addedCount: (n: number) => `已接入 ${n} 个账号`,
+    aliasEcho: (alias: string) => `ssh ${alias}`,
+    aliasEchoPrefix: "Agent 将通过",
+    aliasEchoSuffix: "连接",
+    aliasEmpty: "填写名称或地址后生成别名",
+    grantAfter: "连接成功后授权给",
+    grant: "授权给",
+    defaultMode: "默认档位",
+    prodStandardHint: "生产资源处于标准运维时，回路行会一直以琥珀色提醒。",
+    connectEnable: "连接并启用",
+    saveOnly: "仅保存（暂不启用）",
+    passwordHint: "连接后自动配置免密密钥供 Agent 使用，不保留明文密码。",
+    stage: {
+      testing: "正在验证连接…",
+      converting: "正在生成并安装免密密钥…",
+      enabling: "已启用，正在后台探测服务…",
+    },
+    enabled: (alias: string) => `已启用 ${alias}，正在后台探测服务`,
+    keepPassword: (alias: string) => `${alias} 没能改用密钥登录，已保留密码。Agent 无法输入密码，这台服务器暂时不能分发。`,
+  },
+
+  /** 首次启动（PRD 6.8） */
+  onboarding: {
+    title: "还没有资源",
+    description: "接入服务器（SSH）或云平台（CLI），CloudLink 会把它们编译成一个 Skill 交给本机的 Agent，并在 Claude Code 上用护栏守住档位。",
+    addSsh: "添加 SSH 服务器",
+    connectCli: "连接云平台 CLI（Cloudflare / Vercel / Oracle）",
+    importSsh: "从 ssh config 导入",
+  },
+
+  /** 右侧检视面板（PRD 6.4） */
   detail: {
-    newTitle: "新建服务器",
+    back: "返回",
     test: "测试连接",
-    probe: "探测",
+    probe: "重新探测",
     cancelProbe: "取消探测",
     preview: "预览 Skill",
     revealCompiled: "在文件夹中显示编译目录",
@@ -418,34 +515,26 @@ export const copy = {
     cores: (n: number) => `${n}C`,
     memory: (gb: number) => `${gb}G`,
     savedCompiled: "已保存，已编译",
-    compileBlocked: (n: number) => `编译受阻：这台服务器有 ${n} 个错误，总 Skill 没有发布`,
-    compileBlockedOther: (targets: string) => `编译受阻：${targets}的总 Skill 里有其他服务器出错，没有发布`,
+    compileBlocked: (n: number) => `编译受阻：这项资源有 ${n} 个错误，总 Skill 没有发布`,
+    compileBlockedOther: (targets: string) => `编译受阻：${targets}的总 Skill 里有其他资源出错，没有发布`,
     compileWarnings: (n: number) => `有警告：${n} 条`,
     showLint: "在预览中查看",
     saveFailed: "保存失败",
-    sections: {
-      agent: "Agent",
-      notes: "笔记",
-      operations: "操作记录",
-      connection: "连接",
-      basic: "基本信息",
-      paths: "路径",
+    tabs: {
+      profile: "画像与规则",
+      connection: "连接配置",
+      activity: "动态",
+    } satisfies Record<DetailTab, string>,
+    tabsLabel: "资源详情",
+    activityCount: (n: number) => `动态 (${n})`,
+    groups: {
+      guardrails: "操作红线",
       services: "服务",
-      guardrails: "红线",
-    } satisfies Record<DetailSection, string>,
-    sectionToggle: (title: string) => `展开或折叠${title}`,
-    summary: {
-      agent: (agents: string, mode: string) => `${agents ? `分发给 ${agents}` : "未分发"} · ${mode}`,
-      connectionImported: "由你的 ssh config 维护",
-      basicEmpty: "名称、用途、标签、厂商",
-      paths: (n: number) => (n ? `${n} 条` : "还没有路径"),
-      services: (n: number, missing: number) =>
-        n === 0 ? "还没有服务" : missing ? `${n} 个，${missing} 个未发现` : `${n} 个`,
-      guardrails: (custom: number, builtin: number) => `${custom} 条自定义 + ${builtin} 条内置`,
-      notesPending: (n: number) => `${n} 条 Agent 笔记待处理`,
-      notesNone: "没有待处理的 Agent 笔记",
-      opsToday: (n: number, denied: number) => (denied ? `今天 ${n} 条，拦下 ${denied} 条` : `今天 ${n} 条`),
-      opsNone: "还没有记录",
+      paths: "关键目录",
+      other: "其他信息",
+      notes: "Agent 笔记",
+      operations: "操作记录",
+      advanced: "高级",
     },
     saveBar: {
       unsaved: "未保存的修改",
@@ -461,19 +550,10 @@ export const copy = {
     },
   },
 
-  /** 详情 Agent 分段（PRD 6.4） */
+  /** 检视面板控制头的档位和授权（PRD 6.4） */
   agentSection: {
-    distribute: "分发给 Agent",
-    distributeHint: "点亮的 Agent 才能看到这台服务器。同一个 Agent 在 Windows 和 WSL 的目录一起分发。",
-    fixBlock: "去处理",
+    distribute: "授权",
     mode: "档位",
-    guard: "护栏",
-    guardLink: "在 Agent 页查看",
-    guardNone: "没有 Claude Code 目标",
-    unlock: "临时解锁 30 分钟",
-    unlocked: (min: number) => `已解锁，还剩 ${min} 分钟`,
-    lockNow: "立即锁回",
-    inclusions: "列入情况",
     noTargets: "还没有启用的 Agent",
     goAgents: "前往 Agent 页",
     agentKeyWarning:
@@ -483,20 +563,12 @@ export const copy = {
     effectHint:
       "Claude Code 会自动加载变化；如果这次在会话运行中新建了 ~/.claude/skills，请在会话中执行 /reload-skills，已调用过的 Skill 要开新会话。Codex 没有生效时请重启。",
     modeChanged: (alias: string, mode: string) => `${alias} 已切换为「${mode}」，已重新编译`,
-    unlockedToast: (alias: string) => `已解锁 ${alias} 30 分钟，期间照常记录`,
-    lockedToast: (alias: string) => `已锁回 ${alias}`,
-    expiredToast: (alias: string) => `${alias} 已自动锁回`,
   },
   modeConfirm: {
     title: (alias: string) => `把 ${alias} 切换为标准运维？`,
     description:
-      "所有已启用的 Agent 都会获得变更权限的指令，护栏只会拦下明显危险的命令。生产服务器建议保持只读巡检，需要改东西时临时解锁。",
+      "所有已启用的 Agent 都会获得变更权限的指令，护栏只会拦下明显危险的命令。切换后回路行会一直以琥珀色提醒，干完活记得切回只读巡检。",
     confirm: "切换为标准运维",
-  },
-  unlockConfirm: {
-    title: (alias: string) => `临时解锁生产服务器 ${alias}？`,
-    description: "30 分钟内护栏对它放行全部命令，到期自动锁回，期间照常记录。解锁不改变档位，也不重新编译 Skill。",
-    confirm: "解锁 30 分钟",
   },
 
   /** 详情笔记分段（F-308） */
@@ -515,7 +587,7 @@ export const copy = {
     injectionHint: "里面像是写给 Agent 的指令，确认内容可信再并入。",
     dirtyHint: "详情有未保存的修改，先保存或放弃，再处理笔记。",
     field: "笔记",
-    fieldHint: "写进这台服务器详情文件的 Notes 一节。不要写密码、IP 和临时状态。",
+    fieldHint: "写进这项资源详情文件的 Notes 一节。不要写密码、IP 和临时状态。",
     merged: (n: number) => `已并入 ${n} 条笔记，已重新编译`,
     dismissed: (n: number) => `已忽略 ${n} 条笔记`,
     none: "没有待处理的 Agent 笔记。Agent 摸清的部署方式和踩过的坑会出现在这里，你确认后才并入。",
@@ -648,7 +720,7 @@ export const copy = {
     name: "名称",
     env: "环境",
     summary: "用途",
-    summaryHint: "写进总览表和 description，帮助 Agent 判断任务涉及哪台服务器。",
+    summaryHint: "写进总览表和 description，帮助 Agent 判断任务涉及哪项资源。",
     chars: (n: number) => `${n} 字符`,
     tags: "标签",
     tagsPlaceholder: "输入后选择或新建",
@@ -805,7 +877,7 @@ export const copy = {
       `${alias} 目前未列入 ${target}的总 Skill：${reason}。下面按已列入计算。`,
     noTargets: "还没有启用的 Agent，下面按 Claude Code（Windows）计算。",
     emptyTitle: "没有可预览的内容",
-    emptyDescription: "还没有分发给这个 Agent 的服务器。在服务器卡片上点亮它之后，这里显示编译出的总 Skill。",
+    emptyDescription: "还没有分发给这个 Agent 的资源。在资源配电盘的回路行上点亮它之后，这里显示编译出的总 Skill。",
   },
 
   /** 探测 Sheet（PRD 6.4 探测流程） */
@@ -935,7 +1007,7 @@ export const copy = {
 
   /** Agent 视图（PRD 6.6） */
   agents: {
-    summary: (included: number, enabled: number) => `${included} 台服务器已列入 · ${enabled} 个目标已启用`,
+    summary: (included: number, enabled: number) => `${included} 项资源已列入 · ${enabled} 个目标已启用`,
     problems: (n: number) => `${n} 个问题需要处理`,
     problemsLabel: (n: number) => `${n} 个问题需要处理，跳到第一个`,
     preview: "预览 Skill",
@@ -948,8 +1020,8 @@ export const copy = {
 
   skillContent: {
     title: "交给 Agent 的内容",
-    hint: "不属于任何一台服务器，写进总 Skill 的 SKILL.md，原文逐字输出。",
-    relationships: "服务器之间的关系",
+    hint: "不属于任何一项资源，写进总 Skill 的 SKILL.md，原文逐字输出。",
+    relationships: "基础设施之间的关系",
     relationshipsHint: "例如哪台反代哪台、哪些容器用哪台的数据库。用英文写，Agent 读起来最准确。",
     conventions: "运维约定",
     conventionsHint: "写进 SKILL.md 的「Rules for every server」，排在内置红线之后。",
@@ -986,13 +1058,13 @@ export const copy = {
     removed: (env: string) => `已移除 ${env} 的护栏`,
     rulesTitle: "护栏规则",
     rulesDescription:
-      "只判定提到 CloudLink 中服务器的 ssh、scp、sftp、rsync 命令。放行时交给 Claude Code 正常的权限流程，护栏不替你批准。",
+      "只判定提到 CloudLink 中服务器的 ssh、scp、sftp、rsync 命令，以及已接入云平台的 wrangler、vercel、oci 命令。放行时交给 Claude Code 正常的权限流程，护栏不替你批准。",
     readOnlyTitle: "只读巡检：只放行这些命令",
     readOnlyNote:
       "不能有输出重定向、tee、命令替换、sudo 或原地修改参数；docker exec 里的命令同样要在白名单内。交互式登录、经标准输入执行脚本、sh -c 包装和文件传输都拦下。",
     standardTitle: "标准运维：拦下这些危险类别",
     alwaysTitle: "任何档位都拦下",
-    unparsedNote: "解析不了的命令：只读服务器上拦下，标准运维服务器上放行并在记录中标注。",
+    unparsedNote: "解析不了的命令：只读资源上拦下，标准运维资源上放行并在记录中标注。",
     loading: "正在加载规则",
   },
 
@@ -1063,8 +1135,8 @@ export const copy = {
     outputLanguage: "编译产物语言",
     outputLanguageValue: "英文（English）",
     outputLanguageHint: "v0.1 固定输出英文：模板文字是英文，你填写的用途、红线、关系、约定和笔记原样输出。界面只有简体中文。",
-    defaultMode: "新建非生产服务器的默认档位",
-    defaultModeHint: "生产服务器新建时固定为只读巡检。",
+    defaultMode: "新建非生产资源的默认档位",
+    defaultModeHint: "生产资源新建时固定为只读巡检。",
     envList: "已检测到的运行环境",
     envEnabled: (label: string) => `启用 ${label}`,
     envHome: "主目录",
@@ -1099,14 +1171,15 @@ export const copy = {
     importExportLater: "v0.5 提供",
     dangerHint: "这些操作不能撤销。CloudLink 只删除自己创建的副本、配置和数据。",
     removeAll: "移除全部分发",
-    removeAllHint: "从所有 Agent 目标中移除 CloudLink 分发的 cloudlink-servers，并停用全部目标。服务器信息保留。",
+    removeAllHint: "从所有 Agent 目标中移除 CloudLink 分发的 cloudlink-servers，并停用全部目标。资源信息保留。",
     removeAllConfirm: "移除全部",
     removeAllDone: "已移除全部分发",
     resetData: "清空数据",
-    resetDataHint: "删除全部服务器、托管 ssh 配置、凭据库中的密码、护栏的 hook、笔记收件箱、操作记录和活动日志，恢复默认设置。",
+    resetDataHint: "删除全部资源、托管 ssh 配置、凭据库中的密码、护栏的 hook、笔记收件箱、操作记录和活动日志，恢复默认设置。",
     resetDataConfirm: "清空数据",
     resetDone: "已清空数据",
     typeToConfirm: (text: string) => `输入「${text}」确认`,
+    envUnavailable: "不可用",
   },
 
   activityKind: {
@@ -1118,7 +1191,8 @@ export const copy = {
     repair: "修复",
     "ssh-config": "ssh 配置",
     guard: "护栏",
-    unlock: "解锁",
+    mode: "档位",
+    cli: "云平台 CLI",
     note: "笔记",
     "agent-op": "Agent 操作",
   } satisfies Record<ActivityKind, string>,
@@ -1132,7 +1206,7 @@ export const copy = {
     "probe-no-changes": (p) => `探测了 ${v(p, "alias")}，未发现变化`,
     "probe-failed": (p) => `探测 ${v(p, "alias")} 失败：${sshTitle(p)}`,
     "probe-undone": (p) => `撤销了 ${v(p, "alias")} 的探测更新`,
-    "compile-ok": (p) => `编译了 ${targetOf(p)}的总 Skill（${v(p, "count")} 台服务器）`,
+    "compile-ok": (p) => `编译了 ${targetOf(p)}的总 Skill（${v(p, "count")} 项资源）`,
     "compile-blocked": (p) => `${targetOf(p)}的总 Skill 编译受阻：${v(p, "count")} 个错误`,
     "deliver-ok": (p) => `把总 Skill 同步到 ${v(p, "target")}（${envOf(p)}）`,
     "remove-ok": (p) => `从 ${v(p, "target")}（${envOf(p)}）移除了 cloudlink-servers`,
@@ -1141,27 +1215,26 @@ export const copy = {
     "ssh-include-added": (p) => `在 ${envOf(p)} 的 ~/.ssh/config 开头加入了 Include`,
     "guard-installed": (p) => `为 ${envOf(p)} 的 Claude Code 安装了护栏`,
     "guard-removed": (p) => `移除了 ${envOf(p)} 的护栏`,
-    unlocked: (p) => `临时解锁了 ${v(p, "alias")} 30 分钟`,
-    locked: (p) => `锁回了 ${v(p, "alias")}`,
-    "lock-expired": (p) => `${v(p, "alias")} 的临时解锁已到期，自动锁回`,
+    "mode-changed": (p) => `把 ${v(p, "alias")} 切换为「${MODE_LABEL[v(p, "mode") as Mode] ?? v(p, "mode")}」`,
+    "cli-detected": (p) => `检测了 ${v(p, "alias")} 的 CLI：${v(p, "ready")}/${v(p, "total")} 个运行环境已就绪`,
+    "cli-scope-updated": (p) => `更新了 ${v(p, "alias")} 的资源范围（已选 ${v(p, "count")} 项）`,
     "notes-merged": (p) => `并入了 ${v(p, "alias")} 的 ${v(p, "count")} 条 Agent 笔记`,
     "notes-dismissed": (p) => `忽略了 ${v(p, "alias")} 的 ${v(p, "count")} 条 Agent 笔记`,
     "agent-op-allowed": (p) => `Agent 在 ${v(p, "alias")} 上执行了 \`${v(p, "command")}\``,
     "agent-op-denied": (p) => `Agent 在 ${v(p, "alias")} 上执行的 \`${v(p, "command")}\` 被护栏拦下`,
-    "agent-op-unlocked": (p) => `Agent 在 ${v(p, "alias")} 上执行了 \`${v(p, "command")}\`（解锁期间放行）`,
   } satisfies Record<ActivityMessageId, Msg>,
 
   activityView: {
     title: "活动",
     kindFilter: "类型",
-    assetFilter: "服务器",
-    assetPlaceholder: "全部服务器",
+    assetFilter: "资源",
+    assetPlaceholder: "全部资源",
     loadMore: "加载更多",
     loading: "正在加载活动",
     today: "今天",
     yesterday: "昨天",
     emptyTitle: "还没有活动记录",
-    emptyDescription: "测试连接、探测、编译、分发、护栏和 Agent 操作的记录会按天出现在这里。",
+    emptyDescription: "测试连接、CLI 检测、探测、编译、分发、档位切换、护栏和 Agent 操作的记录会按天出现在这里。",
     noMatch: "没有符合筛选条件的记录",
     clearFilter: "清除筛选",
     failed: "失败",

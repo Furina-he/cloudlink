@@ -1,8 +1,8 @@
-import { CircleCheckIcon, CircleXIcon, CopyIcon, EllipsisIcon, FolderOpenIcon, PackageIcon, RadarIcon, Trash2Icon, TriangleAlertIcon } from "lucide-react"
-import { useMemo, type RefObject } from "react"
+import { CopyIcon, EllipsisIcon, FolderOpenIcon, PackageIcon, PlugIcon, RadarIcon, Trash2Icon } from "lucide-react"
+import type { RefObject } from "react"
 import { useFormContext, useWatch } from "react-hook-form"
 
-import type { Asset } from "@/bindings"
+import type { ServerAsset } from "@/bindings"
 import { EnvBadge } from "@/components/app/EnvBadge"
 import { CONN_STATE, StateText, TONE_TEXT, PROBE_STATE } from "@/components/app/StateBadge"
 import { Button } from "@/components/ui/button"
@@ -15,21 +15,22 @@ import { formatRelative } from "@/lib/format"
 import { detailFileOf } from "@/lib/paths"
 import type { ServerFormValues } from "@/lib/schemas"
 import { cn } from "@/lib/utils"
-import { connState, useAssetStore } from "@/stores/assets"
+import { connState, selectCanDistribute } from "@/stores/assets"
 import { isProbing, useProbeStore } from "@/stores/probe"
-import { compileLabel, useAgentOptions } from "@/features/agents/agentKeys"
-import { compileKey, selectAssetCompile, useSkillStore } from "@/stores/skills"
+import { useTargetStore } from "@/stores/targets"
 import { useUIStore } from "@/stores/ui"
-import { serverActions } from "./actions"
-import { TestButton, TestResult, type ConnTest } from "./ConnectionTest"
+import { serverActions, toastError, useConverting } from "./actions"
+import { TestResult, type ConnTest } from "./ConnectionTest"
+import { BackButton, CompileSummary, ControlRows, Notice, useInclusionProblems } from "./InspectorParts"
+import { toast } from "@/components/ui/toast"
 
 /** 系统摘要：「Ubuntu 24.04 · 2C/2G」 */
-function factsSummary(f: Asset["facts"]): string[] {
+function factsSummary(f: ServerAsset["facts"]): string[] {
   const size = [f.cpuCores ? copy.detail.cores(f.cpuCores) : "", f.memoryTotalMiB ? copy.detail.memory(Math.round(f.memoryTotalMiB / 1024)) : ""].filter(Boolean)
   return [f.os ?? "", size.join("/")].filter(Boolean)
 }
 
-function probeText(asset: Asset, probing: boolean, now: number): string {
+function probeText(asset: ServerAsset, probing: boolean, now: number): string {
   if (probing) return copy.probing
   const { status, lastSuccessAt } = asset.probe
   if (status === "never") return copy.detail.neverProbed
@@ -38,73 +39,84 @@ function probeText(asset: Asset, probing: boolean, now: number): string {
   return (status === "stale" ? copy.detail.staleAt : copy.detail.probedAt)(formatRelative(lastSuccessAt, now))
 }
 
-/** 编译摘要（PRD 6.4）：受阻或有警告时显示一行，点击打开预览并定位到 Lint；刚保存时显示「已保存，已编译」 */
-function CompileSummary({ asset, dirty }: { asset: Asset; dirty: boolean }) {
-  const statusByKey = useSkillStore((s) => s.statusByKey)
-  const saved = useAssetStore((s) => !!s.lastSaved[asset.id])
-  const { compileTargets } = useAgentOptions()
-  const statuses = useMemo(() => Object.values(statusByKey), [statusByKey])
-  const { errors, warnings, blockedByOthers } = useMemo(() => selectAssetCompile(statuses, asset.id), [statuses, asset.id])
-  // 定位到出问题的那一份：这台服务器自己的错误、警告优先，其次是被其他服务器拖累受阻的
-  const showLint = () => {
-    const own = (level: "error" | "warning") => statuses.find((s) => s.lint.some((l) => l.assetId === asset.id && l.level === level))
-    const target = own("error") ?? blockedByOthers[0] ?? own("warning")
-    if (target) useUIStore.getState().setPreviewKey(compileKey(target))
-    useUIStore.getState().openPreview({ file: "SKILL.md", lint: true })
-  }
-  const link = "h-auto gap-1 p-0 text-xs"
-  const blocked = errors > 0 || blockedByOthers.length > 0
+/** 打开「连接配置」Tab 并定位到某个字段 */
+export type EditConnection = (path: "connection.definedIn" | "connection.identityFile") => void
 
-  let body = null
-  if (errors > 0) {
-    body = (
-      <Button variant="link" size="xs" className={cn(link, "text-destructive")} onClick={showLint}>
-        <CircleXIcon />
-        {copy.detail.compileBlocked(errors)} · {copy.detail.showLint}
-      </Button>
-    )
-  } else if (blockedByOthers.length > 0) {
-    body = (
-      <Button variant="link" size="xs" className={cn(link, "text-destructive")} onClick={showLint}>
-        <CircleXIcon />
-        {copy.detail.compileBlockedOther(blockedByOthers.map((s) => compileLabel(compileTargets, s)).join("、"))} · {copy.detail.showLint}
-      </Button>
-    )
-  } else if (warnings > 0) {
-    body = (
-      <Button variant="link" size="xs" className={cn(link, "text-warning")} onClick={showLint}>
-        <TriangleAlertIcon />
-        {copy.detail.compileWarnings(warnings)} · {copy.detail.showLint}
-      </Button>
-    )
+/** 控制头下方的提示（「正常即隐身」，PRD 6.4、F-303 AC2）：不能分发、连接改过、某个环境未列入 */
+function ServerNotices({ asset, onTest, onConvert, onEdit }: { asset: ServerAsset; onTest: () => void; onConvert: () => void; onEdit: EditConnection }) {
+  const problems = useInclusionProblems(asset)
+  const converting = useConverting((s) => s.ids.includes(asset.id))
+  const can = selectCanDistribute(asset)
+  const state = connState(asset)
+  // 依赖 ssh-agent 的服务器，Windows 上的 Claude Code 读不到 Windows 服务里的密钥（8.3）
+  const agentKey = asset.connection.auth?.method === "agent" && asset.agent.agents.includes("claude-code") && asset.connection.definedIn.includes("windows")
+
+  const fixOf = (p: (typeof problems)[number]) => {
+    if (p.reasonId === "password-only") return { label: copy.inclusionFix["password-only"], run: onConvert }
+    if (p.reasonId === "not-written") return { label: copy.inclusionFix["not-written"], run: () => onEdit("connection.definedIn") }
+    if (p.reasonId === "no-key-in-env") return { label: copy.inclusionFix["no-key-in-env"], run: () => onEdit("connection.identityFile") }
+    if (p.reasonId === "include-missing") {
+      return {
+        label: copy.inclusionFix["include-missing"],
+        run: () =>
+          void useTargetStore
+            .getState()
+            .addSshInclude(p.envId)
+            .then(() => toast.add({ title: copy.include.added(copy.env.long(p.envId)), type: "success" }))
+            .catch(toastError),
+      }
+    }
+    return null
   }
+
+  const blocked = !can.ok && asset.agent.agents.length === 0
+  const passwordOnly = !can.ok && can.reason === "password-only"
+  const shown = problems.filter((p) => p.reasonId !== "password-only" || !blocked)
+  if (!blocked && state !== "changed" && shown.length === 0 && !agentKey) return null
+
   return (
-    <div role="status" className="mt-1 flex flex-wrap items-center gap-x-3 text-xs empty:mt-0">
-      {/* 保存成功后显示「已保存，已编译」，不弹 Toast（6.4）；只在本次会话保存过、而且没有受阻时出现 */}
-      {saved && !dirty && !blocked && (
-        <span className="flex items-center gap-1 text-success">
-          <CircleCheckIcon className="size-3.5" aria-hidden />
-          {copy.detail.savedCompiled}
-        </span>
+    <div className="mt-2 flex flex-col gap-1.5">
+      {blocked && (
+        <Notice action={passwordOnly ? copy.test.convertKey : copy.test.button} busy={converting} onAction={passwordOnly ? onConvert : onTest}>
+          {copy.distributeBlock[can.reason]}
+        </Notice>
       )}
-      {body}
+      {state === "changed" && (
+        <Notice action={copy.test.button} onAction={onTest}>
+          {copy.connChangedHint}
+        </Notice>
+      )}
+      {shown.map((p) => {
+        const fix = fixOf(p)
+        return (
+          <Notice key={p.key} action={fix?.label} onAction={fix?.run}>
+            {p.text}
+          </Notice>
+        )
+      })}
+      {agentKey && <Notice>{copy.agentSection.agentKeyWarning}</Notice>}
     </div>
   )
 }
 
-/** 详情头部（PRD 6.4）：别名、名称、环境徽章；系统摘要和探测时间；测试连接、探测、预览 Skill、更多 */
+/**
+ * 服务器的常驻控制头（PRD 6.4）：标识、名称、环境徽章、关闭；连接状态、系统摘要、探测时间；档位与授权；
+ * 低频操作收进「⋯」。底部的提示和编译摘要只在异常时出现
+ */
 export function DetailHeader({
   asset,
   titleRef,
   conn,
   onTest,
   onConvert,
+  onEdit,
 }: {
-  asset: Asset
+  asset: ServerAsset
   titleRef: RefObject<HTMLHeadingElement | null>
   conn: ConnTest
   onTest: () => void
   onConvert: () => void
+  onEdit: EditConnection
 }) {
   const { control, formState } = useFormContext<ServerFormValues>()
   const [draftAlias, draftName, envTag] = useWatch({ control, name: ["alias", "name", "envTag"] })
@@ -117,16 +129,55 @@ export function DetailHeader({
   const probeTone = probing ? "neutral" : PROBE_STATE[asset.probe.status].tone
   const running = conn.test?.status === "running" || conn.test?.status === "host-key"
 
+  const more = (
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger render={<DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={copy.common.more} />} />}>
+          <EllipsisIcon />
+        </TooltipTrigger>
+        <TooltipContent>{copy.common.more}</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end" className="w-auto min-w-48">
+        <DropdownMenuItem onClick={running ? conn.cancel : onTest}>
+          {running ? <Spinner aria-hidden /> : <PlugIcon />}
+          {running ? copy.test.cancel : copy.detail.test}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => (probing ? serverActions.cancelProbe(asset) : serverActions.probe(asset))}>
+          {probing ? <Spinner aria-hidden /> : <RadarIcon />}
+          {probing ? copy.detail.cancelProbe : copy.detail.probe}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => serverActions.copyAlias(asset)}>
+          <CopyIcon />
+          {copy.detail.copyAlias}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => useUIStore.getState().openPreview({ file: detailFileOf(alias) })}>
+          <PackageIcon />
+          {copy.detail.preview}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => serverActions.revealCompiled(asset)}>
+          <FolderOpenIcon />
+          {copy.detail.revealCompiled}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive" onClick={() => serverActions.requestDelete(asset)}>
+          <Trash2Icon />
+          {copy.detail.delete}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+
   return (
-    <header className="flex flex-col border-b px-3 py-2.5">
+    <header className="flex shrink-0 flex-col border-b px-4 py-2.5">
       <div className="flex min-w-0 items-center gap-2">
+        <BackButton />
         <h2 id="detail-title" ref={titleRef} tabIndex={-1} className="min-w-0 truncate font-mono text-base font-semibold outline-none">
           {alias}
         </h2>
         <span className="min-w-0 truncate text-sm text-muted-foreground">{draftName.trim() || asset.name}</span>
         <EnvBadge env={envTag} className="ml-auto shrink-0" />
       </div>
-      <div className="mt-1.5 flex min-h-5 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+      <div className="mt-1 flex min-h-5 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         <StateText tone={tone} icon={icon}>
           {copy.connState[state]}
         </StateText>
@@ -136,42 +187,12 @@ export function DetailHeader({
           {probeText(asset, probing, now)}
         </span>
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <TestButton running={running} onRun={onTest} onCancel={conn.cancel} />
-        <Button variant="outline" size="sm" onClick={() => (probing ? serverActions.cancelProbe(asset) : serverActions.probe(asset))}>
-          {probing ? <Spinner data-icon="inline-start" aria-hidden /> : <RadarIcon data-icon="inline-start" />}
-          {probing ? copy.detail.cancelProbe : copy.detail.probe}
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => useUIStore.getState().openPreview({ file: detailFileOf(alias) })}>
-          <PackageIcon data-icon="inline-start" />
-          {copy.detail.preview}
-        </Button>
-        <DropdownMenu>
-          <Tooltip>
-            <TooltipTrigger render={<DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={copy.common.more} />} />}>
-              <EllipsisIcon />
-            </TooltipTrigger>
-            <TooltipContent>{copy.common.more}</TooltipContent>
-          </Tooltip>
-          <DropdownMenuContent align="end" className="w-auto min-w-48">
-            <DropdownMenuItem onClick={() => serverActions.copyAlias(asset)}>
-              <CopyIcon />
-              {copy.detail.copyAlias}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => serverActions.revealCompiled(asset)}>
-              <FolderOpenIcon />
-              {copy.detail.revealCompiled}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onClick={() => serverActions.requestDelete(asset)}>
-              <Trash2Icon />
-              {copy.detail.delete}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+      <ControlRows asset={asset} more={more} />
       <TestResult className="mt-1.5 empty:mt-0" test={conn.test} current={conn.current} method={conn.method} assetId={asset.id} onConvert={onConvert} />
-      <CompileSummary asset={asset} dirty={formState.isDirty} />
+      <ServerNotices asset={asset} onTest={onTest} onConvert={onConvert} onEdit={onEdit} />
+      <div className="mt-1.5 empty:hidden">
+        <CompileSummary asset={asset} dirty={formState.isDirty} />
+      </div>
     </header>
   )
 }

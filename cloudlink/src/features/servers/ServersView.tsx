@@ -1,122 +1,185 @@
-import { CircleXIcon, ServerIcon } from "lucide-react"
-import { useRef } from "react"
+import { FileInputIcon, PlusIcon, ServerIcon } from "lucide-react"
+import { useRef, useState } from "react"
 import { useHotkeys } from "react-hotkeys-hook"
-import { useDefaultLayout } from "react-resizable-panels"
+import { useShallow } from "zustand/react/shallow"
 
+import type { CliProvider } from "@/bindings"
 import { PreviewSheet } from "@/components/app/PreviewSheet"
-import { useScrollRestore, useViewTitleFocus } from "@/components/app/ViewShell"
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
-import { Skeleton } from "@/components/ui/skeleton"
-import { useDelayedFlag } from "@/hooks/use-delayed-flag"
+import { ProviderMark } from "@/components/app/ProviderMark"
+import { useScrollRestore, useViewTitleFocus, ViewShell } from "@/components/app/ViewShell"
+import { Button } from "@/components/ui/button"
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
+import { Dialog, DialogContent } from "@/components/ui/dialog"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { CLI_BINARY, CLI_PROVIDERS } from "@/lib/cliProviders"
 import { copy } from "@/lib/copy"
 import { HOTKEYS, isModalOpen, SINGLE_KEY_OPTIONS } from "@/lib/hotkeys"
 import { useAssetStore } from "@/stores/assets"
-import { useUIStore } from "@/stores/ui"
+import { useUIStore, type CreateKind } from "@/stores/ui"
+import { CliDetail } from "./CliDetail"
+import { CreateHeader } from "./CreateParts"
+import { NewCliForm } from "./NewCliForm"
 import { NewServerForm } from "./NewServerForm"
-import { FirstLaunch, OnboardingChecklist, useOnboardingSteps } from "./Onboarding"
 import { ProbeSheet } from "./ProbeSheet"
+import { ResourceList } from "./ResourceList"
 import { ServerDetail } from "./ServerDetail"
-import { ServerList } from "./ServerList"
 
-/** 没有选中服务器时的预览：已发布的总 Skill，列出全部文件 */
+/** 没有选中资源时的预览：已发布的总 Skill，列出全部文件 */
 function WholePreview() {
   return <PreviewSheet scope="all" draft={{}} dirty={false} defaultFile="SKILL.md" />
 }
 
-/** 服务器视图（PRD 6.4）：没有服务器时是首次启动的空状态，否则是列表加详情 */
+/** 首次启动（PRD 6.8）：干净的 Empty，直接给出三个入口，不罗列工程检查表 */
+function FirstLaunch({ focusTitle }: { focusTitle: boolean }) {
+  const ui = useUIStore.getState
+  return (
+    <ViewShell view="servers" title={copy.nav.servers} focusTitle={focusTitle}>
+      <Empty className="border">
+        <EmptyHeader className="max-w-lg">
+          <EmptyMedia variant="icon">
+            <ServerIcon />
+          </EmptyMedia>
+          <EmptyTitle className="text-base">{copy.onboarding.title}</EmptyTitle>
+          <EmptyDescription>{copy.onboarding.description}</EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent className="max-w-lg flex-row flex-wrap justify-center gap-2">
+          <Button size="sm" onClick={() => ui().startCreate("ssh")}>
+            <PlusIcon data-icon="inline-start" />
+            {copy.onboarding.addSsh}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => ui().startCreate()}>
+            {copy.onboarding.connectCli}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => ui().setImportOpen(true)}>
+            <FileInputIcon data-icon="inline-start" />
+            {copy.onboarding.importSsh}
+          </Button>
+        </EmptyContent>
+      </Empty>
+    </ViewShell>
+  )
+}
+
+/** 一个资源类型选择项（DESIGN.md：添加面板里的类型选择用 Card）。整张卡片是一个按钮 */
+/** added：这家已接入的账号数；可以继续接入其他账号 */
+function TypeCard({ icon, title, meta, blurb, added = 0, onPick }: { icon: React.ReactNode; title: string; meta?: string; blurb: string; added?: number; onPick: () => void }) {
+  return (
+    <button type="button" onClick={onPick} className="group/type rounded-xl text-left outline-none">
+      <Card size="sm" className="transition-colors group-focus-visible/type:ring-2 group-focus-visible/type:ring-ring group-hover/type:bg-muted/50">
+        <CardHeader className="grid-cols-[auto_minmax(0,1fr)] gap-x-3">
+          <span aria-hidden className="row-span-2 flex size-8 items-center justify-center rounded-md bg-muted">
+            {icon}
+          </span>
+          <CardTitle className="flex items-center gap-2">
+            {title}
+            {meta && <span className="font-mono text-xs font-normal text-muted-foreground">{meta}</span>}
+            {added > 0 && <span className="ml-auto text-xs font-normal text-muted-foreground">{copy.create.addedCount(added)}</span>}
+          </CardTitle>
+          <CardDescription className="text-xs">{blurb}</CardDescription>
+        </CardHeader>
+      </Card>
+    </button>
+  )
+}
+
+/** 添加资源的第一步（PRD 6.5，Ctrl+N）：选类型。云平台用官方 Logo；同一家可以接入多个账号 */
+function TypePicker() {
+  const providers = useAssetStore(useShallow((s) => s.ids.map((id) => s.byId[id]).flatMap((a) => (a.type === "cli" ? [a.cliProvider] : []))))
+  const ui = useUIStore.getState
+  return (
+    <section aria-labelledby="detail-title" className="flex h-full min-h-0 flex-col">
+      <CreateHeader title={copy.create.title} back={false} />
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="flex flex-col gap-5 p-3 pb-6">
+          <div className="flex flex-col gap-2">
+            <h3 className="text-sm font-semibold">{copy.create.directGroup}</h3>
+            <TypeCard icon={<ServerIcon className="size-4" />} title={copy.create.ssh} blurb={copy.create.sshBlurb} onPick={() => ui().startCreate("ssh")} />
+          </div>
+          <div className="flex flex-col gap-2">
+            <h3 className="text-sm font-semibold">{copy.create.cliGroup}</h3>
+            {CLI_PROVIDERS.map((p: CliProvider) => (
+              <TypeCard
+                key={p}
+                icon={<ProviderMark provider={p} className="size-5" />}
+                title={copy.cli.name[p]}
+                meta={CLI_BINARY[p]}
+                blurb={copy.cli.blurb[p]}
+                added={providers.filter((x) => x === p).length}
+                onPick={() => ui().startCreate(p)}
+              />
+            ))}
+          </div>
+          <Button variant="outline" size="sm" className="w-fit" onClick={() => ui().setImportOpen(true)}>
+            <FileInputIcon data-icon="inline-start" />
+            {copy.servers.importSsh}
+          </Button>
+        </div>
+      </ScrollArea>
+    </section>
+  )
+}
+
+function Creating({ kind }: { kind: CreateKind }) {
+  if (kind === "pick") return <TypePicker />
+  if (kind === "ssh") return <NewServerForm />
+  return <NewCliForm key={kind} provider={kind} />
+}
+
+/**
+ * 添加资源（PRD 6.5）：居中弹窗，不挤压主列表；完成后关闭并回到列表。
+ * 关闭（Esc、遮罩、右上角）都走 closeInspector，表单有未保存修改时先确认
+ */
+function CreateDialog() {
+  const creating = useUIStore((s) => s.creating)
+  // 关闭后保留最后一次的内容，退场动画期间不闪空
+  const [last, setLast] = useState(creating)
+  if (creating && creating !== last) setLast(creating)
+  const shown = creating ?? last
+  return (
+    <Dialog open={!!creating} onOpenChange={(open) => !open && useUIStore.getState().closeInspector()}>
+      <DialogContent
+        showCloseButton={false}
+        className="flex h-[min(600px,calc(100svh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg"
+      >
+        {shown && <Creating kind={shown} />}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** 资源视图（PRD 6.4）：没有资源时是首次启动的空状态，否则是全宽配电盘；点某一行切到全宽详情（← 返回），添加用居中弹窗 */
 export function ServersView({ focusTitle }: { focusTitle: boolean }) {
   const status = useAssetStore((s) => s.status)
   const count = useAssetStore((s) => s.ids.length)
-  const creating = useUIStore((s) => s.creating)
   const loading = (status === "idle" || status === "loading") && count === 0
-  if (!loading && count === 0 && !creating && status !== "error") {
-    return (
-      <>
+  const empty = !loading && count === 0 && status !== "error"
+  const selectedAssetId = useUIStore((s) => s.selectedAssetId)
+  const asset = useAssetStore((s) => (selectedAssetId ? s.byId[selectedAssetId] : undefined))
+
+  return (
+    <>
+      {empty ? (
         <FirstLaunch focusTitle={focusTitle} />
-        <WholePreview />
-      </>
-    )
-  }
-  return <Workspace focusTitle={focusTitle} loading={loading} />
-}
-
-function NoSelection() {
-  const { steps, complete } = useOnboardingSteps()
-  const failed = useAssetStore((s) => s.status === "error" && s.ids.length === 0)
-  return (
-    <div className="flex h-full items-start justify-center overflow-auto p-6">
-      <Empty className="max-w-lg flex-none border">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">{failed ? <CircleXIcon /> : <ServerIcon />}</EmptyMedia>
-          <EmptyTitle>{failed ? copy.servers.loadFailedTitle : copy.servers.noSelectionTitle}</EmptyTitle>
-          <EmptyDescription>{failed ? copy.servers.loadFailedDescription : copy.servers.noSelectionDescription}</EmptyDescription>
-        </EmptyHeader>
-        {!failed && !complete && <OnboardingChecklist steps={steps} />}
-      </Empty>
-    </div>
+      ) : asset ? (
+        <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
+          {asset.type === "vps" ? <ServerDetail key={asset.id} asset={asset} /> : <CliDetail key={asset.id} asset={asset} />}
+        </div>
+      ) : (
+        <ListView focusTitle={focusTitle} loading={loading} />
+      )}
+      {!asset && <WholePreview />}
+      <CreateDialog />
+      <ProbeSheet />
+    </>
   )
 }
 
-function DetailSkeleton() {
-  return (
-    <div className="flex flex-col gap-4 p-3" aria-busy="true" aria-label={copy.servers.loading}>
-      <Skeleton className="h-5 w-1/2" />
-      <Skeleton className="h-3.5 w-1/3" />
-      <Skeleton className="h-8 w-2/3" />
-      <div className="flex flex-col gap-3 pt-2">
-        {Array.from({ length: 4 }, (_, i) => (
-          <div key={i} className="flex flex-col gap-1.5">
-            <Skeleton className="h-3.5 w-16" />
-            <Skeleton className="h-8" />
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function Workspace({ focusTitle, loading }: { focusTitle: boolean; loading: boolean }) {
+function ListView({ focusTitle, loading }: { focusTitle: boolean; loading: boolean }) {
   const titleRef = useRef<HTMLHeadingElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   useViewTitleFocus(titleRef, focusTitle)
   useScrollRestore("servers", () => document.querySelector<HTMLElement>("#server-list [data-slot=scroll-area-viewport]"), !loading)
-  const showSkeleton = useDelayedFlag(loading)
-
-  const selectedAssetId = useUIStore((s) => s.selectedAssetId)
-  const creating = useUIStore((s) => s.creating)
-  const asset = useAssetStore((s) => (selectedAssetId ? s.byId[selectedAssetId] : undefined))
-  const layout = useDefaultLayout({ id: "servers" })
-
   useHotkeys(HOTKEYS.focusSearch, () => !isModalOpen() && searchRef.current?.focus(), SINGLE_KEY_OPTIONS)
-
-  return (
-    <>
-      <ResizablePanelGroup
-        id="servers"
-        orientation="horizontal"
-        defaultLayout={layout.defaultLayout}
-        onLayoutChanged={layout.onLayoutChanged}
-        className="min-h-0 flex-1"
-      >
-        <ResizablePanel id="list" defaultSize="42%" minSize="300px">
-          <ServerList titleRef={titleRef} searchRef={searchRef} loading={loading} />
-        </ResizablePanel>
-        <ResizableHandle />
-        <ResizablePanel id="detail" minSize="420px">
-          {loading ? (
-            showSkeleton && <DetailSkeleton />
-          ) : creating ? (
-            <NewServerForm />
-          ) : asset ? (
-            <ServerDetail key={asset.id} asset={asset} />
-          ) : (
-            <NoSelection />
-          )}
-        </ResizablePanel>
-      </ResizablePanelGroup>
-      {!creating && !asset && <WholePreview />}
-      <ProbeSheet />
-    </>
-  )
+  return <ResourceList titleRef={titleRef} searchRef={searchRef} loading={loading} />
 }

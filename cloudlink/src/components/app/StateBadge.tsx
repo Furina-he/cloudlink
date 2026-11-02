@@ -57,7 +57,7 @@ export function StateBadge({
   )
 }
 
-/** 状态的图标 + 文字（不加底色），用在卡片和列表行里 */
+/** 状态的图标 + 文字（不加底色），用在回路行和列表行里 */
 export function StateText({ tone, icon: Icon, children, className }: { tone: StateTone; icon: LucideIcon; children: ReactNode; className?: string }) {
   return (
     <span className={cn("inline-flex min-w-0 items-center gap-1", TONE_TEXT[tone], className)}>

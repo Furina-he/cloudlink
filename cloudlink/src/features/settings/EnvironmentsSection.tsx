@@ -33,7 +33,7 @@ export function EnvironmentsSection({ settings }: { settings: Settings }) {
                 {copy.env.long(e.id)}
                 {!e.available && (
                   <StateBadge tone="danger" icon={CircleXIcon}>
-                    {copy.shell.envUnavailable}
+                    {copy.settings.envUnavailable}
                   </StateBadge>
                 )}
               </ItemTitle>

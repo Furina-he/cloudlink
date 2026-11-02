@@ -1,4 +1,4 @@
-import { LockOpenIcon, Trash2Icon, WrenchIcon } from "lucide-react"
+import { Trash2Icon, WrenchIcon } from "lucide-react"
 import { useState } from "react"
 
 import {
@@ -17,26 +17,30 @@ import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 import { copy } from "@/lib/copy"
-import { useAssetStore } from "@/stores/assets"
+import { handleOf, useAssetStore } from "@/stores/assets"
 import { useUIStore } from "@/stores/ui"
 import { serverActions, toastError, usePendingAction } from "./actions"
 
-/** 删除服务器（F-101 AC2）：managed 同时删除托管 ssh 配置的条目和凭据库中的密码；CloudLink 生成的密钥单独勾选 */
+/**
+ * 删除资源（F-101 AC2）。服务器：managed 同时删除托管 ssh 配置的条目和凭据库中的密码，CloudLink 生成的密钥单独勾选；
+ * 云平台：不卸载本机 CLI，也不退出 CLI 的登录
+ */
 function DeleteBody({ assetId, close }: { assetId: string; close: () => void }) {
   const asset = useAssetStore((s) => s.byId[assetId])
   const [removeKey, setRemoveKey] = useState(true)
   const [busy, setBusy] = useState(false)
   if (!asset) return null
-  const alias = asset.connection.sshAlias
-  const generated = asset.connection.auth?.generatedByCloudLink
-  const keyPaths = Object.values(asset.connection.auth?.identityFile ?? {}).join("、")
+  const alias = handleOf(asset)
+  const server = asset.type === "vps" ? asset : undefined
+  const generated = server?.connection.auth?.generatedByCloudLink
+  const keyPaths = Object.values(server?.connection.auth?.identityFile ?? {}).join("、")
 
   const confirm = async () => {
     setBusy(true)
     try {
       await useAssetStore.getState().remove(asset.id, !!generated && removeKey)
       if (useUIStore.getState().selectedAssetId === asset.id) useUIStore.getState().selectAsset(null, { force: true })
-      toast.add({ title: copy.deleteDialog.deleted(alias) })
+      toast.add({ title: server ? copy.deleteDialog.deleted(alias) : copy.cli.removed(asset.name) })
       close()
     } catch (e) {
       toastError(e)
@@ -51,10 +55,10 @@ function DeleteBody({ assetId, close }: { assetId: string; close: () => void }) 
         <AlertDialogMedia>
           <Trash2Icon className="text-destructive" />
         </AlertDialogMedia>
-        <AlertDialogTitle>{copy.deleteDialog.title(alias)}</AlertDialogTitle>
+        <AlertDialogTitle>{server ? copy.deleteDialog.title(alias) : copy.cli.deleteTitle(asset.name)}</AlertDialogTitle>
         <AlertDialogDescription>
-          {copy.deleteDialog.description}
-          {asset.connection.source === "managed" ? copy.deleteDialog.managed : copy.deleteDialog.imported}
+          {server ? copy.deleteDialog.description : copy.cli.deleteDescription}
+          {server && (server.connection.source === "managed" ? copy.deleteDialog.managed : copy.deleteDialog.imported)}
         </AlertDialogDescription>
       </AlertDialogHeader>
       {generated && (
@@ -72,14 +76,14 @@ function DeleteBody({ assetId, close }: { assetId: string; close: () => void }) 
         <AlertDialogCancel disabled={busy}>{copy.common.cancel}</AlertDialogCancel>
         <AlertDialogAction variant="destructive" disabled={busy} onClick={() => void confirm()}>
           {busy && <Spinner data-icon="inline-start" aria-hidden />}
-          {copy.deleteDialog.submit}
+          {server ? copy.deleteDialog.submit : copy.cli.delete}
         </AlertDialogAction>
       </AlertDialogFooter>
     </>
   )
 }
 
-/** 需要确认的服务器操作（F-202 AC2、F-306 AC2、F-101 AC2）。在 App 上挂一份，右键菜单、命令面板、详情共用 */
+/** 需要确认的资源操作（F-202 AC2、F-101 AC2）。在 App 上挂一份，回路行、右键菜单、命令面板、检视面板共用 */
 export function ServerActionDialogs() {
   const pending = usePendingAction((s) => s.pending)
   const asset = useAssetStore((s) => (pending ? s.byId[pending.assetId] : undefined))
@@ -88,7 +92,7 @@ export function ServerActionDialogs() {
   if (pending && pending !== last) setLast(pending)
   const shown = pending ?? last
   const close = () => usePendingAction.getState().set(null)
-  const alias = asset?.connection.sshAlias ?? ""
+  const alias = asset ? handleOf(asset) : ""
 
   return (
     <AlertDialog open={!!pending && !!asset} onOpenChange={(open) => !open && close()}>
@@ -98,23 +102,21 @@ export function ServerActionDialogs() {
         ) : (
           <>
             <AlertDialogHeader>
-              <AlertDialogMedia>{shown?.kind === "mode" ? <WrenchIcon /> : <LockOpenIcon />}</AlertDialogMedia>
-              <AlertDialogTitle>{shown?.kind === "mode" ? copy.modeConfirm.title(alias) : copy.unlockConfirm.title(alias)}</AlertDialogTitle>
-              <AlertDialogDescription>
-                {shown?.kind === "mode" ? copy.modeConfirm.description : copy.unlockConfirm.description}
-              </AlertDialogDescription>
+              <AlertDialogMedia>
+                <WrenchIcon className="text-warning" />
+              </AlertDialogMedia>
+              <AlertDialogTitle>{copy.modeConfirm.title(alias)}</AlertDialogTitle>
+              <AlertDialogDescription>{copy.modeConfirm.description}</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>{copy.common.cancel}</AlertDialogCancel>
               <AlertDialogAction
                 onClick={() => {
                   close()
-                  if (!asset) return
-                  if (shown?.kind === "mode") void serverActions.setMode(asset, "standard")
-                  else void serverActions.unlock(asset)
+                  if (asset) void serverActions.setMode(asset, "standard")
                 }}
               >
-                {shown?.kind === "mode" ? copy.modeConfirm.confirm : copy.unlockConfirm.confirm}
+                {copy.modeConfirm.confirm}
               </AlertDialogAction>
             </AlertDialogFooter>
           </>

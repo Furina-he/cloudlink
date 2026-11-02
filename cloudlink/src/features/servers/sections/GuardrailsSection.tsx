@@ -8,7 +8,7 @@ import { FieldDescription, FieldGroup, FieldLegend, FieldSet } from "@/component
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { copy } from "@/lib/copy"
-import type { ServerFormValues } from "@/lib/schemas"
+import type { ProfileFormValues } from "@/lib/schemas"
 import { shortId } from "../serverForm"
 import { SortableList, useSortableRow } from "../SortableList"
 import { ValidationError } from "../ValidationError"
@@ -17,7 +17,7 @@ function RuleRow({ id, index, onRemove }: { id: string; index: number; onRemove:
   const {
     register,
     formState: { errors },
-  } = useFormContext<ServerFormValues>()
+  } = useFormContext<ProfileFormValues>()
   const { rowProps, handleProps } = useSortableRow(id)
   const error = errors.rules?.[index]?.text
   const n = index + 1
@@ -71,7 +71,7 @@ function RuleRow({ id, index, onRemove }: { id: string; index: number; onRemove:
 
 /** 红线分段（PRD 6.4）：自定义红线可排序、可增删；内置红线只读展示 */
 export function GuardrailsSection() {
-  const { control } = useFormContext<ServerFormValues>()
+  const { control } = useFormContext<ProfileFormValues>()
   // keyName "key"：领域数据自带 id，不能被 RHF 覆盖；排序用领域 id（PRD 7.2 已知的坑第 2 条）
   const { fields, append, remove, move } = useFieldArray({ control, name: "rules", keyName: "key" })
   const ids = fields.map((f) => f.id)

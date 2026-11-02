@@ -29,7 +29,9 @@ CloudLink 是一个面向 AI Agent 的全栈基础设施配电盘与安全护栏
   - 取消「临时解锁 30 分钟」，改为在主列表回路行直接切换档位（生产环境开启标准运维时琥珀色高亮提醒）；
   - 新建 SSH 服务器支持密码自动转免密密钥并启用一步到位；
   - 新增 Cloudflare（`wrangler`）、Vercel（`vercel`）、Oracle Cloud（`oci`）云平台 CLI 接入，所有云厂商与 Agent 一律使用官方品牌 SVG Logo。
-- **下一步：** 按 `docs/EXECUTION-PLAN.md` 的 P3.6 落地前端 v3.1 改版，随后进入 P4 Rust 后端开发。
+- **2026-11-02：** P3.6 前端 v3.1 改版在 Mock 下完成（紧凑窗口与顶部一体栏、单行回路、全宽详情、添加弹窗、SSH 一步到位、云平台 CLI 向导，取消临时解锁），等待验收。
+- **2026-11-03：** P3.7 完成：云平台同一家可接入多个账号（`handle` 为 `cloudflare`、`cloudflare-2`…），未安装 CLI 时给出可切换安装方式的安装指引。
+- **下一步：** P4 Rust 后端开发（按 P3.7 契约实现 `CliAsset.handle/account`、`CliEnvState.accounts`）。
 
 ## 关键决策速览
 
@@ -40,7 +42,8 @@ CloudLink 是一个面向 AI Agent 的全栈基础设施配电盘与安全护栏
 | 首发平台 | Windows 10/11（原生 + WSL2）；macOS 在 v0.5，Linux 在 v1.0 |
 | 编译产物语言 | 默认英文；界面语言为简体中文 |
 | 资源范围 | 统一管理「服务器 (SSH)」与「云平台 (CLI：Cloudflare / Vercel / Oracle Cloud)」，支持圈定公开的 Scope 并自动关联域名与服务器 |
-| 界面结构 | 首屏单栏全宽「双闸刀回路行」，右侧检视面板按需无遮罩平推展开，内部为常驻控制头 + 3 个平铺 Tab |
+| 窗口与外壳 | 默认窗口对标 CC Switch（`900×640`，最小 `760×520`）；取消左侧大边栏与面包屑栏，改为顶部 48px 一体栏 |
+| 界面结构 | 首屏单行零噪点「双闸刀回路行」（每行 4 个元素、零省略号）；添加用居中弹窗/独立视图，详情用带 `← 返回` 的全宽视图（无左右分栏挤压） |
 | Skill 形态 | 全部已授权资源编译成一个总 Skill `cloudlink-servers`，每个「运行环境 × Agent」一份，以受管副本写进 Agent 全局目录 |
 | 档位与护栏 | 档位（只读巡检 / 标准运维）在主列表行内直接切换，不设 30 分钟临时解锁；生产环境处于标准运维时琥珀色高亮提醒；Claude Code 上由 `PreToolUse` hook 拦截越界的 `ssh` 与云 CLI 命令（含拦截 `vercel env pull` 等凭据导出） |
 | Agent 笔记 | Agent 把学到的东西写进收件箱，你确认后并入资源信息 |

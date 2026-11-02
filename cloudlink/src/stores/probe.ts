@@ -13,7 +13,7 @@ import type {
 import { toast, type ToastData } from "@/components/ui/toast"
 import { copy, ipcErrorText } from "@/lib/copy"
 import { ipc, toIpcError } from "@/lib/ipc"
-import { useAssetStore } from "./assets"
+import { handleOf, useAssetStore } from "./assets"
 import { useSkillStore } from "./skills"
 import { useUIStore } from "./ui"
 
@@ -65,7 +65,10 @@ const newRun = (runId: string, assetId: string): ProbeRun => ({
   startedAt: new Date().toISOString(),
 })
 
-const aliasOf = (assetId: string) => useAssetStore.getState().byId[assetId]?.connection.sshAlias ?? assetId
+const aliasOf = (assetId: string) => {
+  const a = useAssetStore.getState().byId[assetId]
+  return a ? handleOf(a) : assetId
+}
 
 const applyResult = (result: SaveResult) => {
   useAssetStore.getState()._upsert(result.asset)

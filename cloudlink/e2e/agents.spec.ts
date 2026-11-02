@@ -18,8 +18,8 @@ test.describe("Agent 视图", () => {
   test("顶部摘要、副本状态（已同步、副本缺失、被改动、冲突、已停用）、护栏状态", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await openAgents(page)
-    await expect(page.getByText("2 台服务器已列入 · 4 个目标已启用")).toBeVisible()
-    await expect(page.getByRole("button", { name: /3 个问题/ })).toBeVisible()
+    await expect(page.getByText(/\d+ 项资源已列入 · 4 个目标已启用/)).toBeVisible()
+    await expect(page.getByRole("main").getByRole("button", { name: /3 个问题/ })).toBeVisible()
     for (const s of ["已同步", "副本缺失", "副本被改动", "冲突", "已停用"]) await expect(targets(page).getByText(s).first()).toBeVisible()
     await expect(guard(page).getByText("已生效")).toBeVisible()
     await expect(guard(page).getByText("今天拦下 2 条")).toBeVisible()
@@ -39,7 +39,7 @@ test.describe("Agent 视图", () => {
 
   test("问题数跳到第一个有问题的目标，焦点在它的处理按钮上", async ({ page }) => {
     await openAgents(page)
-    await page.getByRole("button", { name: /3 个问题/ }).click()
+    await page.getByRole("main").getByRole("button", { name: /3 个问题/ }).click()
     await expect(page.locator("[data-problem] button:focus")).toHaveCount(1)
   })
 

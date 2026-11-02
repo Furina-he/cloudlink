@@ -1,23 +1,24 @@
-// Mock 命令：服务器的增删改、导入、分发开关、档位、临时解锁（F-101、F-102、F-106、F-303、F-306 AC2）
-import type { Asset, AssetConnection, AssetInput, ConnectionInput, ImportHost, Mode } from "@/bindings"
+// Mock 命令：资源的增删改、导入、分发、档位（F-101、F-102、F-104、F-106、F-303）
+import type { AssetConnection, AssetInput, CliAsset, CliAssetInput, ConnectionInput, ImportHost, Mode, ServerAsset, ServerAssetInput } from "@/bindings"
+import { CLI_BINARY } from "@/lib/cliProviders"
 import { connectionInputOf } from "@/features/servers/serverForm"
 import { connectionSignature } from "@/stores/connection"
-import { selectCanDistribute } from "@/stores/assets"
+import { handleOf, selectCanDistribute } from "@/stores/assets"
 import { startProbe } from "./handlers-probe"
-import { assetById, db, fail, logActivity, newId, now, recompile } from "./state"
+import { assetById, compileUnits, db, fail, logActivity, newId, now, recompile, serverById } from "./state"
 
 /** 已保存服务器的连接参数，与前端表单交给 save_asset 的形状一致（签名比对用） */
 export const connInputOf = connectionInputOf
 
 function checkAlias(alias: string, selfId: string | undefined, input: ConnectionInput) {
   const lower = alias.toLowerCase()
-  if (db.assets.some((a) => a.id !== selfId && a.connection.sshAlias.toLowerCase() === lower)) fail("alias-taken", { alias })
+  if (db.assets.some((a) => a.id !== selfId && handleOf(a).toLowerCase() === lower)) fail("alias-taken", { alias })
   if (input.source !== "managed") return
   const clash = db.sshHosts.hosts.find((h) => h.alias.toLowerCase() === lower && h.definedIn.some((e) => input.definedIn.includes(e)))
   if (clash) fail("alias-conflict", { alias, env: clash.definedIn.find((e) => input.definedIn.includes(e))! })
 }
 
-function buildConnection(input: ConnectionInput, saved: Asset | undefined): AssetConnection {
+function buildConnection(input: ConnectionInput, saved: ServerAsset | undefined): AssetConnection {
   const sig = connectionSignature(input)
   const unchanged = saved && connectionSignature(connInputOf(saved)) === sig
   const passed = db.passedTests.get(sig)
@@ -43,18 +44,59 @@ function buildConnection(input: ConnectionInput, saved: Asset | undefined): Asse
   }
 }
 
-function saveAsset(input: AssetInput) {
+/** 同一家的标识：第一个是 cloudflare，之后 cloudflare-2、cloudflare-3…（取第一个没被占用的） */
+function nextCliHandle(provider: CliAsset["cliProvider"]): string {
+  const taken = new Set(db.assets.map((a) => (a.type === "cli" ? a.handle : a.connection.sshAlias)))
+  if (!taken.has(provider)) return provider
+  let n = 2
+  while (taken.has(`${provider}-${n}`)) n++
+  return `${provider}-${n}`
+}
+
+/** 云平台资源（F-104）：同一家每个账号一个；新建时记下已检测到的环境状态和向导里勾选的范围 */
+function saveCli(input: CliAssetInput) {
   const saved = input.id ? assetById(input.id) : undefined
+  if (saved && saved.type !== "cli") fail("not-found")
+  const prev = saved as CliAsset | undefined
+  const sameAccount = db.assets.some((a) => a.type === "cli" && a.id !== prev?.id && a.cliProvider === input.cliProvider && a.account === input.account)
+  if (sameAccount) fail("alias-taken", { alias: input.account ?? input.cliProvider })
+  const envs = [...new Set(compileUnits().map((u) => u.envId))]
+  const rest = { ...input }
+  delete rest.scope
+  const asset: CliAsset = {
+    ...rest,
+    id: prev?.id ?? newId("ast"),
+    handle: prev?.handle ?? nextCliHandle(input.cliProvider),
+    cli: prev?.cli ?? {
+      binary: CLI_BINARY[input.cliProvider],
+      envStates: Object.fromEntries(envs.map((e) => [e, db.cliMachine[input.cliProvider][e] ?? { installed: false, authenticated: false, expired: false, checkedAt: now() }])),
+      scope: input.scope ?? [],
+    },
+    agent: prev?.agent ?? { agents: [], mode: input.envTag === "prod" ? "read-only" : db.settings.defaultMode },
+    createdAt: prev?.createdAt ?? now(),
+    updatedAt: now(),
+  }
+  if (prev) db.assets[db.assets.indexOf(prev)] = asset
+  else db.assets.push(asset)
+  return { asset, statuses: recompile() }
+}
+
+function saveAsset(input: AssetInput) {
+  return input.type === "cli" ? saveCli(input) : saveServer(input)
+}
+
+function saveServer(input: ServerAssetInput) {
+  const saved = input.id ? serverById(input.id) : undefined
   const alias = input.connection.sshAlias
   checkAlias(alias, saved?.id, input.connection)
   const rest = { ...input }
   delete rest.testId
-  const asset: Asset = {
+  const asset: ServerAsset = {
     ...rest,
     id: saved?.id ?? newId("ast"),
     connection: buildConnection(input.connection, saved),
     // 新建时：生产为只读巡检，其他取设置中的默认档位（F-202 AC2）
-    agent: saved?.agent ?? { agents: [], mode: input.envTag === "prod" ? "read-only" : db.settings.defaultMode, unlockedUntil: null },
+    agent: saved?.agent ?? { agents: [], mode: input.envTag === "prod" ? "read-only" : db.settings.defaultMode },
     probe: saved?.probe ?? { lastRunId: null, lastSuccessAt: null, status: "never" },
     createdAt: saved?.createdAt ?? now(),
     updatedAt: now(),
@@ -63,7 +105,7 @@ function saveAsset(input: AssetInput) {
   else db.assets.push(asset)
   if (input.connection.source === "managed") {
     for (const env of input.connection.definedIn) {
-      const count = db.assets.filter((a) => a.connection.source === "managed" && a.connection.definedIn.includes(env)).length
+      const count = db.assets.filter((a) => a.type === "vps" && a.connection.source === "managed" && a.connection.definedIn.includes(env)).length
       logActivity({ kind: "ssh-config", messageId: "ssh-config-written", params: { env, count }, ok: true })
     }
   }
@@ -76,9 +118,15 @@ function deleteAsset(id: string, opts: { removeGeneratedKey: boolean }) {
   db.passwords.delete(id)
   db.notes = db.notes.filter((n) => n.assetId !== id)
   db.operations = db.operations.filter((o) => o.assetId !== id)
-  if (opts.removeGeneratedKey) Object.values(asset.connection.auth?.identityFile ?? {}).forEach((k) => k && db.cloudlinkKeys.delete(k))
-  const host = db.sshHosts.hosts.find((h) => h.alias === asset.connection.sshAlias)
-  if (host) host.imported = false
+  if (asset.type === "vps") {
+    if (opts.removeGeneratedKey) Object.values(asset.connection.auth?.identityFile ?? {}).forEach((k) => k && db.cloudlinkKeys.delete(k))
+    const host = db.sshHosts.hosts.find((h) => h.alias === asset.connection.sshAlias)
+    if (host) host.imported = false
+    // 域名关联指向这台服务器的，一并清掉
+    db.assets.forEach((a) => {
+      if (a.type === "cli") a.cli.scope = a.cli.scope.map((x) => (x.linkedAssetId === id ? { ...x, linkedAssetId: undefined } : x))
+    })
+  }
   return { statuses: recompile() }
 }
 
@@ -86,7 +134,7 @@ function importHosts(hosts: ImportHost[], probeAfter: boolean) {
   const created = hosts.map((h) => {
     const info = db.sshHosts.hosts.find((x) => x.alias === h.alias)
     if (info) info.imported = true
-    const asset: Asset = {
+    const asset: ServerAsset = {
       id: newId("ast"),
       type: "vps",
       name: h.alias,
@@ -100,7 +148,7 @@ function importHosts(hosts: ImportHost[], probeAfter: boolean) {
         resolved: info?.hostname ? { hostname: info.hostname, user: info.user ?? "", port: info.port ?? 22, proxyJump: null, resolvedAt: now() } : null,
         verified: null,
       },
-      agent: { agents: [], mode: db.settings.defaultMode, unlockedUntil: null },
+      agent: { agents: [], mode: db.settings.defaultMode },
       facts: {},
       paths: [],
       services: [],
@@ -137,21 +185,8 @@ function setMode(id: string, mode: Mode) {
   const asset = assetById(id)
   asset.agent.mode = mode
   asset.updatedAt = now()
+  logActivity({ kind: "mode", assetId: id, messageId: "mode-changed", params: { alias: handleOf(asset), mode }, ok: true })
   return { asset, statuses: recompile() }
-}
-
-function unlock(id: string) {
-  const asset = assetById(id)
-  asset.agent.unlockedUntil = new Date(Date.now() + 30 * 60 * 1000).toISOString()
-  logActivity({ kind: "unlock", assetId: id, messageId: "unlocked", params: { alias: asset.connection.sshAlias }, ok: true })
-  return { unlockedUntil: asset.agent.unlockedUntil }
-}
-
-function lock(id: string) {
-  const asset = assetById(id)
-  const expired = !!asset.agent.unlockedUntil && new Date(asset.agent.unlockedUntil).getTime() <= Date.now()
-  asset.agent.unlockedUntil = null
-  logActivity({ kind: "unlock", assetId: id, messageId: expired ? "lock-expired" : "locked", params: { alias: asset.connection.sshAlias }, ok: true })
 }
 
 type Args = Record<string, unknown>
@@ -162,6 +197,4 @@ export const serverHandlers: Record<string, (a: Args) => unknown> = {
   import_hosts: (a) => importHosts(a.hosts as ImportHost[], a.probeAfter as boolean),
   set_distribute: (a) => setDistribute(a.assetId as string, a.agentKey as string, a.on as boolean),
   set_mode: (a) => setMode(a.assetId as string, a.mode as Mode),
-  unlock_server: (a) => unlock(a.assetId as string),
-  lock_server: (a) => lock(a.assetId as string),
 }

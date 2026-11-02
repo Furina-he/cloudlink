@@ -7,8 +7,6 @@ export const HOTKEYS = {
   command: "mod+k",
   newServer: "mod+n",
   save: "mod+s",
-  /** shadcn Sidebar 内置，这里只用于提示 */
-  sidebar: "mod+b",
   preview: "mod+backslash",
   focusSearch: "slash",
   views: "mod+1, mod+2, mod+3",
@@ -27,6 +25,11 @@ export const HOTKEY_OPTIONS: Options = { preventDefault: true, enableOnFormTags:
 /** 「/」这类单键：在输入框里要能正常输入，所以不在表单控件里触发 */
 export const SINGLE_KEY_OPTIONS: Options = { preventDefault: true }
 
+/** 有确认对话框打开时（添加弹窗里的主机指纹、Include 同意），弹窗自己的快捷键也让给它 */
+export function isAlertOpen(): boolean {
+  return document.querySelector("[role=alertdialog][data-open]") !== null
+}
+
 /** 有模态对话框或 Sheet 打开时，视图快捷键不响应，交给浮层自己处理 */
 export function isModalOpen(): boolean {
   return document.querySelector("[role=dialog][data-open], [role=alertdialog][data-open]") !== null
@@ -40,7 +43,6 @@ export const KEY_HINT = {
   command: [MOD, "K"],
   newServer: [MOD, "N"],
   save: [MOD, "S"],
-  sidebar: [MOD, "B"],
   preview: [MOD, "\\"],
   focusSearch: ["/"],
   view: (n: number) => [MOD, String(n)],

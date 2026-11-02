@@ -1,7 +1,9 @@
-// 手写契约（PRD 3.3）。v3：连接可在界面录入（managed）或来自用户的 ssh config（imported）；档位与分发开关是服务器的属性
+// 手写契约（PRD 3.3）。资源分两类：服务器（SSH，type "vps"）和云平台（CLI，type "cli"）；档位与分发是资源的属性
 import type { EnvId } from "./env"
 
-export type AssetType = "vps" | "domain" | "panel" | "storage"
+export type AssetType = "vps" | "cli"
+/** 云平台 CLI：cloudflare（wrangler）、vercel（vercel）、oracle（oci）。v0.1 每家一个资源，标识就是这个值（F-101 AC1） */
+export type CliProvider = "cloudflare" | "vercel" | "oracle"
 export type EnvTag = "prod" | "staging" | "dev"
 export type FieldSource = "manual" | "probe"
 export type ProbeState = "never" | "ok" | "stale" | "failed"
@@ -56,8 +58,6 @@ export interface AssetAgent {
   /** 分发给哪些 Agent（F-303，AgentKey）；为空表示不分发 */
   agents: string[]
   mode: Mode
-  /** 临时解锁的到期时间（F-306 AC2）；为空表示没有解锁 */
-  unlockedUntil: string | null
 }
 
 export interface AssetFacts {
@@ -123,29 +123,83 @@ export interface AssetProbeInfo {
   status: ProbeState
 }
 
-export interface Asset {
+/** 两类资源共有的字段 */
+interface AssetBase {
   id: string
-  type: AssetType
   name: string
   envTag: EnvTag
+  summary: string
+  agent: AssetAgent
+  guardrails: { rules: GuardrailRule[] }
+  notes: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** 服务器（SSH） */
+export interface ServerAsset extends AssetBase {
+  type: "vps"
   provider?: string
   region?: string
   tags: string[]
-  summary: string
   connection: AssetConnection
-  agent: AssetAgent
   facts: AssetFacts
   paths: AssetPath[]
   services: Service[]
   servedHostnames: string[]
   listeningPorts: ListeningPort[]
-  guardrails: { rules: GuardrailRule[] }
   export: ExportFlags
-  notes: string
   probe: AssetProbeInfo
-  createdAt: string
-  updatedAt: string
 }
+
+/** 云平台 CLI 在一个运行环境里的状态（F-104 AC1，经 Login Shell 检测） */
+export interface CliEnvState {
+  installed: boolean
+  version?: string
+  path?: string
+  authenticated: boolean
+  /** 登录过，但凭据已过期 */
+  expired: boolean
+  /** whoami 回显的账号或团队名，防止登错团队 */
+  account?: string
+  /** 这次登录能操作的全部账号：Cloudflare 的 Account、Vercel 的 Team、OCI 的 Profile；第一个是默认 */
+  accounts?: string[]
+  checkedAt: string
+}
+
+export type CliScopeKind = "zone" | "worker" | "pages" | "project" | "instance"
+
+/** 云平台账号下的一项资源（F-104 AC3）；未勾选的不进入编译产物 */
+export interface CliScopeItem {
+  id: string
+  kind: CliScopeKind
+  name: string
+  selected: boolean
+  /** 自动识别的关联服务器（F-104 AC4） */
+  linkedAssetId?: string
+  /** 仅 OCI 实例：公网地址，「同时加为 SSH 服务器」时预填 */
+  address?: string
+}
+
+export interface CliInfo {
+  binary: "wrangler" | "vercel" | "oci"
+  /** 按已启用 Agent 所在的运行环境记录 */
+  envStates: Partial<Record<EnvId, CliEnvState>>
+  scope: CliScopeItem[]
+}
+
+/** 云平台（CLI） */
+export interface CliAsset extends AssetBase {
+  type: "cli"
+  cliProvider: CliProvider
+  /** 标识（Skill 里的名字）：同一家的第一个是 cloudflare，之后是 cloudflare-2…；后端分配，不可改 */
+  handle: string
+  /** 绑定的账号（CliEnvState.accounts 中的一项）；同一家每个账号只接入一次。null 表示跟随 CLI 当前登录 */
+  account: string | null
+  cli: CliInfo
+}
+
+export type Asset = ServerAsset | CliAsset
 
 /** 录入的连接（save_asset）。imported 只有别名，连接信息由用户的 ssh config 维护 */
 export type ConnectionInput =
@@ -163,18 +217,23 @@ export type ConnectionInput =
   | { source: "imported"; sshAlias: string }
 
 /**
- * save_asset、preview_skill 的输入：新建时没有 id。分发开关、档位、解锁走单独的命令（立即生效，不经过保存）；
+ * save_asset、preview_skill 的输入：新建时没有 id。分发、档位走单独的命令（立即生效，不经过保存）；
  * 探测信息、时间戳、解析快照、验证结果由后端维护
  */
-export type AssetInput = Omit<
-  Asset,
-  "id" | "connection" | "agent" | "probe" | "createdAt" | "updatedAt"
-> & {
+export type ServerAssetInput = Omit<ServerAsset, "id" | "connection" | "agent" | "probe" | "createdAt" | "updatedAt"> & {
   id?: string
   connection: ConnectionInput
   /** 保存前刚通过的那次测试连接；参数与它一致时，后端保留验证结果（F-106 AC4） */
   testId?: string
 }
+
+/** 云平台资源的输入。检测结果和范围由后端维护，范围勾选走 set_cli_scope（立即生效）；新建时 scope 带上向导里勾选的结果 */
+export type CliAssetInput = Omit<CliAsset, "id" | "handle" | "agent" | "cli" | "createdAt" | "updatedAt"> & {
+  id?: string
+  scope?: CliScopeItem[]
+}
+
+export type AssetInput = ServerAssetInput | CliAssetInput
 
 /** 导入对话框里勾选的一行 */
 export interface ImportHost {

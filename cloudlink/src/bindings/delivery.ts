@@ -5,7 +5,7 @@ import type { EnvId } from "./env"
 export type AgentId = "claude-code" | "universal" | "custom"
 
 /**
- * 服务器卡片上点选的 Agent（2026-11-01 用户确认）：内置 Agent 取 AgentId，自定义目录取 `custom:<名称>`。
+ * 回路行上点选的 Agent（2026-11-01 用户确认）：内置 Agent 取 AgentId，自定义目录取 `custom:<名称>`。
  * 由后端给出，同一个 Agent 在 Windows 和 WSL 的目录共用一个
  */
 export type AgentKey = string
@@ -39,6 +39,10 @@ export type InclusionReasonId =
   | "include-missing"
   /** managed 私钥方式：该环境没有配置私钥 */
   | "no-key-in-env"
+  /** 云平台：该环境没有安装 CLI（F-104） */
+  | "cli-not-installed"
+  /** 云平台：该环境的 CLI 没有登录，或登录已过期 */
+  | "cli-not-logged-in"
 
 /** 一台服务器是否列入某个运行环境里某个 Agent 的总 Skill；每个已启用的「Agent × 运行环境」一行 */
 export interface Inclusion {

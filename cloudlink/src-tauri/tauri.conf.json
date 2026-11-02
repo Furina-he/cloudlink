@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "CloudLink",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 960,
-        "minHeight": 600,
+        "width": 900,
+        "height": 640,
+        "minWidth": 760,
+        "minHeight": 520,
         "zoomHotkeysEnabled": true,
         "resizable": true,
         "fullscreen": false

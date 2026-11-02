@@ -13,7 +13,8 @@ export type ActivityKind =
   | "repair"
   | "ssh-config"
   | "guard"
-  | "unlock"
+  | "mode"
+  | "cli"
   | "note"
   | "agent-op"
 
@@ -34,14 +35,13 @@ export type ActivityMessageId =
   | "ssh-include-added"
   | "guard-installed"
   | "guard-removed"
-  | "unlocked"
-  | "locked"
-  | "lock-expired"
+  | "mode-changed"
+  | "cli-detected"
+  | "cli-scope-updated"
   | "notes-merged"
   | "notes-dismissed"
   | "agent-op-allowed"
   | "agent-op-denied"
-  | "agent-op-unlocked"
 
 export interface ActivityItem {
   id: string
@@ -95,7 +95,7 @@ export interface DeleteResult {
 }
 
 /** 分发开关打不开的原因（F-303 AC1） */
-export type DistributeBlockReason = "unverified" | "failed" | "password-only"
+export type DistributeBlockReason = "unverified" | "failed" | "password-only" | "cli-not-ready"
 
 export type IpcErrorId =
   | "not-found"

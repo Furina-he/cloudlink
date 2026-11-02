@@ -2,7 +2,7 @@ import { CircleCheckIcon, CircleXIcon, FileCodeIcon, PlugIcon, RadarIcon, Triang
 import { motion } from "motion/react"
 import { lazy, Suspense, useState } from "react"
 
-import type { Asset, ProbeError } from "@/bindings"
+import type { ServerAsset, ProbeError } from "@/bindings"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { CodeBlock, CodeBlockActions, CodeBlockContent, CodeBlockCopyButton } from "@/components/ui/code-block"
@@ -45,7 +45,7 @@ function Steps({ run }: { run: ProbeRun }) {
 }
 
 /** 失败：分类文案和建议（8.3）；要在终端执行的命令用 CodeBlock 配复制按钮；可以直接测试连接 */
-function Failure({ asset, error }: { asset: Asset; error: ProbeError | undefined }) {
+function Failure({ asset, error }: { asset: ServerAsset; error: ProbeError | undefined }) {
   const e = error ?? { id: "unknown" as const, params: { alias: asset.connection.sshAlias } }
   const commands = copy.sshCommands[e.id]?.(e.params)
   return (
@@ -81,7 +81,7 @@ function Failure({ asset, error }: { asset: Asset; error: ProbeError | undefined
 }
 
 /** 从未在本次会话里探测过：说明上一次的结果 */
-function IdleNote({ asset }: { asset: Asset }) {
+function IdleNote({ asset }: { asset: ServerAsset }) {
   const now = useMinuteTick()
   const { lastSuccessAt, status } = asset.probe
   return (
@@ -115,7 +115,7 @@ function Result({ run, selected, onSelect }: { run: ProbeRun; selected: Set<stri
   )
 }
 
-function ProbeBody({ asset, run, starting, onViewScript }: { asset: Asset; run: ProbeRun | undefined; starting: boolean; onViewScript: () => void }) {
+function ProbeBody({ asset, run, starting, onViewScript }: { asset: ServerAsset; run: ProbeRun | undefined; starting: boolean; onViewScript: () => void }) {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState<"undo" | "merge" | null>(null)
   const alias = asset.connection.sshAlias
@@ -222,7 +222,10 @@ export function ProbeSheet() {
   const [last, setLast] = useState(assetId)
   if (assetId && assetId !== last) setLast(assetId)
   const shownId = assetId ?? last
-  const asset = useAssetStore((s) => (shownId ? s.byId[shownId] : undefined))
+  const asset = useAssetStore((s) => {
+    const a = shownId ? s.byId[shownId] : undefined
+    return a?.type === "vps" ? a : undefined
+  })
   const run = useProbeStore((s) => selectActiveRun(s, shownId))
   const starting = useProbeStore((s) => !!shownId && s.starting.includes(shownId))
   const [script, setScript] = useState({ open: false, mounted: false })

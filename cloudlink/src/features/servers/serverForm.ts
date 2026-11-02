@@ -1,16 +1,16 @@
 // 服务器表单与 AssetInput 之间的换算、别名生成、保存失败时的定位（PRD 6.4、6.5）
 import type { FieldErrors, FieldPath, UseFormReturn } from "react-hook-form"
 
-import type { Asset, AssetInput, ConnectionInput, EnvId } from "@/bindings"
+import type { ConnectionInput, EnvId, ServerAsset, ServerAssetInput } from "@/bindings"
 import type { ServerFormValues } from "@/lib/schemas"
-import type { DetailSection } from "@/stores/ui"
+import type { DetailTab } from "@/stores/ui"
 
 export const EMPTY_EXPORT = { resolvedConnection: false, listeningPorts: false, image: true }
 
 /** 运行环境的固定顺序：Windows 在前，WSL 按名称。签名比对依赖这个顺序 */
 export const sortEnvs = (ids: string[]) => [...ids].sort((a, b) => (a === "windows" ? -1 : b === "windows" ? 1 : a.localeCompare(b))) as EnvId[]
 
-export function formValuesOf(asset: Asset): ServerFormValues {
+export function formValuesOf(asset: ServerAsset): ServerFormValues {
   const c = asset.connection
   return {
     source: c.source,
@@ -97,13 +97,13 @@ export function connectionInputOfForm(v: Pick<ServerFormValues, "source" | "alia
 }
 
 /** 已保存服务器的连接参数，与 connectionInputOfForm(formValuesOf(asset)) 一致 */
-export const connectionInputOf = (asset: Asset): ConnectionInput => connectionInputOfForm(formValuesOf(asset))
+export const connectionInputOf = (asset: ServerAsset): ConnectionInput => connectionInputOfForm(formValuesOf(asset))
 
 /** 表单之外的字段（类型、探测得到的事实、监听端口）沿用已保存的服务器 */
-export function toAssetInput(v: ServerFormValues, base: Asset | undefined): AssetInput {
+export function toAssetInput(v: ServerFormValues, base: ServerAsset | undefined): ServerAssetInput {
   return {
     id: base?.id,
-    type: base?.type ?? "vps",
+    type: "vps",
     name: v.name.trim(),
     envTag: v.envTag,
     provider: v.provider.trim() || undefined,
@@ -149,23 +149,23 @@ export function uniqueAlias(base: string, taken: string[]): string {
   return alias
 }
 
-// ---------- 保存校验失败：展开出错字段所在的分段，聚焦第一个出错字段（6.4） ----------
+// ---------- 保存校验失败：切到出错字段所在的 Tab，聚焦第一个出错字段（6.4） ----------
 
-/** 字段在界面上的顺序；连接分段里的别名、跳板机、运行环境在「高级」里 */
-const FIELD_ORDER: { path: string; section: DetailSection; advanced?: boolean }[] = [
-  { path: "connection.host", section: "connection" },
-  { path: "connection.port", section: "connection" },
-  { path: "connection.user", section: "connection" },
-  { path: "connection.identityFile", section: "connection" },
-  { path: "connection.password", section: "connection" },
-  { path: "alias", section: "connection", advanced: true },
-  { path: "connection.proxyJump", section: "connection", advanced: true },
-  { path: "connection.definedIn", section: "connection", advanced: true },
-  { path: "name", section: "basic" },
-  { path: "servedHostnames", section: "basic" },
-  { path: "paths", section: "paths" },
-  { path: "services", section: "services" },
-  { path: "rules", section: "guardrails" },
+/** 字段在界面上的顺序；连接配置里的别名、跳板机、运行环境在「高级」里 */
+const FIELD_ORDER: { path: string; tab: DetailTab; advanced?: boolean }[] = [
+  { path: "name", tab: "connection" },
+  { path: "connection.host", tab: "connection" },
+  { path: "connection.port", tab: "connection" },
+  { path: "connection.user", tab: "connection" },
+  { path: "connection.identityFile", tab: "connection" },
+  { path: "connection.password", tab: "connection" },
+  { path: "alias", tab: "connection", advanced: true },
+  { path: "connection.proxyJump", tab: "connection", advanced: true },
+  { path: "connection.definedIn", tab: "connection", advanced: true },
+  { path: "servedHostnames", tab: "profile" },
+  { path: "rules", tab: "profile" },
+  { path: "services", tab: "profile" },
+  { path: "paths", tab: "profile" },
 ]
 
 const isLeaf = (node: unknown): boolean => !!node && typeof node === "object" && "message" in node && "type" in node
@@ -182,17 +182,17 @@ function firstLeaf(node: unknown, path: string): string | null {
   return null
 }
 
-/** 第一个出错的字段：所在分段、是否在「高级」里、聚焦用的路径 */
-export function firstError(errors: FieldErrors<ServerFormValues>): { section: DetailSection; advanced: boolean; path: string } | null {
+/** 第一个出错的字段：所在 Tab、是否在「高级」里、聚焦用的路径 */
+export function firstError(errors: FieldErrors<ServerFormValues>): { tab: DetailTab; advanced: boolean; path: string } | null {
   for (const f of FIELD_ORDER) {
     const node = f.path.split(".").reduce<unknown>((n, k) => (n as Record<string, unknown> | undefined)?.[k], errors)
     const leaf = firstLeaf(node, f.path)
-    if (leaf) return { section: f.section, advanced: !!f.advanced, path: leaf }
+    if (leaf) return { tab: f.tab, advanced: !!f.advanced, path: leaf }
   }
   return null
 }
 
-/** 聚焦出错的字段：所在的折叠区刚展开时字段还没挂载，等两帧再聚焦 */
+/** 聚焦出错的字段：所在的 Tab 刚切换时字段还没挂载，等两帧再聚焦 */
 export function focusField(form: UseFormReturn<ServerFormValues>, path: string) {
   requestAnimationFrame(() => requestAnimationFrame(() => form.setFocus(path as FieldPath<ServerFormValues>)))
 }

@@ -135,7 +135,8 @@ function PasswordField({ assetId }: { assetId?: string }) {
   const removeSaved = async () => {
     if (!assetId) return
     await serverActions.deletePassword(assetId)
-    setValue("connection.passwordSaved", useAssetStore.getState().byId[assetId]?.connection.auth?.passwordSaved ?? false)
+    const a = useAssetStore.getState().byId[assetId]
+    setValue("connection.passwordSaved", (a?.type === "vps" && a.connection.auth?.passwordSaved) || false)
   }
 
   return (
@@ -170,10 +171,15 @@ function PasswordField({ assetId }: { assetId?: string }) {
         )}
         <ValidationError error={error} />
       </Field>
-      <Alert>
-        <TriangleAlertIcon className="text-warning!" />
-        <AlertDescription>{copy.serverForm.passwordAlert}</AlertDescription>
-      </Alert>
+      {/* 新建时「连接并启用」会自动改用密钥（F-108 AC1），只给一句说明；已保存的服务器仍要提醒 Agent 无法输入密码 */}
+      {assetId ? (
+        <Alert>
+          <TriangleAlertIcon className="text-warning!" />
+          <AlertDescription>{copy.serverForm.passwordAlert}</AlertDescription>
+        </Alert>
+      ) : (
+        <p className="text-xs text-muted-foreground">{copy.create.passwordHint}</p>
+      )}
     </div>
   )
 }

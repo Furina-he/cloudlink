@@ -1,7 +1,8 @@
 // Mock 后端的内存数据库与公共逻辑：列入计算、重新编译、同步副本（PRD 3.4、8.2、8.4）
 import { emit } from "@tauri-apps/api/event"
 
-import type { ActivityItem, AgentId, Asset, AssetInput, CompileStatus, EnvId, EnvTag, Inclusion, IpcError, Target } from "@/bindings"
+import type { ActivityItem, AgentId, Asset, AssetInput, CliAsset, CompileStatus, EnvId, EnvTag, Inclusion, IpcError, ServerAsset, Target } from "@/bindings"
+import { cliEnvStatus, handleOf } from "@/stores/assets"
 import * as fx from "./fixtures"
 import { compileSkill, toStatus } from "./lint"
 
@@ -11,6 +12,9 @@ export const db = {
   sshHosts: structuredClone(fx.sshHosts),
   sshConfig: structuredClone(fx.sshConfig),
   assets: structuredClone(fx.assets),
+  /** 本机各运行环境里 CLI 的实际情况和账号下的资源（F-104） */
+  cliMachine: structuredClone(fx.cliMachine),
+  cliCatalog: structuredClone(fx.cliCatalog),
   targets: structuredClone(fx.targets),
   deliveries: structuredClone(fx.deliveries),
   skillConfig: structuredClone(fx.skillConfig),
@@ -70,7 +74,18 @@ export const fail = (id: IpcError["id"], params?: IpcError["params"]): never => 
 }
 
 export const assetById = (id: string) => db.assets.find((a) => a.id === id) ?? fail("not-found")
-export const aliasOf = (id: string) => db.assets.find((a) => a.id === id)?.connection.sshAlias ?? id
+export const aliasOf = (id: string) => {
+  const a = db.assets.find((x) => x.id === id)
+  return a ? handleOf(a) : id
+}
+export const serverById = (id: string): ServerAsset => {
+  const a = assetById(id)
+  return a.type === "vps" ? a : fail("not-found")
+}
+export const cliById = (id: string): CliAsset => {
+  const a = assetById(id)
+  return a.type === "cli" ? a : fail("not-found")
+}
 export const availableEnvs = () =>
   db.environments.filter((e) => e.available && (db.settings.environments.find((x) => x.id === e.id)?.enabled ?? true))
 
@@ -101,12 +116,18 @@ export function compileUnits(): { envId: EnvId; agentKey: string; targets: Targe
   return [...units.values()]
 }
 
-/** 列入（3.4）：这台服务器点选了这个 Agent × 该环境中有这台服务器的连接配置 */
+/** 列入（3.4）：这项资源点选了这个 Agent × 该环境中有这台服务器的连接配置，或该环境的 CLI 已就绪 */
 export function inclusionFor(a: Asset, envId: EnvId, agentKey: string): Inclusion {
   const base = { assetId: a.id, envId, agentKey }
-  const out = (id: NonNullable<Inclusion["reason"]>["id"]): Inclusion => ({ ...base, included: false, reason: { id, params: { env: envId } } })
-  const c = a.connection
+  const out = (id: NonNullable<Inclusion["reason"]>["id"]): Inclusion => ({ ...base, included: false, reason: { id, params: { env: envId, cli: a.type === "cli" ? a.cli.binary : "" } } })
   if (!a.agent.agents.includes(agentKey)) return out("agent-off")
+  if (a.type === "cli") {
+    const state = a.cli.envStates[envId]
+    const status = state ? cliEnvStatus(state) : "not-installed"
+    if (status === "not-installed") return out("cli-not-installed")
+    return status === "ready" ? { ...base, included: true } : out("cli-not-logged-in")
+  }
+  const c = a.connection
   if (c.source === "imported") return c.definedIn.includes(envId) ? { ...base, included: true } : out("not-defined")
   if (c.auth?.method === "password") return out("password-only")
   if (!c.definedIn.includes(envId)) return out("not-written")
@@ -121,7 +142,7 @@ const ENV_ORDER: EnvTag[] = ["prod", "staging", "dev"]
 export const includedIn = (envId: EnvId, agentKey: string) =>
   db.assets
     .filter((a) => inclusionFor(a, envId, agentKey).included)
-    .sort((a, b) => ENV_ORDER.indexOf(a.envTag) - ENV_ORDER.indexOf(b.envTag) || a.connection.sshAlias.localeCompare(b.connection.sshAlias))
+    .sort((a, b) => ENV_ORDER.indexOf(a.envTag) - ENV_ORDER.indexOf(b.envTag) || handleOf(a).localeCompare(handleOf(b)))
 
 export function emitDeliveries() {
   void emit("deliveries://changed", { deliveries: db.deliveries, inclusions: db.inclusions })
@@ -183,12 +204,20 @@ export function emitCompiled() {
 /** 预览草稿（F-204）：用已保存的探测信息、档位补全表单之外的字段 */
 export function draftToAsset(input: AssetInput): Asset {
   const saved = input.id ? db.assets.find((a) => a.id === input.id) : undefined
+  const agent = saved?.agent ?? { agents: [], mode: input.envTag === "prod" ? "read-only" : db.settings.defaultMode }
+  if (input.type === "cli") {
+    const rest = { ...input }
+    delete rest.scope
+    const cli = saved?.type === "cli" ? saved.cli : { binary: "wrangler" as const, envStates: {}, scope: input.scope ?? [] }
+    return { ...rest, id: input.id ?? "draft", handle: saved?.type === "cli" ? saved.handle : input.cliProvider, cli, agent, createdAt: saved?.createdAt ?? now(), updatedAt: now() }
+  }
+  const server = saved?.type === "vps" ? saved : undefined
   const c = input.connection
   return {
     ...input,
     id: input.id ?? "draft",
     connection: {
-      ...(saved?.connection ?? { definedIn: [], resolved: null, verified: null }),
+      ...(server?.connection ?? { definedIn: [], resolved: null, verified: null }),
       ...(c.source === "managed"
         ? {
             source: "managed" as const,
@@ -202,8 +231,8 @@ export function draftToAsset(input: AssetInput): Asset {
           }
         : { source: "imported" as const, sshAlias: c.sshAlias }),
     },
-    agent: saved?.agent ?? { agents: [], mode: input.envTag === "prod" ? "read-only" : db.settings.defaultMode, unlockedUntil: null },
-    probe: saved?.probe ?? { lastRunId: null, lastSuccessAt: null, status: "never" },
+    agent,
+    probe: server?.probe ?? { lastRunId: null, lastSuccessAt: null, status: "never" },
     createdAt: saved?.createdAt ?? now(),
     updatedAt: now(),
   }

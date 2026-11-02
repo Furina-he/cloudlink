@@ -72,7 +72,7 @@
     --destructive: oklch(0.577 0.245 27.325);
     --success: oklch(0.508 0.118 165.612);
     --warning: oklch(0.555 0.163 48.998);
-    /* Agent 标识色（DESIGN.md 例外，只用于服务器卡片上点亮的 Agent 按钮）：Claude 橙压暗到 0.56，Logo 在 15% 自身色底上 4.04:1、在 frost 上 3.66:1；OpenAI 绿只做底色，Logo 用墨色 */
+    /* Agent 标识色（DESIGN.md 例外，只用于资源回路行和检视面板上点亮的 Agent 按钮）：Claude 橙压暗到 0.56，Logo 在 15% 自身色底上 4.04:1、在 frost 上 3.66:1；OpenAI 绿只做底色，Logo 用墨色 */
     --agent-claude: oklch(0.56 0.15 40);
     --agent-openai: oklch(0.6 0.13 168);
     --border: oklch(0.925 0.005 214.3);

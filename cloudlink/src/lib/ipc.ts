@@ -10,6 +10,9 @@ import type {
   AgentNote,
   Asset,
   AssetInput,
+  CliEnvState,
+  CliProvider,
+  CliScopeItem,
   CompilePreview,
   CompileStatus,
   ConnectionTestRequest,
@@ -33,6 +36,8 @@ import type {
   SshHostList,
   Target,
 } from "@/bindings"
+
+export type CliEnvStates = Partial<Record<EnvId, CliEnvState>>
 
 export const ipc = {
   detectEnvironments: () => invoke<Environment[]>("detect_environments"),
@@ -58,9 +63,15 @@ export const ipc = {
   /** 把服务器分发给某个 Agent，或者停止分发（F-303）；返回这台服务器的列入情况 */
   setDistribute: (assetId: string, agentKey: string, on: boolean) => invoke<Inclusion[]>("set_distribute", { assetId, agentKey, on }),
   setMode: (assetId: string, mode: Mode) => invoke<SaveResult>("set_mode", { assetId, mode }),
-  /** 固定 30 分钟 */
-  unlockServer: (assetId: string) => invoke<{ unlockedUntil: string }>("unlock_server", { assetId }),
-  lockServer: (assetId: string) => invoke<void>("lock_server", { assetId }),
+  /** F-104 AC1：只检测已启用 Agent 所在的运行环境（Login Shell）；带 assetId 时同时更新这项资源 */
+  detectCliEnvironment: (req: { provider: CliProvider; assetId?: string }) =>
+    invoke<CliEnvStates>("detect_cli_environment", { req }),
+  /** F-104 AC3：拉取账号下的可选资源；带 assetId 时保留已勾选的项并更新这项资源 */
+  refreshCliScope: (req: { provider: CliProvider; assetId?: string }) => invoke<CliScopeItem[]>("refresh_cli_scope", { req }),
+  /** 范围勾选立即生效（PRD 6.4），重新编译（2026-11-02 补充） */
+  setCliScope: (assetId: string, selectedIds: string[]) => invoke<SaveResult>("set_cli_scope", { assetId, selectedIds }),
+  /** F-104 AC2：在对应运行环境打开终端，预填安装或登录命令 */
+  openEnvTerminal: (req: { envId: EnvId; command: string }) => invoke<void>("open_env_terminal", { req }),
   startProbe: (assetId: string) => invoke<{ runId: string }>("start_probe", { assetId }),
   cancelProbe: (runId: string) => invoke<void>("cancel_probe", { runId }),
   /** 只用于待确认项 */

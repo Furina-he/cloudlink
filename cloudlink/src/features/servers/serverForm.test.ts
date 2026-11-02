@@ -126,15 +126,15 @@ describe("保存校验失败时定位第一个出错字段（PRD 6.4）", () => 
   const leaf = { type: "custom", message: "x" }
   const at = (errors: object) => firstError(errors as FieldErrors<ServerFormValues>)
 
-  it("按界面顺序：连接分段在基本信息之前，别名在「高级」里", () => {
-    expect(at({ name: leaf, connection: { user: leaf } })).toEqual({ section: "connection", advanced: false, path: "connection.user" })
-    expect(at({ name: leaf, alias: leaf })).toEqual({ section: "connection", advanced: true, path: "alias" })
-    expect(at({ name: leaf })).toEqual({ section: "basic", advanced: false, path: "name" })
+  it("按界面顺序：「连接配置」Tab 在「画像与规则」之前，名称在连接字段之前，别名在「高级」里", () => {
+    expect(at({ name: leaf, connection: { user: leaf } })).toEqual({ tab: "connection", advanced: false, path: "name" })
+    expect(at({ connection: { user: leaf }, rules: [{ text: leaf }] })).toEqual({ tab: "connection", advanced: false, path: "connection.user" })
+    expect(at({ alias: leaf, servedHostnames: [leaf] })).toEqual({ tab: "connection", advanced: true, path: "alias" })
   })
 
   it("列表里的错误定位到具体一行的字段", () => {
-    expect(at({ paths: [undefined, { label: leaf }] })).toEqual({ section: "paths", advanced: false, path: "paths.1.label" })
-    expect(at({ rules: [{ text: leaf }] })).toEqual({ section: "guardrails", advanced: false, path: "rules.0.text" })
+    expect(at({ paths: [undefined, { label: leaf }] })).toEqual({ tab: "profile", advanced: false, path: "paths.1.label" })
+    expect(at({ rules: [{ text: leaf }] })).toEqual({ tab: "profile", advanced: false, path: "rules.0.text" })
   })
 
   it("没有错误时为 null", () => {

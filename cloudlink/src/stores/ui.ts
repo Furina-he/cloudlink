@@ -1,23 +1,22 @@
 // UI 状态（PRD 7.5）。主题不在这里，由 ThemeProvider 管理
 import { create } from "zustand"
-import { persist } from "zustand/middleware"
 
+import type { CliProvider } from "@/bindings"
 import type { ViewId } from "@/lib/copy"
 
 export const VIEWS: ViewId[] = ["servers", "agents", "settings"]
 
-/** 服务器详情的分段，顺序就是显示顺序（PRD 6.4）。Agent 分段固定在第一位 */
-export const DETAIL_SECTIONS = [
-  "agent",
-  "notes",
-  "operations",
-  "connection",
-  "basic",
-  "paths",
-  "services",
-  "guardrails",
-] as const
-export type DetailSection = (typeof DETAIL_SECTIONS)[number]
+/** 详情视图的 3 个 Tab（PRD 6.4）：画像与规则、连接配置、动态 */
+export type DetailTab = "profile" | "connection" | "activity"
+
+/** 添加资源的弹窗（PRD 6.5）：选类型、SSH 表单或某个云平台的向导 */
+export type CreateKind = "pick" | "ssh" | CliProvider
+
+/** OCI 实例旁的「同时加为 SSH 服务器」预填的字段（F-104 AC4） */
+export interface CreatePrefill {
+  host: string
+  name: string
+}
 
 export type SettingsSection =
   | "general"
@@ -68,11 +67,13 @@ interface UIState {
   /** 本次会话中切换视图的次数，用于判断是否把焦点移到视图标题 */
   viewSwitches: number
   selectedAssetId: string | null
-  /** 详情面板是新建表单（PRD 6.5） */
-  creating: boolean
+  /** 添加资源的弹窗（PRD 6.5）；null 表示没有打开 */
+  creating: CreateKind | null
+  createPrefill: CreatePrefill | null
+  detailTab: DetailTab
+  /** 从详情返回列表后，焦点回到这一行 */
+  returnFocusId: string | null
   query: string
-  /** 详情各分段的展开状态；没记录的按默认值（PRD 6.4），只持久化这一项 */
-  sectionsOpen: Partial<Record<DetailSection, boolean>>
   previewOpen: boolean
   /** 预览哪一份总 Skill（运行环境 × Agent，compileKey）；null 或已不存在时取第一份 */
   previewKey: string | null
@@ -86,10 +87,15 @@ interface UIState {
   scrollByView: Partial<Record<ViewId, number>>
 
   setView: (view: ViewId, opts?: NavOptions) => void
+  /** 顶栏的视图切换：再点一次「资源」从详情返回列表（PRD 6.4） */
+  goToView: (view: ViewId) => void
   selectAsset: (id: string | null, opts?: NavOptions) => void
-  startCreate: (opts?: NavOptions) => void
+  startCreate: (kind?: CreateKind, opts?: NavOptions & { prefill?: CreatePrefill }) => void
+  /** 回到资源列表（详情的「← 返回」、Esc、关闭添加弹窗） */
+  closeInspector: (opts?: NavOptions) => void
+  setDetailTab: (tab: DetailTab) => void
+  clearReturnFocus: () => void
   setQuery: (query: string) => void
-  toggleSection: (section: DetailSection, open: boolean) => void
   openPreview: (focus?: Omit<PreviewFocus, "seq">) => void
   setPreviewOpen: (open: boolean) => void
   setPreviewKey: (key: string) => void
@@ -102,15 +108,15 @@ interface UIState {
   saveScroll: (view: ViewId, top: number) => void
 }
 
-export const useUIStore = create<UIState>()(
-  persist(
-    (set, get) => ({
+export const useUIStore = create<UIState>()((set, get) => ({
       view: "servers",
       viewSwitches: 0,
       selectedAssetId: null,
-      creating: false,
+      creating: null,
+      createPrefill: null,
+      detailTab: "profile",
+      returnFocusId: null,
       query: "",
-      sectionsOpen: {},
       previewOpen: false,
       previewKey: null,
       previewFocus: { seq: 0 },
@@ -127,22 +133,34 @@ export const useUIStore = create<UIState>()(
         }
         guarded(opts, () => set((s) => ({ view, viewSwitches: s.viewSwitches + 1, previewOpen: false })))
       },
+      goToView: (view) => {
+        if (get().view === view && view === "servers") get().closeInspector()
+        else get().setView(view)
+      },
       selectAsset: (selectedAssetId, opts) => {
         const s = get()
         if (s.selectedAssetId === selectedAssetId && !s.creating) return
-        guarded(opts, () => set({ selectedAssetId, creating: false }))
+        // 切到另一项资源时回到默认 Tab；云平台和服务器的 Tab 内容不同，停在「动态」没有意义
+        guarded(opts, () => set({ selectedAssetId, creating: null, createPrefill: null, detailTab: "profile" }))
       },
-      startCreate: (opts) =>
+      closeInspector: (opts) => {
+        const s = get()
+        if (!s.selectedAssetId && !s.creating) return
+        guarded(opts, () => set({ selectedAssetId: null, creating: null, createPrefill: null, returnFocusId: s.selectedAssetId }))
+      },
+      setDetailTab: (detailTab) => set({ detailTab }),
+      clearReturnFocus: () => set({ returnFocusId: null }),
+      startCreate: (kind = "pick", opts) =>
         guarded(opts, () =>
           set((s) => ({
-            creating: true,
+            creating: kind,
+            createPrefill: opts?.prefill ?? null,
             selectedAssetId: null,
             view: "servers",
             viewSwitches: s.view === "servers" ? s.viewSwitches : s.viewSwitches + 1,
           }))
         ),
       setQuery: (query) => set({ query }),
-      toggleSection: (section, open) => set((s) => ({ sectionsOpen: { ...s.sectionsOpen, [section]: open } })),
       openPreview: (focus) =>
         set((s) => ({ previewOpen: true, probeSheetAssetId: null, previewFocus: { ...focus, seq: s.previewFocus.seq + 1 } })),
       setPreviewOpen: (previewOpen) => set(previewOpen ? { previewOpen, probeSheetAssetId: null } : { previewOpen }),
@@ -154,7 +172,7 @@ export const useUIStore = create<UIState>()(
         guarded({ force: stay }, () =>
           set((st) => ({
             selectedAssetId: assetId,
-            creating: false,
+            creating: null,
             view: "servers",
             viewSwitches: st.view === "servers" ? st.viewSwitches : st.viewSwitches + 1,
             probeSheetAssetId: assetId,
@@ -167,20 +185,7 @@ export const useUIStore = create<UIState>()(
       setImportOpen: (importOpen) => set({ importOpen }),
       setSettingsSection: (settingsSection) => set({ settingsSection }),
       saveScroll: (view, top) => set((s) => ({ scrollByView: { ...s.scrollByView, [view]: top } })),
-    }),
-    {
-      name: "cloudlink-ui",
-      version: 2,
-      // 只持久化详情分段的展开状态（PRD 7.5）；v1 的挂载视图偏好直接丢弃
-      partialize: (s) => ({ sectionsOpen: s.sectionsOpen }),
-      migrate: () => ({ sectionsOpen: {} }),
-      merge: (persisted, current) => ({
-        ...current,
-        sectionsOpen: (persisted as { sectionsOpen?: UIState["sectionsOpen"] } | undefined)?.sectionsOpen ?? {},
-      }),
-    }
-  )
-)
+}))
 
 /** 命令面板的「预览 Skill」：在当前视图打开预览；设置页没有预览，先切到 Agent 页再打开 */
 export function openPreviewHere() {
@@ -193,17 +198,4 @@ export function openPreviewHere() {
 export function togglePreview() {
   if (useUIStore.getState().previewOpen) useUIStore.getState().setPreviewOpen(false)
   else openPreviewHere()
-}
-
-/** 分段的默认展开状态（PRD 6.4）：Agent、连接默认展开；有待处理的笔记时笔记展开；其余折叠 */
-export function isSectionOpen(
-  sectionsOpen: UIState["sectionsOpen"],
-  section: DetailSection,
-  pendingNotes: number
-): boolean {
-  const saved = sectionsOpen[section]
-  if (saved !== undefined) return saved
-  if (section === "agent" || section === "connection") return true
-  if (section === "notes") return pendingNotes > 0
-  return false
 }

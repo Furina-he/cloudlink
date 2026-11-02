@@ -1,4 +1,4 @@
-// 服务器卡片网格的方向键导航（PRD 7.3：唯一允许的自写键盘逻辑）。按 DOM 顺序和卡片位置计算，跨分组（生产、开发）也能上下移动
+// 资源回路列表的方向键导航（单列时只有上下）（PRD 7.3：唯一允许的自写键盘逻辑）。按 DOM 顺序和卡片位置计算，跨分组（生产、开发）也能上下移动
 import type { KeyboardEvent } from "react"
 
 export interface CardBox {
@@ -46,7 +46,7 @@ export function nextCardIndex(boxes: CardBox[], current: number, key: GridKey): 
 const GRID_KEYS = new Set<string>(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"])
 
 /**
- * 网格容器的 onKeyDown：在带 data-grid-cell 的元素（卡片上的打开按钮）之间移动焦点。
+ * 网格容器的 onKeyDown：在带 data-grid-cell 的元素（回路行上的打开按钮）之间移动焦点。
  * 焦点在开关这类控件上时不处理，方向键留给控件自己
  */
 export function handleGridKeyDown(e: KeyboardEvent<HTMLElement>) {

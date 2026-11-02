@@ -2,13 +2,10 @@ import { CircleXIcon } from "lucide-react"
 import { useEffect, type ComponentType } from "react"
 import { useHotkeys } from "react-hotkeys-hook"
 
-import { AppSidebar } from "@/components/app/AppSidebar"
-import { AppToolbar } from "@/components/app/AppToolbar"
+import { AppHeader } from "@/components/app/AppHeader"
 import { CommandMenu } from "@/components/app/CommandMenu"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
-import { toast } from "@/components/ui/toast"
 import { AgentsView } from "@/features/agents/AgentsView"
 import { GuardDialogs } from "@/features/agents/GuardDialogs"
 import { serverActions } from "@/features/servers/actions"
@@ -18,9 +15,9 @@ import { ServerActionDialogs } from "@/features/servers/ServerActionDialogs"
 import { ServersView } from "@/features/servers/ServersView"
 import { SettingsView } from "@/features/settings/SettingsView"
 import { copy, ipcErrorText, type ViewId } from "@/lib/copy"
-import { HOTKEY_OPTIONS, HOTKEYS, isModalOpen, VIEW_BY_DIGIT } from "@/lib/hotkeys"
+import { HOTKEY_OPTIONS, HOTKEYS, isModalOpen, SINGLE_KEY_OPTIONS, VIEW_BY_DIGIT } from "@/lib/hotkeys"
 import { cn } from "@/lib/utils"
-import { useAssetStore } from "@/stores/assets"
+import { useCliStore } from "@/stores/cli"
 import { useDeliveryStore } from "@/stores/deliveries"
 import { useGuardStore } from "@/stores/guard"
 import { loadAll, useLoadError } from "@/stores/load"
@@ -55,13 +52,17 @@ function LoadErrorAlert() {
   )
 }
 
-/** 副本和护栏的健康检查（F-305）：窗口重新聚焦时检查，30 秒内最多一次；启动时的检查随首次加载完成 */
+/**
+ * 副本和护栏的健康检查（F-305）：窗口重新聚焦时检查，30 秒内最多一次；启动时的检查随首次加载完成。
+ * 刚在终端里安装或登录云平台 CLI 的，不受节流，立即重新检测（F-104 AC2）
+ */
 const RECHECK_MS = 30_000
 
 function useRecheckOnFocus() {
   useEffect(() => {
     let last = Date.now()
     const onFocus = () => {
+      useCliStore.getState().onFocus()
       if (Date.now() - last < RECHECK_MS || useDeliveryStore.getState().status !== "ready") return
       last = Date.now()
       void useDeliveryStore.getState().checkAll().catch(() => {})
@@ -70,32 +71,6 @@ function useRecheckOnFocus() {
     window.addEventListener("focus", onFocus)
     return () => window.removeEventListener("focus", onFocus)
   }, [])
-}
-
-/** 临时解锁到期自动锁回（F-306 AC2）：按最近的到期时间定时，到期时用 Toast 播报（PRD 6.12） */
-function useUnlockExpiry() {
-  const byId = useAssetStore((s) => s.byId)
-  useEffect(() => {
-    const unlocked = Object.values(byId).filter((a) => a.agent.unlockedUntil)
-    if (unlocked.length === 0) return
-    const next = Math.min(...unlocked.map((a) => new Date(a.agent.unlockedUntil!).getTime()))
-    const timer = setTimeout(
-      () => {
-        const now = Date.now()
-        Object.values(useAssetStore.getState().byId)
-          .filter((a) => a.agent.unlockedUntil && new Date(a.agent.unlockedUntil).getTime() <= now)
-          .forEach((a) =>
-            useAssetStore
-              .getState()
-              .lock(a.id)
-              .then(() => toast.add({ title: copy.agentSection.expiredToast(a.connection.sshAlias) }))
-              .catch(() => {})
-          )
-      },
-      Math.min(Math.max(next - Date.now(), 0), 2 ** 31 - 1)
-    )
-    return () => clearTimeout(timer)
-  }, [byId])
 }
 
 function useGlobalHotkeys() {
@@ -110,6 +85,8 @@ function useGlobalHotkeys() {
     HOTKEY_OPTIONS
   )
   useHotkeys(HOTKEYS.newServer, () => !isModalOpen() && ui().startCreate(), HOTKEY_OPTIONS)
+  // Esc 从详情返回列表（PRD 6.9）；浮层打开时交给浮层，输入框里的 Esc 留给输入框
+  useHotkeys(HOTKEYS.escape, () => ui().view === "servers" && !isModalOpen() && ui().closeInspector(), SINGLE_KEY_OPTIONS)
   // 预览开着时它就是最上层的浮层，Ctrl+\ 直接关掉；其余浮层打开时不响应
   useHotkeys(HOTKEYS.preview, () => (ui().previewOpen || !isModalOpen()) && togglePreview(), HOTKEY_OPTIONS)
 }
@@ -122,32 +99,30 @@ export function App() {
 
   useGlobalHotkeys()
   useRecheckOnFocus()
-  useUnlockExpiry()
   useEffect(() => {
     loadAll()
   }, [])
 
   return (
-    // 窗口小于 1024px 时，侧栏默认进入图标模式（PRD 6.10）
-    <SidebarProvider defaultOpen={window.innerWidth >= 1024}>
+    // 紧凑窗口（PRD 6.2）：顶部一体栏，下面是单个视图，没有侧栏和左右分栏
+    <div className="flex h-svh min-w-0 flex-col overflow-hidden bg-background">
       <a
         href="#view-title"
         className="sr-only z-50 rounded-lg bg-background px-3 py-2 text-sm ring-2 ring-ring focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
       >
         {copy.app.skipToMain}
       </a>
-      <AppSidebar />
-      <SidebarInset className="h-svh min-w-0 overflow-hidden">
-        <AppToolbar />
+      <AppHeader />
+      <main className="flex min-h-0 flex-1 flex-col">
         <LoadErrorAlert />
         <View key={view} focusTitle={switched} />
-      </SidebarInset>
+      </main>
       <CommandMenu />
       <ImportDialog />
       <HostKeyDialog />
       <ServerActionDialogs />
       <GuardDialogs />
-    </SidebarProvider>
+    </div>
   )
 }
 

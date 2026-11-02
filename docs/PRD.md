@@ -357,7 +357,7 @@ interface AgentNote {                       // Agent 写进收件箱的一条笔
       references/health-check.md                巡检清单
       .cloudlink.json                           所有权标记：managedBy、envId、agentKey、contentHash、compiledAt、templateVersion
   bin/cloudlink-guard.exe                       护栏程序，从安装目录复制过来，hook 指向这个固定路径
-  guard/policy.json                             护栏策略：每台服务器的别名、地址、档位、关键服务、解锁到期时间
+  guard/policy.json                             护栏策略：每台服务器的别名、地址、档位、关键服务，每个云平台的 CLI 与档位
   guard/log/2026-10-31.jsonl                    护栏记录，CloudLink 读入数据库后清理
   inbox/hk-edge.md                              Agent 笔记收件箱：Agent 只追加，CloudLink 读入后清空
   logs/
@@ -383,7 +383,7 @@ interface AgentNote {                       // Agent 写进收件箱的一条笔
 | F-101 | 资源管理 | P0 | 统一管理 SSH 服务器（`vps`）与云平台 CLI（`cli`），字段见 3.3。**AC1：** SSH 服务器的别名与云平台 CLI 的标识在全部资源中唯一（不区分大小写）；managed 服务器的别名还要满足 F-107 AC3。**AC2：** 删除资源前，确认框说明它会从总 Skill 中移除；managed 服务器同时删除托管 ssh 配置中的条目、凭据库中的密码，以及 CloudLink 生成的密钥（需单独勾选）；云平台 CLI 删除时不卸载本机 CLI、不退出用户的本地 CLI 登录态 |
 | F-102 | ssh config 导入 | P0 | 按运行环境分别扫描（Windows 宿主机和各个 WSL 发行版分开处理）。支持 `Include`。用 `ssh -G <alias>` 获取生效配置。导入的服务器 `source` 为 `imported`，连接字段只读。**AC1：** 通配和否定模式的 Host（`*`、`?`、`!`）不导入，并提示已跳过几个。**AC2：** 同一个别名在多个环境里都有定义时，合并为一行，「来源环境」列出全部环境。**AC3：** 已导入的别名标记为「已导入」，默认不勾选。**AC4：** CloudLink 托管文件中的 Host 不出现在导入列表里 |
 | F-103 | 只读探测 | P0 | 规格见 8.3。**AC1：** 使用 `BatchMode=yes` 和 `ConnectTimeout=10`，整个探测 30 秒超时，用户可以取消。**AC2：** 探测结果自动合并并重新编译，不逐项审批：新增和变化直接写入；上次有、这次没发现的服务标为「未发现」，不删除。完成后告诉用户更新了几处，可以查看本次变化。**AC3：** 合并时保留人工标注（role、critical）。**AC4：** 「撤销」把这次探测改动过的字段恢复原样并重新编译，只能撤销最近一次探测。**AC5：** 清洗后仍疑似指令注入的值（8.3）不自动合并，列为「待确认」，用户确认后才合并。**AC6：** 错误按 8.3 的分类表给出可操作的说明。**AC7：** 原始输出只留在内存里，不写入磁盘。**AC8：** 探测成功同时刷新连接验证 |
-| F-104 | 云平台 CLI 接入与范围圈定 | P0 | 支持接入三类官方 CLI：**Cloudflare（`wrangler`）**、**Vercel（`vercel`）**、**Oracle Cloud（`oci`）**（2026-11-02 从原多维静态卡片升级为实时 CLI 资源）。**AC1（精准环境检测）：** 只检测当前已启用 Agent 所在的运行环境；通过用户的 Login Shell（如 WSL 下 `bash -ilc`）探测 CLI 绝对路径、版本号与当前登录身份（`whoami` 账号/团队名，防止登错团队）。**AC2（引导与自动刷新）：** 未安装或未登录时，给出对应环境的单行安装/登录命令（对 `wrangler`/`vercel` 引导 `login`，对 `oci` 优先引导长效 `~/.oci/config` 而非 1 小时临时 session）并提供「打开终端」按钮；用户切回 CloudLink 窗口时自动重新检测并刷新状态。**AC3（范围圈定 Scope）：** 登录就绪后拉取账号下的可选资源（Cloudflare 的域名 Zones 与 Workers/Pages、Vercel 的项目、OCI 的计算实例），用户勾选允许公开给 Agent 的子集，未勾选的不进入编译产物。**AC4（全栈自动关联）：** Cloudflare 域名解析若指向已录入 SSH 服务器的 IP，自动标记关联关系；OCI 计算实例旁提供「+ 同时加为 SSH 服务器」快捷入口 |
+| F-104 | 云平台 CLI 接入与范围圈定 | P0 | 支持接入三类官方 CLI：**Cloudflare（`wrangler`）**、**Vercel（`vercel`）**、**Oracle Cloud（`oci`）**（2026-11-02 从原多维静态卡片升级为实时 CLI 资源）。**AC1（精准环境检测）：** 只检测当前已启用 Agent 所在的运行环境；通过用户的 Login Shell（如 WSL 下 `bash -ilc`）探测 CLI 绝对路径、版本号与当前登录身份（`whoami` 账号/团队名，防止登错团队）。**AC2（引导与自动刷新）：** 未安装或未登录时，给出对应环境的单行安装/登录命令（对 `wrangler`/`vercel` 引导 `login`，对 `oci` 优先引导长效 `~/.oci/config` 而非 1 小时临时 session）并提供「打开终端」按钮；用户切回 CloudLink 窗口时自动重新检测并刷新状态。**AC3（范围圈定 Scope）：** 登录就绪后拉取账号下的可选资源（Cloudflare 的域名 Zones 与 Workers/Pages、Vercel 的项目、OCI 的计算实例），用户勾选允许公开给 Agent 的子集，未勾选的不进入编译产物。**AC4（全栈自动关联）：** Cloudflare 域名解析若指向已录入 SSH 服务器的 IP，自动标记关联关系；OCI 计算实例旁提供「+ 同时加为 SSH 服务器」快捷入口。**AC5（多账号，2026-11-03）：** 同一家可以接入多个账号，每个账号一项资源；检测回显这次登录能操作的全部账号（`CliEnvState.accounts`：Cloudflare 的 Account、Vercel 的 Team、OCI 的 Profile），向导里单选一个，已接入的标「已添加」。`CliAsset.account` 记下绑定的账号，`CliAsset.handle` 由后端分配（第一个 `cloudflare`，之后 `cloudflare-2`…，不可改）；同一家同一账号重复保存返回 `alias-taken`。详情文件写明每条命令怎么指定账号（`CLOUDFLARE_ACCOUNT_ID`、`--scope`、`--profile`），不写凭据、不引入 Token。**AC2 补充：** 未安装时给出安装指引，可切换安装方式（wrangler / vercel：npm、pnpm、bun；oci：Windows 用 winget 或 pip，WSL 用官方 install.sh 或 pip），注明需要的运行时，命令前的提示符区分 `PS>` 与 `$` |
 | F-105 | 字段导出控制 | P0 | 每台 SSH 服务器可在「连接配置 → 高级」中单独设置导出开关（平时默认收起不打扰主视野）：解析后的连接信息（默认关）、监听端口（默认关）、镜像版本（默认开）。**AC：** 关闭的字段一旦出现在编译产物里，就触发 Lint 错误并阻断发布 |
 | F-106 | 一步到位录入服务器 | P0 | 点击「+ 添加资源 → SSH 服务器」在右侧无遮罩平推面板打开精简表单：主机地址、端口（默认 22）、登录用户、认证方式（F-108）、备注名称、环境，底部直接附带「连接成功后授权给哪些 Agent」与「默认档位」，主按钮为「连接并启用」。别名自动由名称/地址生成并实时回显 `Agent 将通过 ssh <别名> 连接`。**AC1（一步到位流水线）：** 点击「连接并启用」时依次自动执行：测试 SSH 连接 → 若为密码认证则自动生成 ed25519 免密密钥并安装公钥切换为私钥认证 → 保存并写入托管 ssh 配置 → 自动授权给所选 Agent 并后台发起首次探测，按钮原地展示阶段进度，可取消。**AC2：** 首次连接时显示主机指纹（SHA256），用户核对确认后才写入 `known_hosts`；指纹与已知记录不符时阻断。**AC3：** 连接失败时按 8.3 错误分类原地提示，同时允许用户选择「仅保存（暂不启用）」离线保存，此时标为「未验证」，行内提供 `[测试连接]` 快捷入口。**AC4：** 修改已有服务器的连接字段并保存后，验证状态清空，行内提示重新验证 |
 | F-107 | 托管 ssh 配置 | P0 | managed 服务器写入 CloudLink 托管的 `~/.ssh/cloudlink.conf`（每个运行环境一份，WSL 中写在发行版自己的家目录）。**AC1：** 首次写入前用对话框说明要做什么，征得同意后在用户的 `~/.ssh/config` **开头**加一行 `Include ~/.ssh/cloudlink.conf`。修改前先备份为 `config.cloudlink-bak`。用户拒绝时，设置中给出手动添加的说明，此时服务器在该环境中记为「未列入」。**AC2：** 托管文件整文件重写，带「由 CloudLink 生成，请勿手改」的文件头；CloudLink 不修改用户 config 中除这一行 Include 以外的任何内容。**AC3：** 别名与该环境 ssh config 中已有的 Host 重名时阻止保存。**AC4：** 每次写入后用 `ssh -G <别名>` 回读校验，生效值与录入值不一致时提示具体字段。**AC5：** 用户可在高级选项中选择写入哪些运行环境，默认全部可用环境 |
@@ -611,192 +611,114 @@ If a command is missing on a server (no docker, no systemd), skip it and say so.
 
 视觉系统见 `DESIGN.md`。它的核心是「钢与信号」加「钢制配电盘」：Nova 风格的紧凑密度，Mist 冷钢中性色，主按钮一律用钢墨色，信号色只有 Signal Cyan 一种（只用于键盘焦点和当前选中的回路行描边）。颜色只表达状态；Agent（Claude、OpenAI）与云平台（Cloudflare、Vercel、Oracle Cloud）一律使用官方品牌 SVG Logo（集中封装在 `AgentMark` 与 `ProviderMark` 中）。浅色和深色两套主题同等完成度，默认跟随系统。
 
-### 6.2 信息架构
+### 6.2 信息架构与紧凑窗口（对标 CC Switch）
 
-一级导航只有三项。侧栏底部**不放置常驻的运行环境健康列表**（环境配置归入设置，异常时才在具体资源行就地提示）。
+彻底拆掉重型企业后台的「左侧大边栏 + 顶部面包屑栏 + 左右并排分栏」三栏外壳，改为与 CC Switch 一致的**紧凑桌面小工具形态**：
 
-| 一级导航 | 图标 | 用途 | 侧栏计数徽章 |
-| :--- | :--- | :--- | :--- |
-| 资源（原「服务器」） | `ServerIcon` | 单栏全宽配电盘：统一管理「服务器 (SSH)」与「云平台 (CLI)」；行内直接切换权限档位与授权 Agent；右侧按需展开检视面板（画像与规则 / 连接配置 / 动态） | 资源总数；有编译受阻时改为红色受阻数 |
-| Agent | `BotIcon` | 总 Skill 的全局内容（基础设施关系、运维约定）和预览；护栏的安装与状态；Agent 目标、启用开关、副本健康与修复 | 需要处理的问题数（副本缺失、被改动、冲突，护栏未生效），红色 |
-| 设置 | `SettingsIcon` | 通用、运行环境、ssh 配置、编译、探测、活动（含 Agent 操作记录）、数据、危险操作 | 无 |
+- **默认窗口尺寸**：`900×640`（最小尺寸 `760×520`）。
+- **顶部极简一体栏（48px 单行 Header）**：
+  - 左侧：应用名 `CloudLink` + 三项分段视图切换器 **`( 资源 )  ( Agent )  ( 设置 )`**（完全取消左侧 240px `Sidebar` 与顶部 `Breadcrumb` 面包屑栏）。
+  - 右侧：在「资源」主页时直接放置紧凑搜索框、`[+ 添加服务器]` 主按钮、`[+ 云平台 ▾]` 下拉菜单按钮（含 Cloudflare、Vercel、Oracle Cloud、从 ssh config 导入）及命令面板图标按钮 `[⌘]`。
+
+| 顶部导航项 | 用途 | 计数徽章 |
+| :--- | :--- | :--- |
+| 资源 | 单列全宽配电盘：统一管理「服务器」与「云平台」；每行单行高度直接切换权限档位与授权 Agent | 资源总数；有编译受阻时改为红色受阻数 |
+| Agent | 总 Skill 的全局内容（基础设施关系、运维约定）和预览；护栏的安装与状态；Agent 目标、启用开关、副本健康与修复 | 需要处理的问题数（副本缺失、被改动、冲突，护栏未生效），红色 |
+| 设置 | 通用、运行环境、ssh 配置、编译、探测、活动（含 Agent 操作记录）、数据、危险操作 | 无 |
 
 ### 6.3 应用外壳
 
-- 使用 `SidebarProvider` 和 `Sidebar`（`collapsible="icon"`），右侧是 `SidebarInset`。窗口最小尺寸 960×600。
-- 工具栏高 44px，从左到右依次是：`SidebarTrigger`、`Separator`、`Breadcrumb`（视图 / 当前对象）、弹性空白、当前视图的操作按钮、命令面板按钮（带 `Kbd` 提示）。
-- 标题栏使用系统原生样式。切换一级视图时，各视图的选中项、搜索词和滚动位置都要保留。
+- 顶栏高 48px，下方直接是主内容滚动区，不再嵌套 `SidebarProvider` 或 `ResizablePanelGroup` 左右分栏。
+- 标题栏使用系统原生样式。切换一级视图时，各视图的搜索词和滚动位置保留。
 
-### 6.4 资源视图（核心视图：单列双闸刀配电盘 + 按需平推检视面板）
+### 6.4 资源视图（核心视图：单行零噪点配电盘 + 无挤压详情/弹窗）
 
-彻底告别常驻左右对半分栏、参差不齐的多列小卡片网格和 8 层折叠手风琴。
+彻底告别「三栏夹心饼干」挤压、告别每行底下啰嗦的第二行统计小字、告别 `vercel Vercel · vercel` 重复命名。
 
-#### 1. 默认首屏（未选中任何资源时）：单栏全宽配电盘，一目了然
+#### 1. 默认首屏：单行 4 元素列表，全屏零省略号
 
 ```text
-+----------+------------------------------------------------------------------------------------+
-| CloudLink| 资源                                           [ / 搜索... ]    [ + 添加资源 ▾ ]   |
-|          |------------------------------------------------------------------------------------|
-| 资源   5 |                                                                                    |
-| Agent  1 | 服务器 (SSH)                                           权限档位        授权 Agent |
-| 设置     | ┌────────────────────────────────────────────────────────────────────────────────┐ |
-|          | │ [U] ● hk-edge   香港边缘节点                        [👁 只读巡检]    [CC] [OA] │ |
-|          | │       ✓ 已连接 · Ubuntu 24.04 · 3 个服务 · 笔记 2                              │ |
-|          | ├────────────────────────────────────────────────────────────────────────────────┤ |
-|          | │ [D] ● sg-db     新加坡主库                          [🔧 标准运维!]   [CC]  ·   │ |
-|          | │       ✓ 已连接 · Debian 12 · 生产环境已开启写权限                              │ |
-|          | ├────────────────────────────────────────────────────────────────────────────────┤ |
-|          | │ [U] ● dev-box   开发测试机                          [👁 只读巡检]     ·    ·   │ |
-|          | │       ◌ 未验证连接  [测试连接]                                                 │ |
-|          | └────────────────────────────────────────────────────────────────────────────────┘ |
-|          |                                                                                    |
-|          | 云平台 (CLI)                                           权限档位        授权 Agent |
-|          | ┌────────────────────────────────────────────────────────────────────────────────┐ |
-|          | │ [CF] ● cloudflare   Cloudflare · wrangler           [👁 只读巡检]    [CC] [OA] │ |
-|          | │        ✓ 已就绪 · me@example.com · 2 个域名, 1 个 Worker · 关联 hk-edge        │ |
-|          | ├────────────────────────────────────────────────────────────────────────────────┤ |
-|          | │ [▲]  ● vercel       Vercel · vercel                 [👁 只读巡检]    [CC]  ·   │ |
-|          | │        ▲ WSL 未登录  [去登录] · my-team · 2 个项目                             │ |
-|          | └────────────────────────────────────────────────────────────────────────────────┘ |
-+----------+------------------------------------------------------------------------------------+
++----------------------------------------------------------------------------------+
+|  CloudLink    ( 资源 5 )  ( Agent 3 )  ( 设置 )    [搜索...] [+ 添加服务器] [+▾] |
++----------------------------------------------------------------------------------+
+|                                                                                  |
+|  服务器                                                                          |
+|  ┌────────────────────────────────────────────────────────────────────────────┐  |
+|  │ ● 香港边缘节点   [hk-edge]   笔记 3           [👁 只读巡检]   [CC] [OA] [Cu]│  |
+|  ├────────────────────────────────────────────────────────────────────────────┤  |
+|  │ ● 新加坡数据库   [sg-db]     笔记 1           [🔧 标准运维 ⚠] [CC] [OA]  Cu │  |
+|  ├────────────────────────────────────────────────────────────────────────────┤  |
+|  │ ○ 开发机         [dev-box]   [改用密钥登录]   [🔧 标准运维]    ·    ·    ·  │  |
+|  └────────────────────────────────────────────────────────────────────────────┘  |
+|                                                                                  |
+|  云平台                                                                          |
+|  ┌────────────────────────────────────────────────────────────────────────────┐  |
+|  │ [CF] Cloudflare  me@example.com · 2 个域名    [👁 只读巡检]   [CC] [OA] [Cu]│  |
+|  ├────────────────────────────────────────────────────────────────────────────┤  |
+|  │ [▲]  Vercel      my-team   ⚠ WSL 未登录 [去登录] [👁 只读巡检] [CC]  ·   Cu │  |
+|  └────────────────────────────────────────────────────────────────────────────┘  |
+|                                                                                  |
++----------------------------------------------------------------------------------+
 ```
 
-- **布局机制（Collapsible Split Inspector）**：
-  - 未选中任何资源且未处于新建态时，右侧检视面板完全收起隐藏，主列表容器居中展示（`max-w-4xl`），留白充足。
-  - 点击某一行或点击「+ 添加资源」时，通过 `ResizablePanelGroup` 在右侧**无遮罩平推展开 440px 检视面板**（最小 `400px`），左侧列表自适应收窄保留，用户可直接点击左侧其他行无缝切换对照；按 `Esc` 或点击面板右上角 `×` 随时收起回全宽。
-- **双闸刀回路行（Breaker Row）**：
-  - 列表分为 **「服务器 (SSH)」** 与 **「云平台 (CLI)」** 两个分组，每组外包 1px 发丝线圆角容器，行间 1px 分隔线，纵向严格对齐。
-  - **左侧身份与状态区**（点击打开右侧详情）：
-    - 图标：SSH 服务器用探测到的发行版首字母或 `ServerIcon`；云平台 CLI 一律使用官方品牌 Logo（`ProviderMark`：Cloudflare、Vercel、Oracle Cloud）。
-    - 第一行：环境色点（生产红、预发琥珀、开发灰）+ 等宽标识（`hk-edge` / `cloudflare`）+ 名称。
-    - 第二行：状态图标与中文状态词 + 关键摘要（系统与服务数，或 CLI 账号、已选资源数、关联的服务器别名）+ 待处理笔记徽章（如 `笔记 2`）。**异常就地处理**：当某行处于「未验证连接」「WSL 未登录」「连接已修改」等异常状态时，状态文字旁直接紧跟一个轻量按钮（`[测试连接]`、`[去登录]`）；正常状态绝不展示多余按钮。
+- **绝对禁止左右分栏挤压**：
+  - 主列表居中展示（`max-w-3xl mx-auto`），永远保持 100% 舒适宽度，绝不用右侧并排面板把列表挤成 `De... · 3 ...` 省略号。
+  - 分组标题只写简洁的 **「服务器」** 与 **「云平台」**，不在每个分组上方重复写 `权限档位 / 授权 Agent` 列头。
+- **单行零噪点双闸刀回路行（Single-Line Breaker Row，行高 44–48px）**：
+  - **SSH 服务器行（左侧单行）**：
+    1. **连接状态圆点**：已连接为实心绿点 `●`（`bg-success`），未验证为空心灰圈 `○`，连接已修改为琥珀点，失败为红点（配 `sr-only` 状态词供读屏器使用；**正常连接时绝不在主列表写 `✓ 已连接 · Ubuntu 22.04 · 2 个服务`，也不放 `[U]`/`[D]` 方块**）。
+    2. **服务器名称**：如 `香港边缘节点`（`text-sm font-medium`）。
+    3. **等宽别名胶囊**：如 `hk-edge`（`font-mono text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded`）。
+    4. **按需出现的徽章或修复按钮**：有待处理笔记时显示 `笔记 3`；未验证或仅密码时就地紧跟 `[改用密钥登录]` 或 `[测试连接]`。
+  - **云平台 CLI 行（左侧单行）**：
+    1. **官方品牌 Logo**：`ProviderMark`（Cloudflare、Vercel、Oracle Cloud 官方图标）。
+    2. **平台名称**：直接写 `Cloudflare` 或 `Vercel`（**严禁写 `vercel Vercel · vercel` 或 `cloudflare Cloudflare · wrangler` 这类重复文字**）。
+    3. **账号与范围简述**：如 `me@example.com · 2 个域名`（单行灰色小字 `text-xs text-muted-foreground`）。
+    4. **按需出现的异常修复按钮**：如某个运行环境未登录时就地显示 `⚠ WSL 未登录` + `[去登录]`；正常就绪时不写「✓ 已就绪」文字。
   - **右侧双闸刀控制区**（独立可操作，点击不打开详情）：
-    1. **权限档位闸刀**：点击直接在 `只读巡检`（`EyeIcon`）与 `标准运维`（`WrenchIcon`）之间切换。生产资源从「只读巡检」切往「标准运维」时弹 `AlertDialog` 二次确认；切回「只读巡检」零阻力一键完成。**当生产资源处于「标准运维」时，按钮以琥珀色淡底与琥珀色文字图标（`bg-warning/12 text-warning border-warning/35`）高亮提醒**。
+    1. **权限档位闸刀**：点击直接在 `只读巡检`（`EyeIcon`）与 `标准运维`（`WrenchIcon`）之间切换。生产资源从「只读巡检」切往「标准运维」时弹 `AlertDialog` 二次确认；切回「只读巡检」零阻力一键完成。**当生产资源处于「标准运维」时，按钮以琥珀色淡底与琥珀色文字图标（`bg-warning/12 text-warning border-warning/35`）高亮提醒**（左侧不再重复写「生产环境已开启写权限」）。
     2. **Agent 通电开关**（`AgentPicker`）：每个启用的 Agent 一个 28px 方块（官方品牌 Logo `AgentMark`），点亮即分发。
 
-#### 2. 右侧检视面板（选中资源时：「常驻控制头 + 3 个平铺 Tab」）
+#### 2. 查看/编辑详情（点击某一行时：全宽详情视图 + `← 返回`，不挤占列表）
 
-砍掉原有的 8 层折叠手风琴，统一为顶部常驻控制头加下方 3 个平铺标签页（`<TabsList variant="line">`）：
+点击某一行（如 `hk-edge` 或 `cloudflare`）后，主工作区切换为全宽详情视图（`max-w-3xl mx-auto`），顶部带 **`← 返回`** 按钮（按 `Esc` 或点击顶栏「资源」同样返回主列表）：
 
 ```text
-+------------------------------------------------+
-|  hk-edge  香港边缘节点           ● 生产    [×] |
-|  ✓ 已连接 · Ubuntu 24.04 · 2C/2G · 10分钟前探测|
-|                                                |
-|  档位  (👁 只读巡检) (🔧 标准运维)             |
-|  授权  [CC Claude Code ✓] [OA 通用 ✓]   [⋯更多]|
-|------------------------------------------------|
-|  [ 画像与规则 ]   [ 连接配置 ]   [ 动态 (2) ]  |
-|  ──────────────                                |
-|  用途说明                                      |
-|  [ 承担 api.example.com 反代及 API 容器托管  ] |
-|                                                |
-|  操作红线（禁止 Agent 执行的事项）    [+ 添加] |
-|  · 严禁在宿主机直接执行高内存编译任务          |
-|  · 内置保护：禁止读取 .env / 私钥 / 环境变量   |
-|                                                |
-|  服务与关键目录（自动探测同步）     [重新探测] |
-|  · 服务 (4)：openresty [关键], api-prod ...    |
-|  · 站点：api.example.com, blog.example.com     |
-|  · 目录 (2)：/opt/1panel, /var/www/app         |
-+------------------------------------------------+
++----------------------------------------------------------------------------------+
+|  ← 返回   hk-edge  香港边缘节点                                       ● 生产     |
+|  ✓ 已连接 · Ubuntu 24.04 · 2C/2G · 10 分钟前探测                                 |
+|  档位 (👁 只读巡检) (🔧 标准运维)    授权 [CC Claude Code ✓] [OA 通用 ✓]  [⋯更多] |
+|----------------------------------------------------------------------------------|
+|  [ 画像与规则 ]   [ 连接配置 ]   [ 动态 (3) ]                                    |
+|  ──────────────                                                                  |
+|  用途说明                                                                        |
+|  [ 承担 api.example.com 反代及 API 容器托管                                    ] |
+|                                                                                  |
+|  操作红线（禁止 Agent 执行的事项）                                      [+ 添加] |
+|  · 严禁在宿主机直接执行高内存编译任务                                            |
+|                                                                                  |
+|  服务与关键目录（自动探测同步）                                       [重新探测] |
+|  · 服务 (2)：openresty [关键], postgres                                          |
+|  · 目录 (2)：/opt/1panel, /var/www/app                                           |
++----------------------------------------------------------------------------------+
 ```
 
 - **常驻控制头**：
-  - 第一行：等宽标识、名称、环境徽章、关闭面板按钮 `[×]`。
+  - 第一行：`[← 返回]` 按钮、等宽标识、名称、环境徽章。
   - 第二行：连接/CLI 状态、系统或账号摘要、最近探测时间。
   - 第三行：档位切换器、Agent 授权按钮（带名称）、右上角 `[⋯更多]` 菜单（收纳低频操作：`测试连接`、`重新探测`、`复制别名`、`预览 Skill`、`在文件夹中显示编译目录`、`删除`）。
-  - **正常即隐身**：只有当某个已启用环境未列入（如 WSL 缺私钥、WSL 未安装 CLI）或编译存在 Lint 错误/警告时，才在控制头下方显示一条提示条与一键处理按钮；一切正常时绝不罗列环境矩阵。
-- **三个平铺 Tab**：
-  1. **`画像与规则`（默认 Tab）**：
-     - SSH 服务器：用途说明（`Textarea`）、操作红线（自定义可排序列表 + 内置红线说明）、探测到的服务表格（可标「关键」与角色）和关键目录列表，右上角带 `[重新探测]`。
-     - 云平台 CLI：允许 Agent 操作的资源范围勾选列表（如 Cloudflare 的域名 Zones、Workers/Pages；Vercel 的前端项目；Oracle Cloud 的计算实例及 `[+ 同时加为 SSH 服务器]` 快捷按钮）、自动识别的服务器关联关系、用途说明与操作红线。
-  2. **`连接配置`**：
-     - SSH 服务器：主机地址、端口、用户、认证方式（支持一键改用密钥登录与复制私钥到 WSL）、备注名称、环境标签；底部折叠「高级」（别名、跳板机、写入的运行环境、导出到 Skill 的开关 F-105）。imported 服务器只读展示 `ssh -G` 解析结果。
-     - 云平台 CLI：已启用 Agent 所在运行环境的 CLI 检测结果（Login Shell 检测到的路径、版本号、`whoami` 登录账号/团队名），提供 `[重新检测]` 与 `[打开终端切换账号]`。
-  3. **`动态`**（有待处理笔记时显示 `动态 (N)`）：
-     - 上半部为待处理的 Agent 笔记（F-308，可执行「并入」「编辑后并入」「忽略」「全部并入」）及资源笔记文本框；下半部为最近 50 条护栏操作审计记录（F-307，`TraceLine` 展示放行与拦下记录，附「在活动中查看全部」）。
+  - **正常即隐身**：只有当某个已启用环境未列入（如 WSL 缺私钥、WSL 未安装 CLI）或编译存在 Lint 错误/警告时，才在控制头下方显示一条提示条与一键处理按钮。
+- **三个平铺 Tab**（`画像与规则` / `连接配置` / `动态`，享有完整窗口宽度，表格与路径不再局促）。
 
-- **保存与探测抽屉**：表单字段有未保存修改时底部固定出现保存条（`Ctrl+S`）；档位切换、Agent 授权开关、云资源范围勾选、笔记并入立即生效。「预览 Skill」与「探测进度详情」仍使用右侧 `Sheet` 按需打开。
+### 6.5 添加资源：居中模态弹窗（`Dialog`）或独立聚焦视图，一步到位
 
-### 6.5 添加资源：SSH 一步到位与云平台 CLI 环境向导
+点击顶栏的 `[+ 添加服务器]` 或 `[+ 云平台 ▾]`（或按 `Ctrl+N`）弹出居中 `Dialog`（`max-w-lg`）或独立聚焦卡片视图（带 `← 返回`），绝不挤压主列表：
 
-点击右上角 `[ + 添加资源 ]` 后，右侧平推面板首先展示清晰的资源类型选择（也可从按钮下拉菜单直接选「从 ssh config 导入」）：
-
-- **直连服务器**：`SSH 服务器`（`ServerIcon`）
-- **云平台 CLI**（使用 `ProviderMark` 官方品牌 Logo）：
-  - `Cloudflare`（官方 Cloudflare Logo · `wrangler` CLI · 域名 DNS、Workers、Pages、D1）
-  - `Vercel`（官方 Vercel Logo · `vercel` CLI · 前端项目部署、域名与运行日志）
-  - `Oracle Cloud`（官方 Oracle Logo · `oci` CLI · 云主机实例启停、防火墙安全列表与网络）
-
-#### 分支 A：添加 SSH 服务器（「连接并启用」一步到位）
-
-```text
-+------------------------------------------------+
-|  ← 添加 SSH 服务器                         [×] |
-|------------------------------------------------|
-|  主机地址 *              端口 *                |
-|  [ 203.0.113.10        ] [ 22     ]            |
-|                                                |
-|  登录用户 *              认证方式              |
-|  [ root                ] (•)密码 ( )密钥 ( )代理|
-|                                                |
-|  密码 *                                        |
-|  [ ••••••••••••••••                  [👁] ]    |
-|  连接后自动配置免密密钥供 Agent 使用，不存明文 |
-|                                                |
-|  备注名称                环境                  |
-|  [ 香港边缘节点        ] (•)生产 ( )预发 ( )开发|
-|                                                |
-|  Agent 将通过 `ssh hk-edge` 连接               |
-|  ▸ 高级（修改别名、跳板机、写入的运行环境）    |
-|------------------------------------------------|
-|  连接成功后授权给                              |
-|  [CC Claude Code ✓]  [OA 通用 (Codex) ✓]       |
-|  默认档位：(•) 👁 只读巡检   ( ) 🔧 标准运维    |
-|------------------------------------------------|
-|                   [ 取消 ]  [ 连接并启用 ↵ ]   |
-+------------------------------------------------+
-```
-
-- 用户填完地址与密码/密钥，点选要授权的 Agent，直接按 **「连接并启用」**：
-  - 按钮原地显示阶段状态：`正在验证连接…` →（若为密码）`正在生成并安装免密密钥…` → `已启用，正在后台探测服务…`。
-  - 首次连接未知主机时弹出主机指纹确认框（`SHA256:…`）。
-  - 若连接失败，原地展示分类原因与建议，同时旁侧出现次要按钮「仅保存（暂不启用）」，允许离线保存。
-
-#### 分支 B：添加云平台 CLI（按环境精准检测 + 范围圈定）
-
-```text
-+------------------------------------------------+
-|  ← 添加 Cloudflare (wrangler)              [×] |
-|------------------------------------------------|
-|  运行环境检查（仅检测已启用 Agent 的环境）     |
-|  ┌──────────────────────────────────────────┐  |
-|  │ ✓ Windows      wrangler 3.99 · me@ex.com │  |
-|  ├──────────────────────────────────────────┤  |
-|  │ ▲ WSL Ubuntu   尚未登录 Cloudflare       │  |
-|  │   `wrangler login`    [复制] [打开终端]  │  |
-|  └──────────────────────────────────────────┘  |
-|  在终端完成操作后切回本窗口，将自动刷新状态    |
-|                                                |
-|  允许 Agent 操作的资源范围（未勾选的不公开）   |
-|  域名 (Zones)                          [全选]  |
-|  [✓] example.com       已关联服务器 `hk-edge`  |
-|  [ ] personal-blog.me                          |
-|                                                |
-|  Workers / Pages                               |
-|  [✓] api-gateway                               |
-|------------------------------------------------|
-|  授权给                                        |
-|  [CC Claude Code ✓]  [OA 通用 (Codex)  ]       |
-|  默认档位：(•) 👁 只读巡检   ( ) 🔧 标准运维    |
-|------------------------------------------------|
-|                   [ 取消 ]  [ 保存并启用 ↵ ]   |
-+------------------------------------------------+
-```
-
-- **精准环境检测**：只检查用户已启用 Agent 所在的运行环境（例如只在 Windows 启用了 Claude Code，就不检查 WSL）。后台通过 Login Shell 执行命令，确保能识别 `nvm`、`fnm`、`pnpm`、`volta` 安装的 CLI，并展示 `whoami` 的登录账号/团队名。
-- **切回窗口自动刷新**：当某个环境未安装或未登录时，给出单行命令与 `[打开终端]` 按钮；用户在终端完成操作切回 CloudLink 窗口时，自动重新检测并刷新为绿勾并拉取可选资源范围。
+- **分支 A：添加 SSH 服务器（「连接并启用」一步到位）**
+  - 填完地址、端口、用户、密码/密钥、名称，勾选授权 Agent，点击 **「连接并启用」**：
+  - 原地显示进度：`正在验证连接…` →（若为密码）`正在生成并安装免密密钥…` → 自动保存、授权、发起后台探测，并**自动关闭弹窗回到主列表**，新服务器直接呈现在列表中。
+- **分支 B：添加云平台 CLI（按环境精准检测 + 范围圈定）**
+  - 只检查已启用 Agent 所在的运行环境（Login Shell 检测路径、版本与 `whoami` 账号）；未安装或未登录时提供单行命令与 `[打开终端]`，切回窗口自动刷新；勾选公开范围后点击 **「保存并启用」** 回到主列表。
 
 ### 6.6 Agent 视图
 
@@ -833,7 +755,6 @@ If a command is missing on a server (no docker, no systemd), skip it and say so.
 | `Ctrl+K` | 打开命令面板（`CommandDialog`） |
 | `Ctrl+N` | 添加资源 |
 | `Ctrl+S` | 保存当前修改 |
-| `Ctrl+B` | 折叠或展开侧栏（shadcn Sidebar 内置） |
 | `Ctrl+\` | 打开或关闭预览 Skill |
 | `/` | 聚焦资源搜索框 |
 | `Ctrl+1` 到 `Ctrl+3` | 切换一级视图（资源 / Agent / 设置） |
@@ -865,7 +786,7 @@ If a command is missing on a server (no docker, no systemd), skip it and say so.
 | 操作记录 | 空（「还没有记录。只记录经过护栏的命令」）、有记录、有拦下 | 详情「动态」Tab |
 | 未保存修改 | 草稿 | 底部操作条，预览标为「草稿预览」 |
 | 长内容 | 溢出 | 名称、路径和命令用 `truncate` 加 `Tooltip`；表格横向滚动 |
-| 窗口缩窄 | 小于 1024px | 侧栏进入图标模式 |
+| 窗口缩窄 | 最小 760×520 | 顶栏不换行；回路行仍是单行，名称完整显示（档位闸刀在更窄的列表里只留图标，状态词在 Tooltip 和 aria-label 里） |
 
 ### 6.11 文案规范与状态词表
 
@@ -899,7 +820,7 @@ If a command is missing on a server (no docker, no systemd), skip it and say so.
 - 根节点设置 `MotionConfig reducedMotion="user"`，尊重系统的「减少动态效果」设置。
 - 最小点击目标为 24×24px（Nova 的 xs 尺寸）。
 - 在侧栏之前放一个「跳到主内容」链接，只有获得焦点时才显示。切换一级视图后，焦点移到新视图的标题上（标题设置 `tabIndex={-1}`）。视图标题用 `h1`，分区用 `h2`，层级不跳级。
-- 在 `tauri.conf.json` 的窗口配置里开启 `zoomHotkeysEnabled: true`，支持 Ctrl 加减号缩放。在 150% 缩放和 1280px 窗口宽度下，布局不能被破坏。
+- 在 `tauri.conf.json` 的窗口配置里开启 `zoomHotkeysEnabled: true`，支持 Ctrl 加减号缩放。在 150% 缩放和默认窗口（900×640）下，布局不能被破坏。
 - 按钮沿用桌面原生的箭头光标，不改成手形（初始化时加 `--no-pointer`）。
 
 ---
@@ -997,10 +918,10 @@ pnpm dlx shadcn@4 mcp init --client claude
 
 | 需求或交互行为 | 必须使用的实现 | 禁止 |
 | :--- | :--- | :--- |
-| 应用导航、侧栏折叠、计数徽章 | `Sidebar`（`collapsible="icon"`）、`SidebarMenuButton isActive`、`SidebarMenuBadge`、`SidebarTrigger` | 自写侧栏或折叠逻辑 |
-| 多栏布局、拖拽分隔条、面板折叠、布局持久化 | `ResizablePanelGroup`、`ResizablePanel`（`collapsible`、`minSize`、`panelRef`）、`ResizableHandle`。用 `const { defaultLayout, onLayoutChanged } = useDefaultLayout({ id })` 拿到两个值，传给 `ResizablePanelGroup`；每个面板都要有稳定的 `id`；折叠和展开调用 `panelRef.current.collapse()` 和 `expand()` | 自写分隔条；使用 CSS resize |
+| 应用导航、计数徽章 | 顶部 48px 一体栏（`AppHeader`）：`<nav>` 内三个 `Button`（`aria-current="page"` 标当前视图），计数是按钮内的数字加 `sr-only` 说明；视图操作经 `#view-actions` 用 `createPortal` 渲染（2026-11-02 取消 Sidebar，PRD 6.2） | 左侧大边栏、面包屑栏 |
+| 资源列表与详情、添加 | 资源视图一次只显示一个：全宽列表（`max-w-3xl mx-auto`）、带「← 返回」的全宽详情视图，添加用居中 `Dialog`（`sm:max-w-lg`）。不用 `ResizablePanelGroup` 并排分栏（2026-11-02，PRD 6.4、6.5） | 左右分栏把列表挤窄；自写分隔条 |
 | 可用键盘导航的选择列表（命令面板、导入列表以外的 Combobox 选项） | `Command`（`shouldFilter={false}`）、`CommandInput`、`CommandList`、`CommandGroup`、`CommandItem`、`CommandEmpty` | 自写 roving tabindex 或方向键处理 |
-| 服务器卡片列表 | `Card size="sm"` 放在 CSS Grid 中；卡片间方向键导航用 `src/lib/grid-nav.ts` 中的一个小函数（按 DOM 顺序和列数计算），这是 7.3 里唯一允许的自写键盘逻辑 | 引入网格或虚拟列表库 |
+| 资源回路行（单行双闸刀） | 每组一个 1px 圆角容器（`divide-y`），每行一个 `Item`；行间方向键导航用 `src/lib/grid-nav.ts` 中的一个小函数（按 DOM 顺序和位置计算，单列时只有上下），这是 7.3 里唯一允许的自写键盘逻辑 | 引入网格或虚拟列表库；多列卡片网格 |
 | 命令面板 | `CommandDialog` | 自写弹层 |
 | 快捷键 | `react-hotkeys-hook` 的 `useHotkeys("mod+k", fn, { preventDefault: true, enableOnFormTags: true })`。`mod` 同时匹配 Ctrl 和 Cmd。提示文字用 `Kbd` 或 `KbdGroup` | 自己监听 `window` 的 keydown |
 | 表单状态、校验、脏标记、动态行 | react-hook-form、`zodResolver`、`useFieldArray`；外观用 `Field`、`FieldLabel`、`FieldDescription`、`FieldError`、`FieldSet`、`FieldLegend` | 自写表单状态和校验；用占位符代替标签 |
@@ -1089,8 +1010,9 @@ export default [
 
 | Store | 状态 | 动作 | 持久化 |
 | :--- | :--- | :--- | :--- |
-| `useUIStore` | `view`（servers、agents、settings）、`selectedAssetId`、`creating`（是否处于新建表单）、`query`、`sectionsOpen`（详情各分段的展开状态）、`previewOpen`、`previewEnvId`、`commandOpen`。主题不放在这里，由 ThemeProvider 管理 | `setView`、`selectAsset`、`startCreate`、`setQuery`、`toggleSection`、`openPreview` | 只持久化 `sectionsOpen` |
-| `useAssetStore` | `byId`、`ids`、`status`、`error` | `load`、`create`、`save`（返回编译结果）、`remove`、`importHosts`、`setDistribute`、`setMode`、`unlock`、`lock` | 否 |
+| `useUIStore` | `view`（servers、agents、settings）、`selectedAssetId`、`creating`（添加弹窗：`pick`、`ssh` 或云平台）、`createPrefill`、`detailTab`（画像与规则、连接配置、动态）、`returnFocusId`、`query`、`previewOpen`、`previewKey`、`commandOpen`。主题不放在这里，由 ThemeProvider 管理 | `setView`、`goToView`、`selectAsset`、`startCreate`、`closeInspector`、`setDetailTab`、`setQuery`、`openPreview` | 否（2026-11-02 去掉 `sectionsOpen`） |
+| `useAssetStore` | `byId`、`ids`、`status`、`error` | `load`、`save`（两类资源，返回编译结果）、`remove`、`importHosts`、`setDistribute`、`setMode`、`setCliScope` | 否 |
+| `useCliStore` | `byProvider`（检测中、各环境状态、可选范围，新建向导里还没有资源时用）、`awaiting`（打开终端后等切回窗口） | `detect`、`setDraftScope`、`awaitFocus`、`onFocus` | 否 |
 | `useConnectionStore` | `testsByKey`（按服务器 id 或新建表单的临时键索引：状态、耗时、远端系统、错误 id、待确认的主机指纹） | `test`、`cancel`、`trustHostKey`、`convertToKey` | 否 |
 | `useProbeStore` | `runs`（按 runId 索引，含已合并和待确认的变化）、`activeRunByAsset` | `start`、`cancel`、`confirmItems`、`undo`；`_onProgress`、`_onFinished` 由事件桥调用 | 否 |
 | `useSkillStore` | `config`（服务器之间的关系、运维约定）、`statusByKey`（每一份总 Skill 的编译状态，键是「运行环境 × Agent」） | `load`、`saveConfig`、`_onCompiled` | 否 |
@@ -1103,10 +1025,10 @@ export default [
 
 需要提供的 selector：
 
-- `selectServerGroups(state, query)`：按环境分组、按名称排序后的服务器列表（搜索匹配名称、别名、标签、站点名）。
+- `selectResourceGroups(state, query)`：「服务器」「云平台」两组，组内按生产、预发、开发再按名称排序（搜索匹配名称、别名、标签、站点名，以及 CLI 名、账号和已选范围）。纯函数，必须有单元测试。
+- `selectCliProblem(asset)`：第一个未就绪的运行环境（Windows 在前），回路行就地给出「去登录」「去安装」。纯函数，必须有单元测试。
 - `selectInclusionsByAsset(assetId)`：详情 Agent 分段使用。`selectDeliveriesByEnv()`：Agent 页使用。
 - `selectCanDistribute(asset)`：返回 `{ ok: true }` 或 `{ ok: false, reason }`（未验证、只有密码认证等）。纯函数，必须有单元测试。
-- `selectUnlockRemaining(asset, now)`：返回剩余分钟数，未解锁或已到期时返回 `null`。纯函数，必须有单元测试。
 - `selectHealth()`：返回副本问题、护栏问题和编译受阻的数量。
 
 ### 7.6 设计令牌落地（`src/index.css`）
@@ -1184,7 +1106,7 @@ function Progress({ className, children, value, tone = "default", ...props }:
 | Agent 笔记条目的离开（并入或忽略后） | `AnimatePresence`，配合 `layout`、`exit={{opacity:0,y:-4}}` | 离开 120ms |
 | 测试连接结果出现 | 结果行包在 `motion.div` 里，`initial={{opacity:0}}` | 150ms |
 | 探测步骤逐条出现 | 新的 `TraceLine` 包在 `motion.div` 里，`initial={{opacity:0,y:4}}` | 150ms |
-| 新建或导入后新增的服务器卡片 | `AnimatePresence` | 180ms |
+| 新建或导入后新增的资源回路行 | `AnimatePresence` | 180ms |
 
 - 浮层（Dialog、Popover、DropdownMenu、Tooltip、Sheet、Collapsible、Toast）使用组件自带的动画，禁止再用 Motion 包一层。
 - 禁止：页面加载时的错峰入场、悬停时放大回弹、`bounce` 大于 0 的 spring、装饰性的循环动画。
@@ -1213,8 +1135,10 @@ export const ipc = {
   addSshInclude: (envId: EnvId) => invoke<SshConfigStatus>("add_ssh_include", { envId }),
   setDistribute: (assetId: string, agentKey: string, on: boolean) => invoke<Inclusion[]>("set_distribute", { assetId, agentKey, on }),  // 分发给某个 Agent 或停止分发（F-303）；返回这台服务器的列入情况
   setMode: (assetId: string, mode: Mode) => invoke<SaveResult>("set_mode", { assetId, mode }),
-  unlockServer: (assetId: string) => invoke<{ unlockedUntil: string }>("unlock_server", { assetId }),  // 固定 30 分钟
-  lockServer: (assetId: string) => invoke<void>("lock_server", { assetId }),
+  detectCliEnvironment: (req: { provider: CliProvider; assetId?: string }) => invoke<Partial<Record<EnvId, CliEnvState>>>("detect_cli_environment", { req }),  // F-104 AC1：只检测已启用 Agent 所在的运行环境；带 assetId 时同时更新这项资源
+  refreshCliScope: (req: { provider: CliProvider; assetId?: string }) => invoke<CliScopeItem[]>("refresh_cli_scope", { req }),  // F-104 AC3：带 assetId 时保留已勾选的项
+  setCliScope: (assetId: string, selectedIds: string[]) => invoke<SaveResult>("set_cli_scope", { assetId, selectedIds }),  // 范围勾选立即生效并重新编译（2026-11-02 补充）
+  openEnvTerminal: (req: { envId: EnvId; command: string }) => invoke<void>("open_env_terminal", { req }),  // F-104 AC2：在该运行环境打开终端并预填安装或登录命令
   startProbe: (assetId: string) => invoke<{ runId: string }>("start_probe", { assetId }),
   cancelProbe: (runId: string) => invoke<void>("cancel_probe", { runId }),
   confirmProbeItems: (runId: string, changeIds: string[]) => invoke<SaveResult>("confirm_probe_items", { runId, changeIds }),  // 只用于待确认项
@@ -1282,13 +1206,14 @@ Mock 夹具（`src/mocks/fixtures.ts`）必须覆盖下面这些状态：
 | 类别 | 夹具内容 |
 | :--- | :--- |
 | 运行环境 | Windows 和 WSL Ubuntu-24.04 |
-| 服务器 | `hk-edge`：生产，managed，私钥认证，已验证，已探测，分发开，只读，有 3 条待处理的 Agent 笔记（其中 1 条命中密钥）；`sg-db`：生产，imported，已验证，只读，分发开，探测会失败（主机密钥未信任），处于临时解锁中（剩 23 分钟）；`dev-box`：开发，managed，密码认证，未验证，分发关 |
+| 服务器 | `hk-edge`：生产，managed，私钥认证，已验证，已探测，分发开，只读，有 3 条待处理的 Agent 笔记（其中 1 条命中密钥）；`sg-db`：生产，imported，已验证，**标准运维**（回路行琥珀色提醒），分发开，探测会失败（主机密钥未信任）；`dev-box`：开发，managed，密码认证，未验证，分发关 |
 | 测试连接 | 新建表单中：地址含 `timeout` 时超时失败，含 `refused` 时连接被拒，用户为 `bad` 时认证失败，其余成功；首次测试一个新地址时先返回待确认的主机指纹 |
 | Agent 目标 | Claude Code（Windows，已检测，启用）；通用 .agents（Windows，未检测到，停用）；Claude Code（WSL，已检测，启用）；通用 .agents（WSL，已检测，启用）；一个自定义目录（Windows，启用） |
 | 列入与分发 | `hk-edge` 在 WSL 中未列入（WSL 中没有配置私钥）；副本状态覆盖 `ok`、`missing`、`modified`、`conflict`（目录中已有用户手写的 `cloudlink-servers`） |
 | 总 Skill | 示例的「服务器之间的关系」和 2 条运维约定；Windows 环境的编译有 1 条警告 |
 | 护栏 | Windows 已生效；WSL 未安装 |
-| 操作记录 | `hk-edge` 最近 20 条，其中 2 条被拦下（一条写操作、一条读取 `.env`）；`sg-db` 有解锁期间放行的记录 |
+| 操作记录 | `hk-edge` 最近 20 条，其中 2 条被拦下（一条写操作、一条读取 `.env`）；`sg-db` 标准运维下放行的重启；`cloudflare` 拦下一条 `wrangler deploy`，`vercel` 拦下一条 `vercel env pull` |
+| 云平台 CLI | `cloudflare`：两个环境都已就绪（`me@example.com`），已选 2 个域名和 1 个 Worker，`example.com` 关联 `hk-edge`；`vercel`：Windows 已就绪（`my-team`），WSL 未登录；Oracle 未接入，本机 Windows 未安装 `oci`、WSL 已就绪，用于走添加向导。「打开终端」后 Mock 把该环境改为已就绪，切回窗口时自动刷新 |
 | ssh 配置 | Windows 已加入 Include；WSL 未加入（用于验证 F-107 的同意对话框） |
 | 探测 | 模拟 3 秒的进度事件；对 `hk-edge` 自动更新 3 处，另有 1 处疑似注入的待确认项 |
 
@@ -1297,13 +1222,14 @@ Mock 夹具（`src/mocks/fixtures.ts`）必须覆盖下面这些状态：
 ```text
 src/
   main.tsx                 根节点：ThemeProvider（模板自带）、MotionConfig、TooltipProvider、Toaster、事件桥
-  App.tsx                  SidebarProvider + AppSidebar + SidebarInset + 视图切换
+  App.tsx                  AppHeader（顶部 48px 一体栏）+ 视图切换
   index.css  typeset.css
   components/ui/           shadcn 生成的组件（可以改源码，但禁止新增同类组件）
   components/theme-provider.tsx   shadcn Vite 模板自带（删掉其中按 d 键切换主题的监听）
-  components/app/          应用级组合组件：AppSidebar、CommandMenu、EnvBadge、StateBadge、SkillPreview、EmptyState
-  features/servers/        ServersView、ServerGrid、ServerCard、ServerDetail（含各分段，其中有 NotesSection、OperationsSection）、
-                           ServerForm（新建与编辑连接）、ConnectionTest、HostKeyDialog、UnlockControl、ProbeSheet、PreviewSheet、ImportDialog
+  components/app/          应用级组合组件：AppHeader、CommandMenu、EnvBadge、StateBadge、SkillPreview、AgentMark、ProviderMark
+  features/servers/        ServersView（列表、全宽详情、添加弹窗）、ResourceList、BreakerRow、ModeSwitch、ServerDetail、CliDetail（3 个平铺 Tab，
+                           含 NotesSection、OperationsSection）、NewServerForm（连接并启用）、NewCliForm（云平台向导）、CliParts、
+                           ConnectionTest、HostKeyDialog、ProbeSheet、ImportDialog
   features/agents/         AgentsView、SkillContentSection、GuardSection、GuardRulesSheet、TargetCard
   features/settings/       SettingsView 及各分区（含 ActivitySection、SshConfigSection）
   stores/                  ui.ts、assets.ts、connection.ts、probe.ts、skills.ts、targets.ts、deliveries.ts、guard.ts、notes.ts、
@@ -1320,8 +1246,8 @@ src/
 2. `pnpm dev:mock` 下，三个视图都能用夹具完整渲染，控制台没有报错。
 3. 6.10 中列出的每个状态，都能通过夹具或交互复现出来。
 4. 只用键盘就能完成以下操作：在服务器卡片之间移动并打开详情，`Ctrl+N` 新建并填写表单、测试连接、保存，在卡片的 Agent 按钮之间用方向键移动、用空格切换，用空格切换 Agent 启用开关，`Ctrl+K`，`Ctrl+S`。
-5. Playwright 截图覆盖服务器（列表加详情）、新建服务器、Agent、设置 4 个画面，浅色和深色各一套，宽度 1280 和 1024 各一套。截图中不出现文字溢出或遮挡，焦点环清晰可见。
-6. 只修改了 7.6 列出的令牌（含 2026-11-01 用户同意新增的 `agent-claude`、`agent-openai`），没有新增任何颜色值（用 `grep -E "oklch\(|#[0-9a-f]{3,6}"` 检查 `src/` 下除 `index.css` 和上游原样的 `typeset.css` 以外的文件，见 7.2 已知的坑第 10 条）。
+5. Playwright 截图覆盖资源列表、服务器详情、云平台详情、添加 SSH 服务器、添加云平台、Agent、设置 7 个画面，浅色和深色各一套，窗口 900×640 和 760×520 各一套。截图中不出现文字溢出或遮挡，焦点环清晰可见。
+6. 只修改了 7.6 列出的令牌（含 2026-11-01 用户同意新增的 `agent-claude`、`agent-openai`），没有新增任何颜色值（用 `grep -E "oklch\(|#[0-9a-f]{3,6}"` 检查 `src/` 下除 `index.css`、上游原样的 `typeset.css` 和官方品牌 Logo `src/assets/brands/*.svg` 以外的文件，见 7.2 已知的坑第 10 条）。
 
 ### 7.11 给 Coding Agent 的执行入口
 

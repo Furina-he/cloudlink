@@ -322,39 +322,38 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
 - Playwright 截图：服务器（列表加详情）、新建服务器、Agent、设置，浅色和深色、1280 和 1024 宽度，存到 `cloudlink/e2e/__screenshots__/`。
 - `pnpm typecheck`、`pnpm lint`、`pnpm build`、`pnpm test` 全部通过。
 
-### P3.6 前端改到 v3.1：钢制配电盘减负与云平台 CLI（L）
+### P3.6 前端改到 v3.1：紧凑配电盘（对标 CC Switch）与云平台 CLI（L）
 
-**目标：** 在 Mock 数据下实现 PRD v3.1 与 DESIGN.md 的「钢制配电盘（Steel Breaker Panel）」界面、一步到位新建流程、云平台 CLI（Cloudflare / Vercel / Oracle Cloud）接入，并彻底移除「30 分钟临时解锁」。
+**目标：** 在 Mock 数据下实现 PRD v3.1 与 DESIGN.md 的「紧凑配电盘（Compact Breaker Panel）」界面、一步到位新建流程、云平台 CLI（Cloudflare / Vercel / Oracle Cloud）接入，拆掉重型三栏后台外壳，并彻底移除「30 分钟临时解锁」。
 
 **任务：**
 
-1. **移除 30 分钟临时解锁（减法）：**
-   - 从 `src/bindings/`、`ipc.ts`、`stores/assets.ts`、`copy.ts`、右键菜单、详情面板与命令面板中删除 `unlockedUntil`、`unlockServer`、`lockServer`、`selectUnlockRemaining`、`use-minute-tick` 及解锁相关对话框和徽章。
-   - `Operation.decision` 只保留 `"allowed" | "denied"`。
-2. **契约与 Mock 扩展（云平台 CLI）：**
-   - `Asset` 支持 `type: "vps" | "cli"`，新增 `CliProvider`（`"cloudflare" | "vercel" | "oracle"`）、`CliEnvState`（路径、版本、是否已登录、`whoami` 账号/团队名）、`CliScopeItem`（域名 Zone、Worker、Vercel 项目、OCI 实例及 `linkedAssetId`）。
-   - `ipc.ts` 新增 `detectCliEnvironment`、`refreshCliScope`、`openEnvTerminal`（拉起对应运行环境终端辅助安装/登录）。
-   - Mock 夹具加入 `cloudflare`（已就绪，关联 `hk-edge`）与 `vercel`（WSL 未登录，演示行内就地修复与向导刷新）。
-3. **官方品牌 Logo 组件 `ProviderMark.tsx`：**
-   - 新建 `src/components/app/ProviderMark.tsx`，封装 Cloudflare、Vercel（取自 `@lobehub/icons-static-svg`）与 Oracle Cloud（官方 Oracle SVG 置于 `src/assets/brands/oracle.svg`）的官方品牌 Logo。
-   - 更新 `eslint.config.js`，允许 `AgentMark.tsx` 和 `ProviderMark.tsx` 引入品牌 SVG，其余业务文件禁止直接引入。
-4. **首屏与回路行重构（单列双闸刀配电盘 + 按需平推面板）：**
-   - 侧栏：一级导航改为「资源 / Agent / 设置」，移除侧栏底部的 `EnvStatus` 常驻环境列表。
-   - 默认未选中任何资源且未处于新建态时，隐藏右侧检视面板，主列表单列全宽居中展示（「服务器 (SSH)」与「云平台 (CLI)」两组）。
-   - 实现 `BreakerRow`（替代原多列 `ServerCard`）：左侧展示图标（`OsMark` 或 `ProviderMark`）、环境色点、等宽标识、名称、状态行与异常就地动作按钮（`[测试连接]`、`[去登录]`）；右侧对齐展示**权限档位闸刀按钮**（点击切换 `只读巡检` ↔ `标准运维`，生产资源处于 `标准运维` 时琥珀色高亮提醒）与 **Agent 品牌开关（`AgentPicker`）**。
-5. **右侧检视面板重构（「常驻控制头 + 3 个平铺 Tab」）：**
-   - 删除 8 层 `Collapsible` 手风琴（`DetailSection`、`sectionsOpen`）。
-   - 常驻控制头：标识、名称、环境徽章、关闭面板 `[×]`、状态行、档位切换器、Agent 授权开关、`[⋯更多]` 菜单（收纳测试连接、重新探测、复制别名、预览 Skill、打开编译目录、删除）；底部仅在未列入或有 Lint 错误/警告时按需浮现提示条（「正常即隐身」）。
-   - 下方用 `<TabsList variant="line">` 平铺 3 个 Tab：`画像与规则`（用途、红线、服务与目录 / 云 CLI 资源勾选范围 Scope 与服务器关联）、`连接配置`（SSH 连接字段或 CLI 各环境检测状态与重检）、`动态`（合并待处理 Agent 笔记与最近 50 条操作记录，有待处理笔记时显示 `动态 (N)`）。
-6. **添加资源面板（SSH 一步到位 + 云平台 CLI 向导）：**
-   - 点击 `[ + 添加资源 ]` 展开右侧面板：先选类型（`SSH 服务器` 或官方 Logo 标识的 `Cloudflare` / `Vercel` / `Oracle Cloud`）。
-   - SSH 服务器表单：底部直接附带授权 Agent 与默认档位选择，主按钮为「连接并启用」（自动验证连接 → 若为密码自动转免密密钥 → 保存并探测）；连接失败时支持「仅保存（暂不启用）」。
-   - 云平台 CLI 向导：只检测已启用 Agent 所在的运行环境，展示版本与 `whoami` 账号，未安装/未登录时给单行命令与 `[打开终端]`（窗口聚焦自动重检），勾选公开的 Scope 范围后点击「保存并启用」。
+1. **窗口默认尺寸对标 CC Switch（紧凑桌面小工具形态）：**
+   - 修改 `cloudlink/src-tauri/tauri.conf.json`：默认窗口尺寸由 `1280×800`（`minWidth: 960, minHeight: 600`）调小为 **`900×640`**（`minWidth: 760, minHeight: 520`）。
+   - 修改 `playwright.config.ts` 与 `e2e/gate.spec.ts`：默认视口改为 `900×640`，门槛截图测试 `900` 与 `760` 宽度。
+2. **拆掉「三栏后台套娃外壳」（取消左侧大边栏、顶部面包屑栏与左右分栏并排挤压）：**
+   - 移除 `AppSidebar`、`SidebarProvider` 和 `Breadcrumb` 面包屑栏，改为单条 **48px 顶部极简一体栏**：
+     - 左侧：`CloudLink` 应用名 + 分段视图切换器 `( 资源 ) ( Agent ) ( 设置 )`（带计数/红色异常徽章）。
+     - 右侧：在资源主页直接放置紧凑搜索框、`[+ 添加服务器]` 主按钮、`[+ 云平台 ▾]` 下拉按钮（含 Cloudflare / Vercel / Oracle Cloud / 从 ssh config 导入）及命令面板图标按钮 `[⌘]`。
+   - **彻底取消 `ResizablePanelGroup` 左右分栏挤压**：资源列表永远独占全宽居中容器（`max-w-3xl mx-auto`），绝不因打开添加表单或详情而把列表挤成 `De... · 3 ...` 省略号。
+3. **单行零噪点回路行（`BreakerRow.tsx` 彻底瘦身）：**
+   - 分组标题只保留简洁的「服务器」与「云平台」，去掉每个分组上方重复的 `权限档位 / 授权 Agent` 列头。
+   - **砍掉所有第二行统计小字与重复命名**，每行严格保持**单行高度（44–48px）**：
+     - **SSH 服务器行**：`连接状态圆点（● 绿=已连接 / ○ 灰=未验证 / ● 琥珀=已修改 / ● 红=失败）` + `服务器名称（香港边缘节点）` + `等宽别名胶囊（hk-edge）` + `（仅异常或有笔记时显示：[改用密钥登录] / [测试连接] / 笔记 N）`，去掉 `[U]`/`[D]` 方块与 `Ubuntu 22.04 · 2 个服务` 及重复的 `生产环境已开启写权限` 文字。
+     - **云平台 CLI 行**：`官方品牌 Logo（ProviderMark）` + `平台名称（Cloudflare / Vercel，严禁再写 cloudflare Cloudflare · wrangler 或 vercel Vercel · vercel 重复文字）` + `账号与范围简述（me@example.com · 2 个域名）` + `（仅异常时显示：⚠ WSL 未登录 + [去登录]）`。
+     - **右侧双闸刀**：`权限档位闸刀`（点击切换 `只读巡检` ↔ `标准运维`，生产资源处于 `标准运维` 时琥珀色高亮提醒）+ `Agent 品牌开关（AgentPicker）`。
+4. **添加资源（居中弹窗 `Dialog` 或独立聚焦视图）与全宽详情页（`← 返回`）：**
+   - 点击 `[+ 添加服务器]` 或 `[+ 云平台 ▾]` 弹出居中 `Dialog`（`max-w-lg`）或切入独立聚焦卡片视图（绝不并排挤压主列表）；「连接并启用」/「保存并启用」完成后自动关闭并回到主列表。
+   - 点击某一行进入带 **`← 返回`** 按钮的全宽详情视图（`max-w-3xl mx-auto`，按 `Esc` 或点顶栏「资源」同样返回主列表），内部为「常驻控制头 + 3 个平铺 Tab（`画像与规则` / `连接配置` / `动态`）」，移除 8 层 `Collapsible` 手风琴。
+5. **移除 30 分钟临时解锁 + 契约与官方品牌 Logo：**
+   - 彻底删除 `unlockedUntil`、`unlockServer`、`lockServer`、`selectUnlockRemaining`。
+   - `Asset` 支持 `type: "vps" | "cli"`，封装 `ProviderMark.tsx`（Cloudflare、Vercel、Oracle Cloud 官方品牌 SVG Logo）。
 
 **验收门槛：**
 
-- 代码中不再出现 `unlockedUntil`、`unlockServer`、`lockServer`、`selectUnlockRemaining`、`DetailSection`（8 层手风琴）。
-- 首屏未选中时为单栏全宽配电盘，点击行或「+ 添加资源」无遮罩平推展开右侧面板，`Esc` 可收起；回路行内可直接切换档位（生产环境标准运维呈琥珀色提醒）和 Agent 开关。
+- 窗口默认尺寸为 `900×640`（最小 `760×520`）；无左侧大边栏、无顶部面包屑栏、无 `ResizablePanelGroup` 左右分栏挤压。
+- 主列表每行均为单行高度（44–48px），无第二行冗余小字、无 `vercel Vercel · vercel` 重复命名、全屏零 `...` 截断省略号。
+- 代码中不再出现 `unlockedUntil`、`unlockServer`、`lockServer`、`selectUnlockRemaining`、`DetailSection`。
 - Cloudflare、Vercel、Oracle Cloud、Claude Code、OpenAI 均使用官方品牌 Logo。
 - Playwright 截图更新并通过，`pnpm typecheck`、`pnpm lint`、`pnpm build`、`pnpm test` 全部通过。
 

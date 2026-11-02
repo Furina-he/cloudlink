@@ -101,8 +101,8 @@ export function PathsSection() {
 
   return (
     <FieldSet className="@container/paths min-w-0 gap-3">
-      {/* 分段标题已经写了「路径」，legend 只给读屏 */}
-      <FieldLegend className="sr-only">{copy.detail.sections.paths}</FieldLegend>
+      {/* 外层标题已经写了「关键目录」，legend 只给读屏 */}
+      <FieldLegend className="sr-only">{copy.detail.groups.paths}</FieldLegend>
       <FieldDescription>{copy.paths.hint}</FieldDescription>
 
       {fields.length > 0 ? (

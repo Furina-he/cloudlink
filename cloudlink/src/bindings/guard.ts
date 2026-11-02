@@ -23,7 +23,7 @@ export interface GuardStatus {
   checkedAt: string
 }
 
-export type OperationDecision = "allowed" | "denied" | "unlocked"
+export type OperationDecision = "allowed" | "denied"
 
 /** 拦下或标注的原因（8.6 判定流程） */
 export type GuardReasonId =
@@ -37,6 +37,12 @@ export type GuardReasonId =
   | "critical-service"
   | "file-transfer"
   | "interactive"
+  /** 云平台 CLI 的凭据导出，例如 vercel env pull（任何档位都拦下） */
+  | "cli-env-export"
+  /** 云平台 CLI 的写操作（只读巡检档拦下） */
+  | "cli-write"
+  /** 云平台 CLI 的删库、删站、销毁实例（标准运维档也拦下） */
+  | "cli-destroy"
   | "unparsed"
 
 /** 护栏判定过的一条命令（F-307） */

@@ -47,7 +47,7 @@ test.describe("设置视图", () => {
     await expect(page.getByText("未加入 Include")).toBeHidden()
   })
 
-  test("活动：按天分组；筛选 Agent 操作和服务器", async ({ page }) => {
+  test("活动：按天分组；筛选 Agent 操作和资源", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await openSettings(page, "活动")
     await expect(page.getByRole("heading", { level: 3, name: "今天" })).toBeVisible()
@@ -58,7 +58,7 @@ test.describe("设置视图", () => {
     await expect(page.getByText(/被护栏拦下/).first()).toBeVisible()
     await expect(page.getByText(/编译了.*的总 Skill/)).toHaveCount(0)
 
-    const combo = page.getByRole("combobox", { name: "服务器" })
+    const combo = page.getByRole("combobox", { name: "资源" })
     await combo.click()
     await combo.fill("sg")
     await page.getByRole("option", { name: /sg-db/ }).click()
@@ -68,13 +68,13 @@ test.describe("设置视图", () => {
     expect(errors).toEqual([])
   })
 
-  test("详情的「在活动中查看全部」跳到活动并按服务器、Agent 操作筛选", async ({ page }) => {
+  test("检视面板「动态」的「在活动中查看全部」跳到活动并按资源、Agent 操作筛选", async ({ page }) => {
     await ready(page)
     await openServer(page, "hk-edge")
-    await page.getByRole("button", { name: /操作记录/ }).click()
+    await page.getByRole("tab", { name: /^动态/ }).click()
     await page.getByRole("button", { name: "在活动中查看全部" }).click()
     await expect(page.getByRole("heading", { level: 1, name: "设置" })).toBeVisible()
-    await expect(page.getByRole("combobox", { name: "服务器" })).toHaveValue("hk-edge")
+    await expect(page.getByRole("combobox", { name: "资源" })).toHaveValue("hk-edge")
     await expect(page.getByRole("button", { name: "Agent 操作", exact: true })).toHaveAttribute("aria-pressed", "true")
     await expect(activityList(page).getByText(/在 hk-edge 上执行/).first()).toBeVisible()
   })
@@ -93,7 +93,7 @@ test.describe("设置视图", () => {
     await expect(page.getByRole("button", { name: "移除全部分发", exact: true })).toBeDisabled()
   })
 
-  test("清空数据：回到首次启动清单", async ({ page }) => {
+  test("清空数据：回到首次启动的空状态", async ({ page }) => {
     await openSettings(page, "危险操作")
     await page.getByRole("button", { name: "清空数据", exact: true }).click()
     const dialog = page.getByRole("alertdialog", { name: "清空数据" })
@@ -101,6 +101,6 @@ test.describe("设置视图", () => {
     await dialog.getByRole("button", { name: "清空数据", exact: true }).click()
     await expect(toastText(page, "已清空数据")).toBeVisible()
     await page.keyboard.press("Control+1")
-    await expect(page.getByRole("list", { name: "开始使用" })).toBeVisible()
+    await expect(page.getByRole("button", { name: "添加 SSH 服务器" })).toBeVisible()
   })
 })

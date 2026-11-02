@@ -1,11 +1,10 @@
-// Mock 夹具（PRD 7.8 v3 表格）。时间都相对「现在」生成，保证「2 小时前」「剩 23 分钟」这类状态稳定复现
-import type { Asset, Environment, Settings, SshConfigStatus, SshHostList } from "@/bindings"
+// Mock 夹具（PRD 7.8 表格）。时间都相对「现在」生成，保证「2 小时前」这类状态稳定复现
+import type { Asset, CliEnvState, CliProvider, CliScopeItem, EnvId, Environment, Settings, SshConfigStatus, SshHostList } from "@/bindings"
 
 export const MIN = 60 * 1000
 export const HOUR = 60 * MIN
 export const DAY = 24 * HOUR
 export const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
-export const later = (ms: number) => new Date(Date.now() + ms).toISOString()
 
 export const WSL: Environment["id"] = "wsl:Ubuntu-24.04"
 
@@ -32,6 +31,25 @@ export const environments: Environment[] = [
 ]
 
 const defaultExport = { resolvedConnection: false, listeningPorts: false, image: true }
+
+/** 每家登录后能看到的账号（Cloudflare Account、Vercel Team、OCI Profile），第一个是默认 */
+export const cliAccounts: Record<string, string[]> = {
+  "me@example.com": ["me@example.com", "acme-corp"],
+  "my-team": ["my-team", "side-project"],
+  "tenancy-demo": ["tenancy-demo", "tenancy-cn"],
+}
+const ready = (version: string, path: string, account: string): CliEnvState => ({
+  installed: true,
+  version,
+  path,
+  authenticated: true,
+  expired: false,
+  account,
+  accounts: cliAccounts[account] ?? [account],
+  checkedAt: ago(10 * MIN),
+})
+const notLoggedIn = (version: string, path: string): CliEnvState => ({ installed: true, version, path, authenticated: false, expired: false, checkedAt: ago(10 * MIN) })
+const WIN_NPM = "C:\\Users\\me\\AppData\\Roaming\\npm\\"
 
 export const assets: Asset[] = [
   {
@@ -61,7 +79,7 @@ export const assets: Asset[] = [
       resolved: { hostname: "203.0.113.10", user: "root", port: 22, proxyJump: null, resolvedAt: ago(2 * HOUR) },
       verified: { ok: true, at: ago(2 * HOUR), envIds: ["windows"] },
     },
-    agent: { agents: ["claude-code", "custom:cursor"], mode: "read-only", unlockedUntil: null },
+    agent: { agents: ["claude-code", "custom:cursor"], mode: "read-only" },
     // 探测前是 22.04：探测会把它更新为 24.04（PRD 6.4 示例）
     facts: {
       os: "Ubuntu 22.04 LTS",
@@ -124,8 +142,8 @@ export const assets: Asset[] = [
       resolved: { hostname: "198.51.100.7", user: "deploy", port: 2222, proxyJump: null, resolvedAt: ago(3 * DAY) },
       verified: { ok: true, at: ago(3 * DAY), envIds: [WSL] },
     },
-    // 临时解锁中，剩 23 分钟
-    agent: { agents: ["claude-code", "universal"], mode: "read-only", unlockedUntil: later(22.5 * MIN) },
+    // 生产环境开着标准运维：回路行的档位闸刀是琥珀色（DESIGN.md Breaker Row）
+    agent: { agents: ["claude-code", "universal"], mode: "standard" },
     facts: { os: "Debian 12", kernel: "6.1.0-26-amd64", arch: "x86_64", cpuCores: 2, memoryTotalMiB: 3900, diskTotalGiB: 80, panel: null },
     paths: [{ key: "pg-data", label: "PostgreSQL 数据目录", path: "/var/lib/postgresql/16/main", source: "manual" }],
     services: [
@@ -163,7 +181,7 @@ export const assets: Asset[] = [
       resolved: null,
       verified: null,
     },
-    agent: { agents: [], mode: "standard", unlockedUntil: null },
+    agent: { agents: [], mode: "standard" },
     facts: {},
     paths: [],
     services: [],
@@ -177,7 +195,89 @@ export const assets: Asset[] = [
     createdAt: ago(1 * DAY),
     updatedAt: ago(1 * DAY),
   },
+  // 已就绪，域名 example.com 关联 hk-edge（F-104 AC4）
+  {
+    id: "ast_cloudflare",
+    type: "cli",
+    cliProvider: "cloudflare",
+    handle: "cloudflare",
+    account: "me@example.com",
+    name: "Cloudflare",
+    envTag: "prod",
+    summary: "DNS for example.com and the edge API gateway Worker",
+    cli: {
+      binary: "wrangler",
+      envStates: { windows: ready("3.99.0", `${WIN_NPM}wrangler.cmd`, "me@example.com"), [WSL]: ready("3.99.0", "/home/me/.local/share/pnpm/wrangler", "me@example.com") },
+      scope: [
+        { id: "zone_example", kind: "zone", name: "example.com", selected: true, linkedAssetId: "ast_hk_edge" },
+        { id: "zone_status", kind: "zone", name: "status.example.net", selected: true },
+        { id: "zone_personal", kind: "zone", name: "personal-blog.me", selected: false },
+        { id: "worker_gateway", kind: "worker", name: "api-gateway", selected: true },
+        { id: "pages_docs", kind: "pages", name: "docs-site", selected: false },
+      ],
+    },
+    agent: { agents: ["claude-code", "universal"], mode: "read-only" },
+    guardrails: { rules: [] },
+    notes: "",
+    createdAt: ago(2 * DAY),
+    updatedAt: ago(2 * DAY),
+  },
+  // Windows 已就绪；WSL 未登录：演示回路行就地修复（PRD 6.4）
+  {
+    id: "ast_vercel",
+    type: "cli",
+    cliProvider: "vercel",
+    handle: "vercel",
+    account: "my-team",
+    name: "Vercel",
+    envTag: "prod",
+    summary: "Frontend deployments for the marketing site and the dashboard",
+    cli: {
+      binary: "vercel",
+      envStates: { windows: ready("39.1.0", `${WIN_NPM}vercel.cmd`, "my-team"), [WSL]: notLoggedIn("39.1.0", "/home/me/.local/share/pnpm/vercel") },
+      scope: [
+        { id: "prj_web", kind: "project", name: "web-app", selected: true },
+        { id: "prj_dash", kind: "project", name: "dashboard", selected: true },
+        { id: "prj_play", kind: "project", name: "playground", selected: false },
+      ],
+    },
+    agent: { agents: ["claude-code"], mode: "read-only" },
+    guardrails: { rules: [] },
+    notes: "",
+    createdAt: ago(2 * DAY),
+    updatedAt: ago(2 * DAY),
+  },
 ]
+
+/**
+ * 本机各运行环境里 CLI 的实际情况，detect_cli_environment 读这张表。
+ * Oracle：Windows 没装、WSL 已就绪，用来走添加向导；「打开终端」之后 Mock 把那个环境改成已就绪，切回窗口时自动刷新
+ */
+export const cliMachine: Record<CliProvider, Partial<Record<EnvId, CliEnvState>>> = {
+  cloudflare: { windows: ready("3.99.0", `${WIN_NPM}wrangler.cmd`, "me@example.com"), [WSL]: ready("3.99.0", "/home/me/.local/share/pnpm/wrangler", "me@example.com") },
+  vercel: { windows: ready("39.1.0", `${WIN_NPM}vercel.cmd`, "my-team"), [WSL]: notLoggedIn("39.1.0", "/home/me/.local/share/pnpm/vercel") },
+  oracle: { windows: { installed: false, authenticated: false, expired: false, checkedAt: ago(10 * MIN) }, [WSL]: ready("3.50.0", "/home/me/bin/oci", "tenancy-demo") },
+}
+
+/** 账号下的可选资源，refresh_cli_scope 读这张表。新出现的默认不勾选（F-104 AC3） */
+export const cliCatalog: Record<CliProvider, CliScopeItem[]> = {
+  cloudflare: [
+    { id: "zone_example", kind: "zone", name: "example.com", selected: false },
+    { id: "zone_status", kind: "zone", name: "status.example.net", selected: false },
+    { id: "zone_personal", kind: "zone", name: "personal-blog.me", selected: false },
+    { id: "worker_gateway", kind: "worker", name: "api-gateway", selected: false },
+    { id: "pages_docs", kind: "pages", name: "docs-site", selected: false },
+  ],
+  vercel: [
+    { id: "prj_web", kind: "project", name: "web-app", selected: false },
+    { id: "prj_dash", kind: "project", name: "dashboard", selected: false },
+    { id: "prj_play", kind: "project", name: "playground", selected: false },
+  ],
+  oracle: [
+    { id: "ocid_web1", kind: "instance", name: "oci-web-1", selected: false, address: "203.0.113.50" },
+    { id: "ocid_arm1", kind: "instance", name: "oci-arm-1", selected: false, address: "203.0.113.51" },
+  ],
+}
 
 export * from "./fixtures-agent"
 export * from "./fixtures-ops"

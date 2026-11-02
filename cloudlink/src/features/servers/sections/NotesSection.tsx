@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/toast"
 import { copy } from "@/lib/copy"
 import { formatDay } from "@/lib/format"
-import type { ServerFormValues } from "@/lib/schemas"
+import type { ProfileFormValues } from "@/lib/schemas"
 import { useNotesStore } from "@/stores/notes"
 import { toastError } from "../actions"
 
@@ -109,7 +109,7 @@ export function NotesSection({ assetId }: { assetId: string }) {
   const {
     register,
     formState: { isDirty },
-  } = useFormContext<ServerFormValues>()
+  } = useFormContext<ProfileFormValues>()
   const notes = useNotesStore((s) => s.byAsset[assetId] ?? EMPTY)
   const [busy, setBusy] = useState(false)
   const mergeable = notes.filter((n) => !n.flags.includes("secret"))

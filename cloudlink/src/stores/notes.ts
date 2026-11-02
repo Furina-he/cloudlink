@@ -71,5 +71,5 @@ export const useNotesStore = create<NotesState>()((set, get) => ({
   },
 }))
 
-/** 卡片「笔记 3」：待处理的数量（F-308 AC3） */
+/** 回路行「笔记 3」：待处理的数量（F-308 AC3） */
 export const selectPendingCount = (byAsset: NotesState["byAsset"], assetId: string) => byAsset[assetId]?.length ?? 0

@@ -2,7 +2,7 @@ import { CircleXIcon } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { useWatch, type Control } from "react-hook-form"
 
-import type { Asset, IpcError } from "@/bindings"
+import type { ServerAsset, IpcError } from "@/bindings"
 import { PreviewSheet } from "@/components/app/PreviewSheet"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -23,7 +23,7 @@ const ownDetailFile = (alias: string) => {
  * 这台服务器的预览（F-204）：内容就是当前草稿的编译结果，默认定位到详情文件。
  * 未列入所选的那一份（运行环境 × Agent）时按「已列入」计算，顶部注明原因（2026-10-31 用户确认）
  */
-export function DraftPreview({ control, asset, dirty }: { control: Control<ServerFormValues>; asset: Asset | undefined; dirty: boolean }) {
+export function DraftPreview({ control, asset, dirty }: { control: Control<ServerFormValues>; asset: ServerAsset | undefined; dirty: boolean }) {
   const values = useWatch({ control }) as ServerFormValues
   const inclusions = useDeliveryStore(useShallow((s) => (asset ? selectInclusionsByAsset(s.inclusions, asset.id) : [])))
   const alias = (values.alias ?? "").trim()
@@ -40,7 +40,7 @@ export function DraftPreview({ control, asset, dirty }: { control: Control<Serve
         const inc = inclusions.find((i) => i.envId === target.envId && i.agentKey === target.agentKey)
         if (inc?.included) return null
         const reason = inc?.reason ? copy.inclusionReason[inc.reason.id](inc.reason.params) : copy.inclusionReason["agent-off"](undefined)
-        return copy.preview.notIncluded(alias || copy.detail.newTitle, target.label, reason)
+        return copy.preview.notIncluded(alias || copy.create.titleSsh, target.label, reason)
       }}
     />
   )

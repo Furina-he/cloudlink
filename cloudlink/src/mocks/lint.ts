@@ -1,5 +1,6 @@
 // Mock 的 Lint（PRD 5.4）与编译入口。每条结果带服务器 id，界面据此定位到出问题的服务器
 import type { Asset, CompilePreview, CompileStatus, EnvId, LintItem, Settings, SkillConfig } from "@/bindings"
+import { handleOf } from "@/stores/assets"
 import { renderSkill } from "./render"
 
 /** 简化版密钥规则（真实实现复用 gitleaks 规则集） */
@@ -24,20 +25,21 @@ export function compileSkill(envId: EnvId, agentKey: string, assets: Asset[], co
   const lint: LintItem[] = []
   const skill = r.files[0]?.content ?? ""
   for (const a of assets) {
-    const alias = a.connection.sshAlias
+    const alias = handleOf(a)
     const path = r.detailPath.get(a.id)!
     const content = r.files.find((f) => f.path === path)?.content ?? ""
     content.split("\n").forEach((line, i) => {
       const rule = secretRule(line)
       if (rule) lint.push({ id: "secret-detected", level: "error", assetId: a.id, params: { alias, line: i + 1, rule }, file: path, line: i + 1 })
     })
+    if (a.envTag === "prod" && a.agent.mode === "standard" && a.guardrails.rules.length === 0) {
+      lint.push({ id: "prod-standard-no-guardrails", level: "warning", assetId: a.id, params: { alias }, file: path })
+    }
+    if (a.type === "cli") continue
     const host = a.connection.host ?? a.connection.resolved?.hostname
     if (!a.export.resolvedConnection && host) {
       const line = lineOf(content, (l) => l.includes(host))
       if (line) lint.push({ id: "export-disabled-field", level: "error", assetId: a.id, params: { alias, field: "HostName" }, file: path, line })
-    }
-    if (a.envTag === "prod" && a.agent.mode === "standard" && a.guardrails.rules.length === 0) {
-      lint.push({ id: "prod-standard-no-guardrails", level: "warning", assetId: a.id, params: { alias }, file: path })
     }
     for (const s of a.services.filter((x) => x.source === "probe" && INJECTION.test(x.name))) {
       lint.push({ id: "suspected-injection", level: "warning", assetId: a.id, params: { alias, value: s.name }, file: path, line: lineOf(content, (l) => l.includes(s.name)) })

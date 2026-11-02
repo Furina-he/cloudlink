@@ -1,8 +1,8 @@
 import { expect, type Page } from "@playwright/test"
 
-// P3.5 验收的公共部分。状态截图是验收证据，放仓库根目录 test-results/p3.5（本目录的 test-results 每次运行前会被清空）；
+// P3.6 验收的公共部分。状态截图是验收证据，放仓库根目录 test-results/p3.7（本目录的 test-results 每次运行前会被清空）；
 // 门槛要求的视图截图放 e2e/__screenshots__，随提交
-export const SHOTS = "../test-results/p3.5"
+export const SHOTS = "../test-results/p3.7"
 export const GATE = "e2e/__screenshots__"
 
 export function collectConsoleErrors(page: Page) {
@@ -14,24 +14,38 @@ export function collectConsoleErrors(page: Page) {
   return errors
 }
 
-/** 打开应用并等夹具加载完：服务器卡片出现 */
+/** 打开应用并等夹具加载完：回路行出现 */
 export async function ready(page: Page, query = "") {
   await page.goto(`/${query}`)
-  await expect(page.getByRole("heading", { level: 1, name: "服务器" })).toBeVisible()
-  await expect(card(page, "hk-edge")).toBeVisible()
+  await expect(page.getByRole("heading", { level: 1, name: "资源" })).toBeAttached()
+  await expect(row(page, "hk-edge")).toBeVisible()
 }
 
-/** 卡片上打开详情的按钮，名称是「别名，名称，状态」 */
-export const card = (page: Page, alias: string) => page.getByRole("button", { name: new RegExp(`^${alias}，`) })
+/** 回路行上进入详情的按钮，名称是「标识，名称，状态」 */
+export const row = (page: Page, handle: string) => page.getByRole("button", { name: new RegExp(`^${handle}，`) })
 
-export const breadcrumb = (page: Page) => page.getByRole("navigation", { name: "当前位置" })
+/** 详情视图的标题：服务器是别名，云平台是平台名称 */
+export const detailTitle = (page: Page) => page.locator("h2#detail-title")
 
-export async function openServer(page: Page, alias: string) {
-  await card(page, alias).click()
-  await expect(breadcrumb(page)).toContainText(alias)
+/** 详情视图（或添加弹窗）：标题是 #detail-title 的那个 section */
+export const inspector = (page: Page) => page.locator("section").filter({ has: page.locator("#detail-title") }).last()
+
+/** 进入某项资源的详情。打开按钮铺满回路行左侧，状态旁的修复按钮叠在它上面；点左上角，避开修复按钮 */
+export async function openServer(page: Page, handle: string, title = handle) {
+  await row(page, handle).click({ position: { x: 6, y: 6 } })
+  await expect(detailTitle(page)).toHaveText(title)
+}
+
+/** 详情视图的「← 返回」 */
+export async function back(page: Page) {
+  await page.getByRole("button", { name: "返回", exact: true }).click()
+  await expect(detailTitle(page)).toHaveCount(0)
 }
 
 export const shot = (page: Page, name: string) => page.screenshot({ path: `${SHOTS}/${name}.png`, animations: "disabled" })
 
 /** Toast 里的一句话 */
 export const toastText = (page: Page, text: string | RegExp) => page.locator("[data-slot=toast], [role=status], [role=alert]").filter({ hasText: text }).first()
+
+/** 模拟用户从终端切回 CloudLink 窗口（F-104 AC2） */
+export const refocusWindow = (page: Page) => page.evaluate(() => window.dispatchEvent(new Event("focus")))

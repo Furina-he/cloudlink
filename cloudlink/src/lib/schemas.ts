@@ -149,6 +149,19 @@ export function serverFormSchema(ctx: AliasContext) {
 
 export type ServerFormValues = z.infer<ReturnType<typeof serverFormSchema>>
 
+/** 云平台资源的表单（PRD 6.4）：范围勾选立即生效，不在表单里 */
+export const cliFormSchema = z.object({
+  name: z.string().trim().min(1, "name-required"),
+  envTag: z.enum(["prod", "staging", "dev"]),
+  summary: z.string(),
+  rules: z.array(guardrailRuleSchema),
+  notes: z.string(),
+})
+export type CliFormValues = z.infer<typeof cliFormSchema>
+
+/** 两类资源共有的表单字段：名称、环境、用途、红线、笔记由同一组组件编辑 */
+export type ProfileFormValues = CliFormValues
+
 /** Agent 页「交给 Agent 的内容」（F-201 AC1） */
 export const skillConfigSchema = z.object({
   relationships: z.string(),

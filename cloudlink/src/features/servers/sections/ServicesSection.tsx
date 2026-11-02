@@ -57,7 +57,7 @@ export function ServicesSection() {
       <FieldSet className="min-w-0 gap-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <FieldLegend className="sr-only">{copy.detail.sections.services}</FieldLegend>
+            <FieldLegend className="sr-only">{copy.detail.groups.services}</FieldLegend>
             <FieldDescription>{copy.services.hint}</FieldDescription>
           </div>
           <Button type="button" variant="outline" size="sm" onClick={() => openDialog(null)}>

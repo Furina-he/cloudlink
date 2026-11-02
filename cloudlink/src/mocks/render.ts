@@ -1,5 +1,6 @@
 // Mock 的总 Skill 渲染（PRD 5.2、5.3、5.6）。只为界面提供接近真实的内容，真正的渲染在 Rust 编译器
-import type { Asset, EnvId, Settings, SkillConfig } from "@/bindings"
+import type { Asset, CliAsset, EnvId, ServerAsset, Settings, SkillConfig } from "@/bindings"
+import { handleOf, isCli, isServer } from "@/stores/assets"
 
 export const ENV_WORD = { prod: "production", staging: "staging", dev: "development" } as const
 
@@ -34,7 +35,7 @@ If a command is missing on a server (no docker, no systemd), skip it and say so.
 `
 
 const code = (s: string) => `\`${s.slice(0, 128)}\``
-const portText = (p: Asset["services"][number]["ports"][number]) =>
+const portText = (p: ServerAsset["services"][number]["ports"][number]) =>
   `${p.hostIp}:${p.hostPort}->${p.containerPort}${p.proto === "udp" ? "/udp" : ""}`
 
 /** 详情文件名：别名转小写，非法字符换成连字符；重名时后创建的加 -2（5.3） */
@@ -44,7 +45,7 @@ export function detailNames(assets: Asset[]): Map<string, string> {
   ;[...assets]
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     .forEach((a) => {
-      const base = a.connection.sshAlias.toLowerCase().replace(/[^a-z0-9-]/g, "-")
+      const base = handleOf(a).toLowerCase().replace(/[^a-z0-9-]/g, "-")
       let name = base
       for (let n = 2; used.has(name); n++) name = `${base}-${n}`
       used.add(name)
@@ -61,7 +62,11 @@ export function inboxPath(dataDir: string, envId: EnvId): string {
   return m ? `/mnt/${m[1].toLowerCase()}/${m[2]}/inbox` : `${forward}/inbox`
 }
 
+/** 云平台勾选的范围（未勾选的不进入产物，F-104 AC3） */
+const scopeNames = (a: CliAsset) => a.cli.scope.filter((x) => x.selected).map((x) => x.name)
+
 function role(a: Asset): string {
+  if (a.type === "cli") return [a.summary.trim(), scopeNames(a).join(", ")].filter(Boolean).join("; ")
   const sites = a.servedHostnames.filter((h) => !a.summary.includes(h))
   return [a.summary.trim(), sites.length ? `serves ${sites.join(", ")}` : ""].filter(Boolean).join("; ")
 }
@@ -72,10 +77,10 @@ export function description(assets: Asset[]): { text: string; rawChars: number }
     const r = withRole ? role(a) : a.summary.trim()
     const text = short && r.length > 40 ? `${r.slice(0, 39)}…` : r
     const tail = [ENV_WORD[a.envTag], a.agent.mode === "read-only" ? "read-only" : ""].filter(Boolean).join(", ")
-    return `${a.connection.sshAlias} (${[text, tail].filter(Boolean).join("; ")})`
+    return `${handleOf(a)} (${[text, tail].filter(Boolean).join("; ")})`
   }
   const wrap = (list: string) =>
-    `The user's servers and how to operate them — ${list}. Use for any task on these servers or sites: deployments, logs, Docker containers, configuration, troubleshooting, or a health check of the servers.`
+    `The user's servers and cloud platforms and how to operate them — ${list}. Use for any task on these servers, sites or cloud projects: deployments, logs, Docker containers, DNS, configuration, troubleshooting, or a health check of the servers.`
   const full = wrap(assets.map((a) => item(a, true, false)).join(", "))
   if (full.length <= 1024) return { text: full, rawChars: full.length }
   for (const [withRole, short] of [[false, false], [false, true]] as const) {
@@ -89,8 +94,43 @@ export function description(assets: Asset[]): { text: string; rawChars: number }
   return { text: wrap(`${assets.length} servers`), rawChars: full.length }
 }
 
+const SCOPE_WORD = { zone: "DNS zone", worker: "Worker", pages: "Pages project", project: "Project", instance: "Compute instance" } as const
+
+/** 同一家接了多个账号时，每条命令都要指明账号（不靠 CLI 当前登录的默认账号） */
+const ACCOUNT_FLAG: Record<CliAsset["cliProvider"], (account: string) => string> = {
+  cloudflare: (x) => `Target this account on every command: set \`CLOUDFLARE_ACCOUNT_ID\` to the id of \`${x}\` from \`wrangler whoami\`.`,
+  vercel: (x) => `Target this team on every command: append \`--scope ${x}\`.`,
+  oracle: (x) => `Target this profile on every command: append \`--profile ${x}\`.`,
+}
+
+/** 云平台的详情文件（references/cloudflare.md）：只写勾选的范围和关联的服务器，不写凭据 */
+function renderCliDetails(a: CliAsset, aliasById: (id: string) => string | undefined): string {
+  const env = ENV_WORD[a.envTag]
+  const account = a.account ?? Object.values(a.cli.envStates).find((s) => s?.account)?.account
+  const scope = a.cli.scope.filter((x) => x.selected)
+  return [
+    `# ${a.handle} — ${a.name}`,
+    "",
+    `> ${env[0].toUpperCase()}${env.slice(1)} | Mode: ${a.agent.mode}`,
+    "",
+    "## Connect",
+    `- Run \`${a.cli.binary} <command>\` in the local shell; it is already logged in. Never print or export its credentials.`,
+    ...(account ? [`- Account: ${account}`, `- ${ACCOUNT_FLAG[a.cliProvider](account)}`] : []),
+    ...(a.summary.trim() ? [`- Role: ${a.summary.trim()}`] : []),
+    ...(a.guardrails.rules.length ? ["", "## Guardrails (must follow)", ...a.guardrails.rules.map((r, i) => `${i + 1}. ${r.text}`)] : []),
+    "",
+    "## Scope",
+    "Only operate on these resources; ask the user before touching anything else in the account.",
+    "| Kind | Name | Linked server |",
+    "| --- | --- | --- |",
+    ...scope.map((x) => `| ${SCOPE_WORD[x.kind]} | ${code(x.name)} | ${(x.linkedAssetId && aliasById(x.linkedAssetId)) || "-"} |`),
+    ...(a.notes.trim() ? ["", "## Notes", a.notes.trim()] : []),
+    "",
+  ].join("\n")
+}
+
 /** 每台服务器的详情文件（5.2 的 references/hk-edge.md） */
-export function renderDetails(a: Asset, settings: Settings): string {
+export function renderDetails(a: ServerAsset, settings: Settings): string {
   const f = a.facts
   const alias = a.connection.sshAlias
   const critical = a.services.filter((s) => s.critical)
@@ -169,13 +209,26 @@ export function renderSkill(envId: EnvId, assets: Asset[], config: SkillConfig, 
     "",
     "| Alias | Role | Env | Mode | Details |",
     "| --- | --- | --- | --- | --- |",
-    ...assets.map(
+    ...assets.filter(isServer).map(
       (a) => `| \`${a.connection.sshAlias}\` | ${role(a) || "-"} | ${ENV_WORD[a.envTag]} | ${a.agent.mode} | \`${detailPath.get(a.id)}\` |`
     ),
+    ...(assets.some(isCli)
+      ? [
+          "",
+          "## Cloud platforms",
+          "Use these CLIs from the local shell. They are already logged in; only touch the resources listed in each details file.",
+          "",
+          "| Platform | CLI | Role | Env | Mode | Details |",
+          "| --- | --- | --- | --- | --- | --- |",
+          ...assets.filter(isCli).map(
+            (a) => `| ${a.handle} | \`${a.cli.binary}\` | ${role(a) || "-"} | ${ENV_WORD[a.envTag]} | ${a.agent.mode} | \`${detailPath.get(a.id)}\` |`
+          ),
+        ]
+      : []),
     ...(config.relationships.trim() ? ["", "## How they fit together", config.relationships.trim()] : []),
     "",
     "## Modes",
-    "- **read-only**: inspection commands only, e.g. `docker ps`, `docker logs --tail 200 <container>`, `df -h`, `free -m`, `uptime`, `ss -tln`, `journalctl -u <service> -n 200`. If a change is needed, describe the plan to the user and stop; the user can unlock the server in CloudLink for 30 minutes.",
+    "- **read-only**: inspection commands only, e.g. `docker ps`, `docker logs --tail 200 <container>`, `df -h`, `free -m`, `uptime`, `ss -tln`, `journalctl -u <service> -n 200`. If a change is needed, describe the plan to the user and stop; the user can switch it to standard mode in CloudLink.",
     "- **standard**: routine deployments and service restarts are allowed. Ask the user before deleting data or volumes, changing the firewall or SSH configuration, stopping critical services, or rebooting.",
     "- In Claude Code, CloudLink's guard enforces these modes. A blocked command comes back with the reason.",
     "",
@@ -194,7 +247,10 @@ export function renderSkill(envId: EnvId, assets: Asset[], config: SkillConfig, 
   return {
     files: [
       { path: "SKILL.md", content: skill },
-      ...assets.map((a) => ({ path: detailPath.get(a.id)!, content: renderDetails(a, settings) })),
+      ...assets.map((a) => ({
+        path: detailPath.get(a.id)!,
+        content: a.type === "vps" ? renderDetails(a, settings) : renderCliDetails(a, (id) => assets.find((x) => x.id === id && x.type === "vps") && handleOf(assets.find((x) => x.id === id)!)),
+      })),
       { path: "references/health-check.md", content: HEALTH_CHECK },
     ],
     descriptionChars: desc.text.length,

@@ -2,6 +2,7 @@
 import { mockIPC } from "@tauri-apps/api/mocks"
 
 import { agentHandlers } from "./handlers-agents"
+import { cliHandlers } from "./handlers-cli"
 import { connectionHandlers } from "./handlers-connection"
 import { miscHandlers } from "./handlers-misc"
 import { probeHandlers } from "./handlers-probe"
@@ -23,6 +24,7 @@ const handlers: Record<string, (args: Args) => unknown> = {
     return db.assets
   },
   ...serverHandlers,
+  ...cliHandlers,
   ...connectionHandlers,
   ...probeHandlers,
   ...agentHandlers,

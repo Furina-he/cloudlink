@@ -4,7 +4,7 @@ import { emit } from "@tauri-apps/api/event"
 import type { ConnectionTestedEvent, ConnectionTestRequest, EnvId, SshError } from "@/bindings"
 import { connectionSignature } from "@/stores/connection"
 import { connInputOf } from "./handlers-servers"
-import { assetById, db, fail, logActivity, newId, now, recompile, sleep } from "./state"
+import { db, fail, logActivity, newId, now, recompile, serverById, sleep } from "./state"
 
 interface Run {
   req: ConnectionTestRequest
@@ -46,7 +46,7 @@ function finish(testId: string, e: Omit<ConnectionTestedEvent, "testId">) {
   const sig = connectionSignature(run.req.connection)
   if (e.status === "ok") db.passedTests.set(sig, { at: now(), envId: run.envId })
   // 参数与已保存的一致时才更新这台服务器的验证结果（F-106）
-  const saved = run.req.assetId ? db.assets.find((a) => a.id === run.req.assetId) : undefined
+  const saved = run.req.assetId ? serverById(run.req.assetId) : undefined
   if (saved && connectionSignature(connInputOf(saved)) === sig) {
     saved.connection.verified = { ok: e.status === "ok", at: now(), envIds: [run.envId] }
   }
@@ -74,7 +74,7 @@ function continueAuth(testId: string) {
 function testConnection(req: ConnectionTestRequest) {
   const testId = newId("tst")
   const c = req.connection
-  const saved = req.assetId ? db.assets.find((a) => a.id === req.assetId) : undefined
+  const saved = req.assetId ? serverById(req.assetId) : undefined
   const envId = req.envId ?? (c.source === "managed" ? c.definedIn[0] : saved?.connection.definedIn[0]) ?? "windows"
   const host = c.source === "managed" ? c.host : c.sshAlias
   const run: Run = { req, envId, key: `${envId}:${host}`, alias: c.sshAlias || host, timers: [] }
@@ -103,7 +103,7 @@ function cancelTest(testId: string) {
 }
 
 function setPassword(assetId: string, password: string | null) {
-  const asset = assetById(assetId)
+  const asset = serverById(assetId)
   if (password) db.passwords.set(assetId, password)
   else db.passwords.delete(assetId)
   if (asset.connection.auth) asset.connection.auth.passwordSaved = !!password
@@ -111,7 +111,7 @@ function setPassword(assetId: string, password: string | null) {
 
 /** 改用密钥登录（F-108 AC1）：生成 ed25519、安装公钥、切换为私钥文件并重新测试 */
 async function convertToKey(assetId: string) {
-  const asset = assetById(assetId)
+  const asset = serverById(assetId)
   if (!db.passwords.has(assetId)) fail("password-missing")
   await sleep(1200)
   const alias = asset.connection.sshAlias

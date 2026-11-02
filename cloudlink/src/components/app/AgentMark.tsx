@@ -1,4 +1,4 @@
-// Agent 标识（2026-11-01 用户选定，参考 CC Switch）：服务器卡片上的 Agent 按钮用品牌 Logo，点亮时用品牌色。
+// Agent 标识（2026-11-01 用户选定，参考 CC Switch）：资源回路行上的 Agent 按钮用品牌 Logo，点亮时用品牌色。
 // DESIGN.md 的例外：品牌 Logo 和 agent-* 颜色只在这里使用；Logo 取自 @lobehub/icons-static-svg（MIT），不自绘
 import claudeSvg from "@lobehub/icons-static-svg/icons/claude.svg?raw"
 import openaiSvg from "@lobehub/icons-static-svg/icons/openai.svg?raw"
