@@ -41,13 +41,13 @@ const v = (p: Params, key: string) => String(p?.[key] ?? "…")
 const MODE_LABEL: Record<Mode, string> = { "read-only": "只读巡检", standard: "标准运维" }
 const AGENT_LABEL: Record<AgentId, string> = {
   "claude-code": "Claude Code",
-  universal: "通用（Codex 等）",
+  universal: "Codex",
   custom: "自定义目录",
 }
 /** 回路行上 Agent 按钮的短名称；自定义目录用用户填的名称 */
 const AGENT_SHORT: Record<Exclude<AgentId, "custom">, string> = {
   "claude-code": "Claude Code",
-  universal: "通用",
+  universal: "Codex",
 }
 const envShort = (id: EnvId) =>
   id === "windows" ? "Windows" : id === "macos" ? "macOS" : id === "linux" ? "Linux" : "WSL"
@@ -1096,7 +1096,8 @@ export const copy = {
 
   customTarget: {
     title: "添加自定义目录",
-    description: "给其他 Agent 指定一个全局 skills 目录，总 Skill 会以受管副本写进去。",
+    description: "选择主流 Agent 自动填入默认目录与官方图标，或手动指定任意全局 skills 目录。",
+    presets: "常见 Agent 快捷填充",
     name: "名称",
     path: "目录",
     pick: "选择目录",

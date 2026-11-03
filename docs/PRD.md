@@ -408,7 +408,7 @@ interface AgentNote {                       // Agent 写进收件箱的一条笔
 | :--- | :--- | :--- | :--- |
 | F-301 | 运行环境与 Agent 检测 | P0 | 启动时和手动刷新时执行。Windows 上用 `wsl.exe -l -q` 列出发行版。v0.1 只检测两类 Agent，目录见 4.5。检测到的 Agent 默认启用。**AC：** 未检测到的 Agent 也可以手动启用（软件会创建目录）；其他 Agent 可以添加为自定义目录 |
 | F-302 | Agent 启用开关 | P0 | Agent 页每个目标一个开关。**AC1：** 启用后自动写入这个 Agent 在该环境的总 Skill 副本；启用的 Agent 出现在服务器卡片的 Agent 按钮里（F-303）。**AC2：** 停用前确认，说明会从该目录移除 CloudLink 分发的 `cloudlink-servers`；只移除 CloudLink 创建的东西 |
-| F-303 | 分发给 Agent | P0 | 主列表回路行右侧和详情面板常驻控制头上，每个启用的 Agent 一个按钮（`ToggleGroup` 多选，参考 CC Switch，2026-11-01 用户确认）：点亮就分发给它，全部不点亮就是不分发。点选按 Agent 计：同一个 Agent 在 Windows 和 WSL 的目录一起分发，该资源列入它在各运行环境的总 Skill（3.4）。按钮是 Agent 官方品牌 Logo（`AgentMark`）：Claude Code 用 Claude 的 Logo，「通用（Codex 等）」用 OpenAI 的 Logo，自定义目录用名称首字；点亮时品牌色 Logo 加浅色品牌色底，未点亮时是灰色 Logo。**AC1：** 未通过连接或 CLI 环境验证的资源不能点亮新的 Agent：行内直接显示修复按钮（如 `[测试连接]`、`[去登录]`）。已点亮的仍然可以取消。**AC2（正常即隐身）：** 详情面板不再常驻展示各运行环境的列入矩阵；只有当某个已启用环境未列入时（例如「WSL Ubuntu-24.04 中没有配置私钥」或「WSL 未安装 wrangler」），才在详情控制头下方浮现一条琥珀色提示与一键处理入口。**AC3：** 分发完成后给出生效提示。**AC4：** 取消点选立即把这项资源从这个 Agent 的总 Skill 中移除，不需要确认（可以随时重新点亮） |
+| F-303 | 分发给 Agent | P0 | 主列表回路行右侧和详情面板常驻控制头上，每个启用的 Agent 一个按钮（`ToggleGroup` 多选，参考 CC Switch，2026-11-01 用户确认）：点亮就分发给它，全部不点亮就是不分发。点选按 Agent 计：同一个 Agent 在 Windows 和 WSL 的目录一起分发，该资源列入它在各运行环境的总 Skill（3.4）。按钮是 Agent 官方品牌 Logo（`AgentMark`）：Claude Code 用 Claude 的 Logo，Codex 用 OpenAI 的 Logo，自定义目录自动匹配 Cursor、Windsurf、Gemini CLI、GitHub Copilot、OpenCode、Cline、Roo Code、Trae、Goose、Amp、Devin 等官方 Logo（未知名称用 `BotIcon` 兜底）；点亮时品牌色 Logo 加浅色品牌色底，未点亮时是灰色 Logo。**AC1：** 未通过连接或 CLI 环境验证的资源不能点亮新的 Agent：行内直接显示修复按钮（如 `[测试连接]`、`[去登录]`）。已点亮的仍然可以取消。**AC2（正常即隐身）：** 详情面板不再常驻展示各运行环境的列入矩阵；只有当某个已启用环境未列入时（例如「WSL Ubuntu-24.04 中没有配置私钥」或「WSL 未安装 wrangler」），才在详情控制头下方浮现一条琥珀色提示与一键处理入口。**AC3：** 分发完成后给出生效提示。**AC4：** 取消点选立即把这项资源从这个 Agent 的总 Skill 中移除，不需要确认（可以随时重新点亮） |
 | F-304 | 副本引擎 | P0 | 分发一律用受管复制，不用符号链接或 Junction（理由见 8.2）。**AC1：** 目标位置已存在 `cloudlink-servers` 目录、而且不是本软件创建的，判定为「冲突」，不做任何覆盖。**AC2：** 移除只删除带有匹配所有权标记的副本。**AC3：** 每次发布在同一批次内同步全部副本；某个目标写入失败时，该目标记为「待同步」，其余目标照常更新 |
 | F-305 | 健康检查与修复 | P0 | 检查时机：启动、窗口重新聚焦（节流 30 秒，若正处于 CLI 环境向导则立即刷新 CLI 状态）、手动「检查全部」。检测四类问题：副本缺失、副本被改动、副本待同步、冲突；同时重新计算列入情况，并对护栏做自检（F-306 AC5）。**AC：** 「修复」重新写入副本，副本被改动过时先提示修复会覆盖改动；目标目录已不存在时重新创建。问题汇总显示在导航栏 Agent 项的计数徽标上 |
 | F-306 | 护栏（Claude Code，SSH + 云 CLI） | P0 | 在 Claude Code 的用户级 `settings.json` 中安装一条 `PreToolUse` hook（`matcher` 为 `Bash`），指向 CloudLink 自带的小程序 `cloudlink-guard`。它对涉及已录入 SSH 服务器的 `ssh/scp/sftp/rsync` 命令，以及涉及已接入云平台的 `wrangler/vercel/oci` 命令做判定（规则见 8.6）：只读巡检档只放行查询与日志命令；标准运维档只拦下明显危险的命令（删除数据卷/实例/域名、重启主机、改防火墙、改 SSH 配置、停掉关键服务）；**任何档位一律拦下读取凭据文件（`.env`、私钥等）以及 CLI 凭据导出命令（如 `vercel env pull`、`oci iam` 密钥导出）**。**v3.1 起取消「临时解锁 30 分钟」**，需要执行写操作时直接在主列表回路行右侧把档位切为「标准运维」（生产资源带琥珀色高亮提醒），操作完毕一键切回「只读巡检」。**AC1：** 安装前用对话框展示将要加入 `settings.json` 的内容，征得同意后才写入；修改前备份为 `settings.json.cloudlink-bak`。每个有 Claude Code 目标的运行环境分别安装。**AC2：** CloudLink 关着时护栏照常工作：它只读取 `~/.cloudlink/guard/policy.json`，不依赖 CloudLink 进程。**AC3：** 解析不了的命令：在只读资源上拦下（原因为「无法确认是只读命令」），在标准运维资源上放行，并在记录中标注。**AC4：** 健康检查时自检：确认 `settings.json` 中的条目还在、没有设置 `disableAllHooks`，并用测试输入实际运行一次护栏程序。**AC5：** 界面如实说明边界：护栏只解析命令文本，能防手滑，防不了刻意绕过；Codex 等其他 Agent 没有护栏 |
@@ -432,14 +432,14 @@ v0.1 只支持下面两类 Agent，外加自定义目录。数据来源是 verce
 | Agent | 全局目录 | 检测依据 | 护栏 |
 | :--- | :--- | :--- | :--- |
 | Claude Code | `~/.claude/skills/` | `~/.claude/` 存在，或 PATH 中有 `claude` | 有（F-306） |
-| 通用（Codex CLI、Cline、Warp、Zed 等） | `~/.agents/skills/` | `~/.codex/` 存在，或 PATH 中有 `codex` | 没有。Codex 默认的沙箱不允许联网，ssh 要用户批准，或在配置中放开网络 |
+| Codex | `~/.agents/skills/` | `~/.codex/` 存在，或 PATH 中有 `codex` | 没有。Codex 默认的沙箱不允许联网，ssh 要用户批准，或在配置中放开网络 |
 | 自定义 | 用户指定 | 无 | 没有 |
 
-Cursor（`~/.cursor/skills/`）、Gemini CLI（`~/.gemini/skills/`）、GitHub Copilot（`~/.copilot/skills/`）、OpenCode（`~/.config/opencode/skills/`）留到 v0.5 再作为独立目标。在此之前，可以把它们的目录添加为自定义目录。
+Cursor（`~/.cursor/skills/`）、Windsurf（`~/.codeium/windsurf/skills/`）、Gemini CLI（`~/.gemini/skills/`）、GitHub Copilot（`~/.copilot/skills/`）、OpenCode（`~/.config/opencode/skills/`）、Cline（`~/.cline/skills/`）、Roo Code（`~/.roo/skills/`）、Trae（`~/.trae/skills/`）在「添加自定义目录」弹窗中提供一键快捷预设与官方品牌 Logo，v0.5 再作为自动检测的独立目标。
 
 补充事实（2026-10 核实）：
 
-- **Claude Code 不读 `~/.agents/skills`。** 相关 issue #31005 截至 2026-10 仍未关闭，所以 Claude Code 和「通用」是两个独立目标。
+- **Claude Code 不读 `~/.agents/skills`。** 相关 issue #31005 截至 2026-10 仍未关闭，所以 Claude Code 和 Codex 是两个独立目标。
 - **Codex 的目录变迁。** v0.95 起读 `~/.agents/skills`。旧目录 `~/.codex/skills` 已标为废弃，但为了兼容仍会读取。Codex 的官方文档已经迁到 learn.chatgpt.com/docs/build-skills。
 - **同名 Skill。** 用户自己在全局目录里已有名为 `cloudlink-servers` 的目录时，按 F-304 AC1 判定为冲突，不覆盖。
 
@@ -687,7 +687,7 @@ If a command is missing on a server (no docker, no systemd), skip it and say so.
 +----------------------------------------------------------------------------------+
 |  ← 返回   hk-edge  香港边缘节点                                       ● 生产     |
 |  ✓ 已连接 · Ubuntu 24.04 · 2C/2G · 10 分钟前探测                                 |
-|  档位 (👁 只读巡检) (🔧 标准运维)    授权 [CC Claude Code ✓] [OA 通用 ✓]  [⋯更多] |
+|  档位 (👁 只读巡检) (🔧 标准运维)    授权 [CC Claude Code ✓] [OA Codex ✓] [⋯更多] |
 |----------------------------------------------------------------------------------|
 |  [ 画像与规则 ]   [ 连接配置 ]   [ 动态 (3) ]                                    |
 |  ──────────────                                                                  |
@@ -1208,7 +1208,7 @@ Mock 夹具（`src/mocks/fixtures.ts`）必须覆盖下面这些状态：
 | 运行环境 | Windows 和 WSL Ubuntu-24.04 |
 | 服务器 | `hk-edge`：生产，managed，私钥认证，已验证，已探测，分发开，只读，有 3 条待处理的 Agent 笔记（其中 1 条命中密钥）；`sg-db`：生产，imported，已验证，**标准运维**（回路行琥珀色提醒），分发开，探测会失败（主机密钥未信任）；`dev-box`：开发，managed，密码认证，未验证，分发关 |
 | 测试连接 | 新建表单中：地址含 `timeout` 时超时失败，含 `refused` 时连接被拒，用户为 `bad` 时认证失败，其余成功；首次测试一个新地址时先返回待确认的主机指纹 |
-| Agent 目标 | Claude Code（Windows，已检测，启用）；通用 .agents（Windows，未检测到，停用）；Claude Code（WSL，已检测，启用）；通用 .agents（WSL，已检测，启用）；一个自定义目录（Windows，启用） |
+| Agent 目标 | Claude Code（Windows，已检测，启用）；Codex .agents（Windows，未检测到，停用）；Claude Code（WSL，已检测，启用）；Codex .agents（WSL，已检测，启用）；一个自定义目录（Windows，启用） |
 | 列入与分发 | `hk-edge` 在 WSL 中未列入（WSL 中没有配置私钥）；副本状态覆盖 `ok`、`missing`、`modified`、`conflict`（目录中已有用户手写的 `cloudlink-servers`） |
 | 总 Skill | 示例的「服务器之间的关系」和 2 条运维约定；Windows 环境的编译有 1 条警告 |
 | 护栏 | Windows 已生效；WSL 未安装 |

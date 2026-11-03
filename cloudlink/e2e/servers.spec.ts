@@ -182,20 +182,20 @@ test.describe("回路行右侧的双闸刀（PRD 6.4）", () => {
     const errors = collectConsoleErrors(page)
     await ready(page)
     const list = page.locator("#server-list")
-    const universal = list.getByRole("button", { name: "将 hk-edge 分发给 通用（Codex 等）" })
+    const universal = list.getByRole("button", { name: "将 hk-edge 分发给 Codex" })
     await expect(list.getByRole("button", { name: "将 hk-edge 分发给 Claude Code" })).toHaveAttribute("aria-pressed", "true")
     await expect(universal).toHaveAttribute("aria-pressed", "false")
     await universal.click()
     await expect(universal).toHaveAttribute("aria-pressed", "true")
-    await expect(toastText(page, "已把 hk-edge 分发给 通用（Codex 等）")).toBeVisible()
+    await expect(toastText(page, "已把 hk-edge 分发给 Codex")).toBeVisible()
     await expect(page.locator("#detail-title")).toHaveCount(0)
 
     // dev-box 只用密码：没点亮的按钮不可用
     await expect(list.getByRole("button", { name: "将 dev-box 分发给 Claude Code" })).toBeDisabled()
 
-    // 通用只在 WSL 启用；hk-edge 在 WSL 没有私钥，提示里列出两份总 Skill
+    // Codex 只在 WSL 启用；hk-edge 在 WSL 没有私钥，提示里列出两份总 Skill
     await openServer(page, "hk-edge")
-    await expect(inspector(page).getByText(/通用（WSL Ubuntu-24.04）/)).toBeVisible()
+    await expect(inspector(page).getByText(/Codex（WSL Ubuntu-24.04）/)).toBeVisible()
     await shot(page, "breaker-03-agent")
     expect(errors).toEqual([])
   })
@@ -425,7 +425,7 @@ test.describe("纯键盘流程", () => {
 
     const list = page.locator("#server-list")
     const claude = list.getByRole("button", { name: "将 hk-edge 分发给 Claude Code" })
-    const universal = list.getByRole("button", { name: "将 hk-edge 分发给 通用（Codex 等）" })
+    const universal = list.getByRole("button", { name: "将 hk-edge 分发给 Codex" })
     await claude.focus()
     await page.keyboard.press("ArrowRight")
     await expect(universal).toBeFocused()

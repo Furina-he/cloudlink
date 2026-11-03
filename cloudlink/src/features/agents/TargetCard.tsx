@@ -1,6 +1,7 @@
-import { BotIcon, EllipsisIcon, FolderIcon, FolderOpenIcon, RefreshCwIcon, Trash2Icon, WrenchIcon } from "lucide-react"
+import { EllipsisIcon, FolderOpenIcon, RefreshCwIcon, Trash2Icon, WrenchIcon } from "lucide-react"
 
 import type { Delivery, Target } from "@/bindings"
+import { AgentMark } from "@/components/app/AgentMark"
 import { DELIVERY_STATE, StateBadge } from "@/components/app/StateBadge"
 import { Truncate } from "@/components/app/Truncate"
 import { Badge } from "@/components/ui/badge"
@@ -41,14 +42,13 @@ export function TargetCard({ target, delivery, included }: { target: Target; del
   const label = targetLabel(target)
   const env = copy.env.long(target.envId)
   const problem = target.enabled && !!delivery && isDeliveryProblem(delivery)
-  const Icon = target.agent === "custom" ? FolderIcon : BotIcon
 
   return (
     <Card size="sm" data-problem={problem || undefined} className="gap-2">
       <CardHeader className="gap-x-3">
         <div className="flex min-w-0 items-start gap-2.5">
           <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-            <Icon className="size-4" />
+            <AgentMark agent={target.agent} label={label} lit={target.enabled} />
           </span>
           <div className="flex min-w-0 flex-col gap-1">
             <CardTitle className="flex flex-wrap items-center gap-x-2 gap-y-1">

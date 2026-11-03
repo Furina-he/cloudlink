@@ -94,7 +94,7 @@ export interface InclusionProblem {
 
 /**
  * 点选了的 Agent 里没有列入的运行环境（F-303 AC2）。同一个环境、同一个原因只提示一次，
- * 例如 Claude Code 和通用在 WSL 里都缺私钥时，只出现一条
+ * 例如 Claude Code 和 Codex 在 WSL 里都缺私钥时，只出现一条
  */
 export function useInclusionProblems(asset: Asset): InclusionProblem[] {
   const inclusions = useDeliveryStore(useShallow((s) => selectInclusionsByAsset(s.inclusions, asset.id)))

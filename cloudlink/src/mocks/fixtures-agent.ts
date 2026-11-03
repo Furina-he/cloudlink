@@ -6,10 +6,10 @@ const WSL = "wsl:Ubuntu-24.04" as const
 
 export const targets: Target[] = [
   { id: "tgt_cc_win", envId: "windows", agent: "claude-code", agentKey: "claude-code", label: "Claude Code", path: "C:\\Users\\me\\.claude\\skills", enabled: true, detected: true },
-  { id: "tgt_agents_win", envId: "windows", agent: "universal", agentKey: "universal", label: "通用", path: "C:\\Users\\me\\.agents\\skills", enabled: false, detected: false },
+  { id: "tgt_agents_win", envId: "windows", agent: "universal", agentKey: "universal", label: "Codex", path: "C:\\Users\\me\\.agents\\skills", enabled: false, detected: false },
   { id: "tgt_custom_win", envId: "windows", agent: "custom", agentKey: "custom:cursor", label: "Cursor", path: "C:\\Users\\me\\.cursor\\skills", enabled: true, detected: false },
   { id: "tgt_cc_wsl", envId: WSL, agent: "claude-code", agentKey: "claude-code", label: "Claude Code", path: "/home/me/.claude/skills", enabled: true, detected: true },
-  { id: "tgt_agents_wsl", envId: WSL, agent: "universal", agentKey: "universal", label: "通用", path: "/home/me/.agents/skills", enabled: true, detected: true },
+  { id: "tgt_agents_wsl", envId: WSL, agent: "universal", agentKey: "universal", label: "Codex", path: "/home/me/.agents/skills", enabled: true, detected: true },
 ]
 
 /** 副本状态覆盖 ok、missing、modified、conflict（PRD 7.8） */

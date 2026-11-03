@@ -46,7 +46,7 @@ export function AgentChoice({ agents, value, onChange, labelledBy }: { agents: A
         return (
           <ToggleGroupItem key={a.key} value={a.key} className={cn("max-w-44", AGENT_TILE_ON[a.agent], on ? "text-foreground" : "text-muted-foreground")}>
             <AgentMark agent={a.agent} label={a.label} lit={on} />
-            <span className="truncate">{a.agent === "universal" ? a.label : a.short}</span>
+            <span className="truncate">{a.short}</span>
           </ToggleGroupItem>
         )
       })}

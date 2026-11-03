@@ -8,15 +8,15 @@ import { useSettingsStore } from "@/stores/settings"
 import { compileKey } from "@/stores/skills"
 import { selectAvailableEnvs, useTargetStore } from "@/stores/targets"
 
-/** 内置目标在前（Claude Code、通用），自定义目录在后 */
+/** 内置目标在前（Claude Code、Codex），自定义目录在后 */
 export const AGENT_ORDER: Record<AgentId, number> = { "claude-code": 0, universal: 1, custom: 2 }
 
 export interface AgentOption {
   key: string
   agent: AgentId
-  /** 完整名称，例如「通用（Codex 等）」 */
+  /** 完整名称，例如「Codex」 */
   label: string
-  /** 回路行按钮上的短名称，例如「通用」 */
+  /** 回路行按钮上的短名称，例如「Codex」 */
   short: string
 }
 

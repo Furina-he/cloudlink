@@ -101,7 +101,7 @@ export const activity: ActivityItem[] = [
   { id: "act_5", kind: "guard", at: ago(2 * DAY), messageId: "guard-installed", params: { env: "windows" }, ok: true },
   { id: "act_6", kind: "connection", at: ago(3 * DAY), assetId: "ast_sg_db", messageId: "test-ok", params: { alias: "sg-db", ms: 640 }, durationMs: 640, ok: true },
   { id: "act_7", kind: "note", at: ago(3 * DAY), assetId: "ast_hk_edge", messageId: "notes-merged", params: { alias: "hk-edge", count: 1 }, ok: true },
-  { id: "act_8", kind: "repair", at: ago(4 * DAY), messageId: "repair-ok", params: { target: "通用", env: WSL }, durationMs: 90, ok: true },
+  { id: "act_8", kind: "repair", at: ago(4 * DAY), messageId: "repair-ok", params: { target: "Codex", env: WSL }, durationMs: 90, ok: true },
   { id: "act_9", kind: "ssh-config", at: ago(5 * DAY), messageId: "ssh-include-added", params: { env: "windows" }, ok: true },
   { id: "act_10", kind: "probe", at: ago(41 * DAY), assetId: "ast_sg_db", messageId: "probe-no-changes", params: { alias: "sg-db" }, durationMs: 2400, ok: true },
 ]

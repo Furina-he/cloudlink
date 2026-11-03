@@ -64,7 +64,7 @@ test.describe("Agent 视图", () => {
     await dialog.getByRole("button", { name: "覆盖并修复" }).click()
     await expect(toastText(page, /已修复/)).toBeVisible()
 
-    const sw = page.getByRole("switch", { name: "启用 通用（Codex 等）（Windows）" })
+    const sw = page.getByRole("switch", { name: "启用 Codex（Windows）" })
     await expect(sw).not.toBeChecked()
     await sw.focus()
     await page.keyboard.press("Space")

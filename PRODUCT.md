@@ -76,7 +76,7 @@ Tauri v2（Rust 后端）+ React 19 + Vite + TypeScript + Tailwind CSS v4。
 - **编译产物默认用英文。** 模板文字是英文；用户填写的用途、红线、关系、约定、笔记原样输出，不做翻译。界面语言为简体中文。
 - **分发一律用受管复制。** 不用符号链接和 Junction；每次编译后同步全部副本，健康检查发现副本缺失或被改动时一键修复。
 - **v0.1 支持两类 Agent：** Claude Code，以及 Codex 等读取 `~/.agents/skills` 的 Agent；其他 Agent 添加为自定义目录。护栏只支持 Claude Code。
-- **官方品牌图标：** Agent 标识（Claude、OpenAI）与云平台 CLI 标识（Cloudflare、Vercel、Oracle）一律使用官方品牌 SVG Logo，不自绘、不用通用替代图标。
+- **官方品牌图标：** Agent 标识（Claude Code、Codex、Cursor、Windsurf、Gemini CLI、GitHub Copilot、OpenCode 等）与云平台 CLI 标识（Cloudflare、Vercel、Oracle）一律使用官方品牌 SVG Logo，不自绘、不用通用替代图标或文字缩写。
 - **红线是写给 Agent 的指令，属于建议性约束。** Claude Code 上的护栏能拦下越界命令，但只解析命令文本，防不了刻意绕过。界面上必须如实标注两者的边界。
 - **不导出敏感信息。** Skill 中不写入密码、私钥或 API Secret；IP 和解析后的主机信息默认不导出；护栏强制拦截 `vercel env pull` 等 CLI 凭据导出命令。
 - **档位是资源的属性，不设临时解锁倒计时。** 生产资源默认只读巡检，切到标准运维要二次确认并在行内琥珀色高亮提醒；切回只读巡检一键完成。

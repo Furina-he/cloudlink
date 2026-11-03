@@ -294,8 +294,8 @@ CloudLink 是开发者和终端并排打开、用来决定「Agent 能看见哪�
 
 1. **Agent 官方 Logo（封装于 `src/components/app/AgentMark.tsx`）**：
    - **Claude Code**：Claude 官方星芒 Logo（取自 `@lobehub/icons-static-svg/icons/claude.svg`）。
-   - **通用（Codex 等）**：OpenAI 官方花瓣 Logo（取自 `@lobehub/icons-static-svg/icons/openai.svg`）。
-   - **自定义目录**：无官方品牌，使用目录名称首字母缩写。
+   - **Codex**：OpenAI 官方花瓣 Logo（取自 `@lobehub/icons-static-svg/icons/openai.svg`）。
+   - **其他主流 Agent 与自定义目录**：内置匹配 Cursor、Windsurf、Gemini CLI、GitHub Copilot、OpenCode、Cline、Roo Code、Trae、Goose、Amp、Devin 的官方品牌 SVG Logo（均取自 `@lobehub/icons-static-svg`），并在添加自定义目录弹窗中提供主流 Agent 快捷填充；完全未知的自定义目录名称统一使用 `BotIcon` 兜底，禁止使用双字母文字缩写。
 2. **云平台官方 Logo（封装于 `src/components/app/ProviderMark.tsx`）**：
    - **Cloudflare**：Cloudflare 官方双云彩色/单色 Logo（取自 `@lobehub/icons-static-svg/icons/cloudflare-color.svg` / `cloudflare.svg`）。
    - **Vercel**：Vercel 官方正三角 Logo（取自 `@lobehub/icons-static-svg/icons/vercel.svg`，墨色自适应浅深主题）。
@@ -324,7 +324,7 @@ CloudLink 是开发者和终端并排打开、用来决定「Agent 能看见哪�
 | 复制 | `CopyIcon` | 打开文件夹 | `FolderOpenIcon` |
 | 活动日志 | `HistoryIcon` | 设置 | `SettingsIcon` |
 | 删除 | `Trash2Icon` | 命令面板 | `CommandIcon` |
-| Agent 标识 | Claude、OpenAI 官方 Logo（`AgentMark`） | 云平台标识 | Cloudflare、Vercel、Oracle 官方 Logo（`ProviderMark`） |
+| Agent 标识 | Claude、OpenAI、Cursor、Windsurf 等官方 Logo（`AgentMark`） | 云平台标识 | Cloudflare、Vercel、Oracle 官方 Logo（`ProviderMark`） |
 
 ### Motion
 
