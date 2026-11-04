@@ -4,6 +4,7 @@ node_modules/
 # Build outputs
 dist/
 target/
+cloudlink/src-tauri/binaries/
 
 # Environment files (keep .env.mock, which only contains VITE_MOCK=1)
 .env.local

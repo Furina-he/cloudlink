@@ -12,6 +12,7 @@ export type LintId =
   | "prod-standard-no-guardrails"
   | "probe-stale"
   | "suspected-injection"
+  | "publish-failed"
 
 export type LintLevel = "error" | "warning" | "info"
 

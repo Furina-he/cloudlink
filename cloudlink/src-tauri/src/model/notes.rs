@@ -1,4 +1,4 @@
-//! Agent 笔记收件箱（F-308）。P4a 只定义类型，实现在 P4c
+//! Agent 笔记收件箱（F-308）。
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;

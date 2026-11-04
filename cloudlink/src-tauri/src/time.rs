@@ -54,6 +54,97 @@ pub fn now_rfc3339() -> String {
     format_rfc3339(now_secs())
 }
 
+/// UTC bounds of the workstation's current calendar day. Windows uses the same operating
+/// system time zone as WebView/Intl, including daylight-saving transitions. Non-Windows
+/// packaging is outside v0.1; its fallback is UTC until native support is added.
+pub fn local_day_bounds(now: i64) -> (i64, i64) {
+    #[cfg(windows)]
+    if let Some(bounds) = windows_zone::bounds(now) {
+        return bounds;
+    }
+    let start = now.div_euclid(86_400) * 86_400;
+    (start, start + 86_400)
+}
+
+#[cfg(any(windows, test))]
+fn day_bounds_in_zone(
+    now: i64,
+    to_local: impl Fn(i64) -> Option<i64>,
+    to_utc: impl Fn(i64) -> Option<i64>,
+) -> Option<(i64, i64)> {
+    let local_midnight = to_local(now)?.div_euclid(86_400) * 86_400;
+    let start = to_utc(local_midnight)?;
+    let end = to_utc(local_midnight + 86_400)?;
+    (start <= now && now < end).then_some((start, end))
+}
+
+#[cfg(windows)]
+mod windows_zone {
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct WinTime {
+        year: u16,
+        month: u16,
+        day_of_week: u16,
+        day: u16,
+        hour: u16,
+        minute: u16,
+        second: u16,
+        milliseconds: u16,
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn SystemTimeToTzSpecificLocalTimeEx(zone: *const c_void, utc: *const WinTime, local: *mut WinTime) -> i32;
+        fn TzSpecificLocalTimeToSystemTimeEx(zone: *const c_void, local: *const WinTime, utc: *mut WinTime) -> i32;
+    }
+
+    impl WinTime {
+        fn from_secs(secs: i64) -> Option<Self> {
+            let (year, month, day) = super::civil_from_days(secs.div_euclid(86_400));
+            let time = secs.rem_euclid(86_400);
+            Some(Self {
+                year: year.try_into().ok()?,
+                month: month as u16,
+                day: day as u16,
+                hour: (time / 3600) as u16,
+                minute: (time % 3600 / 60) as u16,
+                second: (time % 60) as u16,
+                ..Default::default()
+            })
+        }
+
+        fn to_secs(&self) -> i64 {
+            super::days_from_civil(i64::from(self.year), u32::from(self.month), u32::from(self.day)) * 86_400
+                + i64::from(self.hour) * 3600
+                + i64::from(self.minute) * 60
+                + i64::from(self.second)
+        }
+    }
+
+    fn convert(secs: i64, to_local: bool) -> Option<i64> {
+        let input = WinTime::from_secs(secs)?;
+        let mut output = WinTime::default();
+        // SAFETY: WinTime has the documented SYSTEMTIME layout. Both pointers refer to
+        // initialized, correctly aligned values alive for the call; a null zone requests the
+        // current system zone. Windows 10+ supplies both Ex functions, with no retained pointers.
+        let ok = unsafe {
+            if to_local {
+                SystemTimeToTzSpecificLocalTimeEx(std::ptr::null(), &input, &mut output)
+            } else {
+                TzSpecificLocalTimeToSystemTimeEx(std::ptr::null(), &input, &mut output)
+            }
+        };
+        (ok != 0).then(|| output.to_secs())
+    }
+
+    pub(super) fn bounds(now: i64) -> Option<(i64, i64)> {
+        super::day_bounds_in_zone(now, |secs| convert(secs, true), |secs| convert(secs, false))
+    }
+}
+
 /// 解析 `YYYY-MM-DDTHH:MM:SS[.fff](Z|±HH:MM)`，也接受只有日期的 `YYYY-MM-DD`
 pub fn parse_rfc3339(s: &str) -> Option<i64> {
     let b = s.as_bytes();
@@ -106,5 +197,38 @@ mod tests {
             Some("2024-02-29")
         );
         assert!(parse_rfc3339("yesterday").is_none());
+    }
+
+    #[test]
+    fn local_day_uses_calendar_midnight_not_utc_midnight() {
+        let now = parse_rfc3339("2026-11-03T20:00:00Z").unwrap();
+        let (start, end) = day_bounds_in_zone(now, |t| Some(t + 8 * 3600), |t| Some(t - 8 * 3600)).unwrap();
+        assert_eq!(format_rfc3339(start), "2026-11-03T16:00:00Z");
+        assert_eq!(format_rfc3339(end), "2026-11-04T16:00:00Z");
+    }
+
+    #[test]
+    fn local_day_respects_a_twenty_three_hour_spring_transition() {
+        let now = parse_rfc3339("2026-03-08T16:00:00Z").unwrap();
+        let transition = parse_rfc3339("2026-03-08T07:00:00Z").unwrap();
+        let local_transition = parse_rfc3339("2026-03-08T03:00:00Z").unwrap();
+        let (start, end) = day_bounds_in_zone(
+            now,
+            |t| Some(t - if t < transition { 5 * 3600 } else { 4 * 3600 }),
+            |t| Some(t + if t < local_transition { 5 * 3600 } else { 4 * 3600 }),
+        )
+        .unwrap();
+        assert_eq!(end - start, 23 * 3600);
+        assert_eq!(format_rfc3339(start), "2026-03-08T05:00:00Z");
+        assert_eq!(format_rfc3339(end), "2026-03-09T04:00:00Z");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_native_day_conversion_succeeds_and_contains_now() {
+        let now = now_secs();
+        let (start, end) = windows_zone::bounds(now).expect("Windows system time zone conversion");
+        assert!(start <= now && now < end);
+        assert!((23 * 3600..=25 * 3600).contains(&(end - start)));
     }
 }

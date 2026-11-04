@@ -62,7 +62,7 @@ export const useGuardStore = create<GuardStoreState>()((set, get) => ({
     }
   },
 
-  _onChanged: (statuses) => set((s) => ({ statusByEnv: { ...s.statusByEnv, ...byEnv(statuses) } })),
+  _onChanged: (statuses) => set({ statusByEnv: byEnv(statuses) }),
 }))
 
 /** 详情护栏行取最差的一个（PRD 6.4）：未生效 > 未安装 > 不可用 > 已生效 */

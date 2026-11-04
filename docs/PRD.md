@@ -1120,7 +1120,7 @@ function Progress({ className, children, value, tone = "default", ...props }:
 import { invoke } from "@tauri-apps/api/core";
 export const ipc = {
   detectEnvironments: () => invoke<Environment[]>("detect_environments"),
-  listSshHosts: (envId?: EnvId) => invoke<SshHost[]>("list_ssh_hosts", { envId }),
+  listSshHosts: (envId?: EnvId) => invoke<SshHostList>("list_ssh_hosts", { envId }),
   listAssets: () => invoke<Asset[]>("list_assets"),
   saveAsset: (input: AssetInput) => invoke<SaveResult>("save_asset", { input }),
   deleteAsset: (id: string, opts: { removeGeneratedKey: boolean }) => invoke<DeleteResult>("delete_asset", { id, opts }),  // F-101 AC2：CloudLink 生成或复制的密钥单独勾选（2026-10-31 补充）
@@ -1135,8 +1135,8 @@ export const ipc = {
   addSshInclude: (envId: EnvId) => invoke<SshConfigStatus>("add_ssh_include", { envId }),
   setDistribute: (assetId: string, agentKey: string, on: boolean) => invoke<Inclusion[]>("set_distribute", { assetId, agentKey, on }),  // 分发给某个 Agent 或停止分发（F-303）；返回这台服务器的列入情况
   setMode: (assetId: string, mode: Mode) => invoke<SaveResult>("set_mode", { assetId, mode }),
-  detectCliEnvironment: (req: { provider: CliProvider; assetId?: string }) => invoke<Partial<Record<EnvId, CliEnvState>>>("detect_cli_environment", { req }),  // F-104 AC1：只检测已启用 Agent 所在的运行环境；带 assetId 时同时更新这项资源
-  refreshCliScope: (req: { provider: CliProvider; assetId?: string }) => invoke<CliScopeItem[]>("refresh_cli_scope", { req }),  // F-104 AC3：带 assetId 时保留已勾选的项
+  detectCliEnvironment: (req: { provider: CliProvider; assetId?: string; account?: string }) => invoke<Partial<Record<EnvId, CliEnvState>>>("detect_cli_environment", { req }),  // F-104 AC1：只检测已启用 Agent 所在的运行环境；新建时可指定账号，带 assetId 时使用持久化绑定并更新这项资源
+  refreshCliScope: (req: { provider: CliProvider; assetId?: string; account?: string }) => invoke<CliScopeItem[]>("refresh_cli_scope", { req }),  // F-104 AC3：新建时拉取所选账号的范围；带 assetId 时使用持久化绑定并保留已勾选的项
   setCliScope: (assetId: string, selectedIds: string[]) => invoke<SaveResult>("set_cli_scope", { assetId, selectedIds }),  // 范围勾选立即生效并重新编译（2026-11-02 补充）
   openEnvTerminal: (req: { envId: EnvId; command: string }) => invoke<void>("open_env_terminal", { req }),  // F-104 AC2：在该运行环境打开终端并预填安装或登录命令
   startProbe: (assetId: string) => invoke<{ runId: string }>("start_probe", { assetId }),
@@ -1168,6 +1168,7 @@ export const ipc = {
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (patch: Partial<Settings>) => invoke<Settings>("update_settings", { patch }),
   getProbeScript: () => invoke<string>("get_probe_script"),
+  resetData: () => invoke<void>("reset_data"),  // 所有权校验、完整受管数据清理和可重试的凭据清理；范围见 6.7
 };
 
 export interface CompilePreview {
@@ -1184,6 +1185,21 @@ export interface CompileStatus {
   lint: CompilePreview["lint"];             // 这一份最近一次编译的 Lint，每条带服务器 id；详情头部的受阻摘要和侧栏的受阻数据此计算（2026-10-31 补充）
 }
 ```
+
+**CLI 账号与错误约定：**
+
+- `detectCliEnvironment` 与 `refreshCliScope` 支持可选 `account`，供尚未保存的向导选择账号；账号标识取 Cloudflare Account ID、Vercel CLI 实际列出的稳定 Team/User ID 或 OCI Profile。带 `assetId` 时以已保存资源的 provider/account 绑定为准，请求中的账号不能覆盖该绑定。新建向导省略账号时，检测返回可操作的账号集合，范围刷新选择首个就绪账号，仅返回该账号下的资源。
+- `IpcErrorId` 中的 `compile-blocked`、`cli-account-unavailable`、`cli-scope-permission`、`cli-scope-failed`、`cli-command-unsupported` 和 `terminal-command-invalid`，分别表达旧产物不可用于创建/修复、账号不可用、Scope 权限不足、Scope 拉取或校验失败、CLI 不支持固定查询、终端命令不在允许列表中。
+- `InclusionReasonId` 中的 `unverified` 与 `env-unavailable`，表达尚未通过连接验证和运行环境暂时不可用。
+- `LintId` 中错误级的 `publish-failed` 表达编译源的原子写入失败，令该份编译状态受阻并保留上次成功的编译源。ID 联合类型扩展时，Rust ts-rs 导出、前端契约与 `copy.ts` 映射保持同步，保留既有 ID、命令名和事件字段。
+
+**护栏、笔记与重置约定：**
+
+- `guard://changed` 的 `statuses` 表示完整状态快照，前端据此替换缓存。窗口可见时每 60 秒读取笔记与护栏状态，重新聚焦或恢复可见时立即读取；后台导入操作记录并触发对应事件。
+- `GuardReasonId` 中的 `cli-account` 和 `cli-scope`，分别表达命令账号无法匹配已绑定资源，以及目标未在已选 Scope 内或无法确定目标。Rust ts-rs 导出、手写契约和 `copy.ts` 映射保持同步，保留既有 ID 和载荷。
+- `IpcErrorId` 中的 `reset-incomplete` 表达重置尚未完成。重置在修改受管文件前写入持久意图；凭据删除失败或已有凭据写入尚未结束时保留回执、阻止旧数据重新发布，用户重试 `reset_data` 可继续清理，重启应用也不会恢复旧副本。
+- `merge_notes` 的一批条目必须来自同一资源，与单个 `SaveResult` 返回值一致；整批校验后事务并入。疑似含密钥的笔记必须提交实际修改过的文本并通过重新扫描，不能仅传回未改内容。每项资源最多 100 条待处理，超出的输入保留待后续读取。
+- `reset_data` 完成 6.7 的受管分发、编译产物、托管 SSH 配置、护栏 hook/程序/策略、笔记与操作记录、密码及清理回执的清理。未知文件、其他 Skills、用户 SSH 配置及其 Include、用户私钥保留；清理后若收件箱因未知文件保留，其旧资源归属映射清空。OS 凭据调用不持有全局状态锁或数据库锁。
 
 后端事件（只在 `src/lib/events.ts` 中订阅）：
 
@@ -1268,14 +1284,14 @@ src/
 | `probe` | 内置并版本化的探测脚本；解析输出；自动合并（合并前保存快照，用于撤销）；疑似注入的值列为待确认 | 标准库 |
 | `compile` | 按运行环境渲染总 Skill（内置英文模板）；Lint；密钥扫描；原子发布 | `minijinja`、gitleaks 规则集、`regex`、`sha2` |
 | `deliver` | 受管复制：把各运行环境的编译产物写进已启用的目标（WSL 目标经 `\\wsl.localhost\<发行版>\` 路径写入）；所有权校验；冲突判定；列入计算；健康检查与修复 | `sha2`（副本内容哈希） |
-| `guard` | 写入护栏策略 `policy.json`；在各运行环境的 `~/.claude/settings.json` 中安装和移除 hook（WSL 经 `\\wsl.localhost\` 路径；同意、备份、原子写入、保留其余内容和键顺序）；把护栏程序复制到 `~/.cloudlink/bin/`；自检；临时解锁；读入护栏记录（F-307） | `serde_json`（`preserve_order`） |
+| `guard` | 写入护栏策略 `policy.json`；在各运行环境的 `~/.claude/settings.json` 中安装和移除 hook（WSL 经 `\\wsl.localhost\` 路径；同意、备份、原子写入、保留其余内容和键顺序）；把护栏程序复制到 `~/.cloudlink/bin/`；自检；同步资源档位与 Scope；读入护栏记录（F-307） | `serde_json`（`preserve_order`） |
 | `notes` | 读取笔记收件箱、扫描、并入与忽略（F-308） | 标准库 |
 | `ipc` | Tauri 命令与事件；类型导出 | `ts-rs` |
 | `cloudlink-guard`（独立的小程序） | 护栏本体：从标准输入读 hook 的 JSON，按 8.6 判定，输出拦截结果并追加记录。和 `guard` 模块共用规则 crate `guard-rules`；不联网、不读数据库，Windows 上从启动到退出不超过 50ms | `serde_json` |
 
 Rust 依赖锁定的主版本（2026-10-27 核实）：`tauri` 2.12、`tauri-build` 2.7、`rusqlite` 0.41（features = bundled）、`minijinja` 3、`ssh2-config` 0.9、`keyring` 3、`ssh-key` 0.6（features = ed25519）、`ts-rs` 12、`serde` 1、`serde_json` 1（features = preserve_order）、`thiserror` 2、`tokio` 1、`ulid` 3、`regex` 1、`sha2` 0.11、`dirs` 7；开发依赖 `tempfile` 3。v3 去掉了 `tiktoken-rs`（不再估算 Token）和 `junction`（不再使用链接）。
 
-Tauri 插件：`tauri-plugin-dialog`、`tauri-plugin-opener`、`tauri-plugin-window-state`、`tauri-plugin-single-instance`、`tauri-plugin-log`。**不向前端暴露 shell 插件和 fs 插件**：所有系统操作都由具名的 Rust 命令完成，capability 按最小权限配置。护栏程序作为 sidecar 打包（`bundle.externalBin`，文件名带目标三元组后缀）。
+Tauri 插件：`tauri-plugin-dialog`、`tauri-plugin-opener`、`tauri-plugin-window-state`、`tauri-plugin-single-instance`、`tauri-plugin-log`。**不向前端暴露 shell 插件和 fs 插件**：所有系统操作都由具名的 Rust 命令完成，capability 按最小权限配置。护栏程序作为 sidecar 打包（`bundle.externalBin`，文件名带目标三元组后缀）。`pnpm --dir cloudlink build:guard` 构建并准备该文件；Tauri 的 `beforeDevCommand` / `beforeBuildCommand` 自动执行此步骤，全新检出后直接运行 Cargo 门禁前也须先准备 sidecar。主应用、`guard-rules` 和 `cloudlink-guard` 都是 workspace 的默认成员，全套 Cargo 门禁覆盖三者。
 
 ### 8.2 分发方式：一律受管复制
 
@@ -1311,7 +1327,7 @@ v3 起不再使用符号链接和 Junction，所有目标都用受管复制。�
 执行方式：
 
 ```bash
-ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes <alias> 'sh -s' < probe.sh
+ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -- <alias> 'sh -s' < probe.sh
 ```
 
 整个探测 30 秒超时，超时后终止进程。
@@ -1384,13 +1400,17 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes <alias> '
   "hooks": {
     "PreToolUse": [
       { "matcher": "Bash",
-        "hooks": [ { "type": "command", "command": "C:/Users/me/.cloudlink/bin/cloudlink-guard.exe --env windows", "timeout": 10 } ] }
+        "hooks": [ { "type": "command", "command": "'C:/Users/me/.cloudlink/bin/cloudlink-guard.exe' --env 'windows'", "timeout": 10 } ] }
     ]
   }
 }
 ```
 
-WSL 中的 `command` 是同一个 Windows 程序的 `/mnt/c/...` 路径，参数为 `--env wsl:<发行版>`，经 WSL 互操作运行，所以策略和记录只在 Windows 侧有一份。护栏程序按自身所在的位置找到 `policy.json` 和记录目录。互操作被关闭时，该环境的护栏状态为「不可用」。Claude Code 在 Windows 上用哪个 shell 执行 hook 命令、路径里有空格时怎样加引号，P4c 实测后写进本节。
+WSL 中的 `command` 是同一个 Windows 程序的 `/mnt/c/...` 路径，参数为 `--env wsl:<发行版>`，经 WSL 互操作运行，所以策略和记录只在 Windows 侧有一份。护栏程序按自身所在的位置找到 `policy.json` 和记录目录。互操作被关闭时，该环境的护栏状态为「不可用」。
+
+路径和环境参数使用 POSIX 单引号，内部单引号拼接为 `'\''`；Windows 路径用 `/`，不传 `\\?\` 前缀。路径中的中文、空格、单引号和字面 `$()` 必须保持原义，不得触发命令替换。
+
+策略更新独立于 Skill 编译：即使其他资源的 Lint 阻断发布，当前档位和 Scope 仍须更新；若策略写入失败，健康检查不能把旧策略报告为生效。非列表类 CLI 操作必须提供可核对的已选目标，账号、项目或资源参数不得越过绑定的账号和 Scope。
 
 **判定流程。**
 
@@ -1447,7 +1467,7 @@ WSL 中的 `command` 是同一个 Windows 程序的 `/mnt/c/...` 路径，参数
 
 | 版本 | 里程碑 | 交付内容 | 平台 |
 | :--- | :--- | :--- | :--- |
-| v0.1（MVP） | 跑通「录入、测试连接、探测、编译、分发给 Agent」的闭环，并让 Agent 在护栏内干活 | F-101 到 103、F-105 到 108；F-201 到 205；F-207（默认英文输出）；F-301 到 308；F-401、402、403、405 | Windows 10/11（原生 + WSL2） |
+| v0.1（MVP） | 跑通「录入、测试连接、探测、编译、分发给 Agent」的闭环，并让 Agent 在护栏内干活 | F-101 到 108（含 F-104 云平台 CLI）；F-201 到 205；F-207（默认英文输出）；F-301 到 308；F-401、402、403、405 | Windows 10/11（原生 + WSL2） |
 | v0.5 | 多类资产与更多 Agent | F-104（Domain、Panel、Storage）；F-207 输出语言切换；F-404 JSON 导入导出；Cursor、Gemini CLI、GitHub Copilot、OpenCode 作为独立目标；护栏的只读白名单和危险命令可以自定义 | 增加 macOS |
 | v1.0 | 硬隔离辅助与生态扩展 | 加密备份；生成低权限 SSH 用户的辅助脚本；其他 Agent 提供同类 hook 时接入护栏；Cloudflare DNS 只读同步 | 增加 Linux |
 

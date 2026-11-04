@@ -199,7 +199,14 @@ pub enum IpcErrorId {
     InteropDisabled,
     TargetExists,
     SourceMissing,
+    CompileBlocked,
+    CliAccountUnavailable,
+    CliScopePermission,
+    CliScopeFailed,
+    CliCommandUnsupported,
+    TerminalCommandInvalid,
     NoteHasSecret,
+    ResetIncomplete,
     Internal,
 }
 

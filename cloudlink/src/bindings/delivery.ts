@@ -29,6 +29,10 @@ export interface Target {
 export type InclusionReasonId =
   /** 这台服务器没有点选这个 Agent */
   | "agent-off"
+  /** 尚未通过测试连接或探测 */
+  | "unverified"
+  /** 运行环境暂时不可用 */
+  | "env-unavailable"
   /** 只用密码认证：Agent 在非交互模式下无法输入密码（F-108 AC1） */
   | "password-only"
   /** imported：该环境的 ssh config 里没有这个别名 */

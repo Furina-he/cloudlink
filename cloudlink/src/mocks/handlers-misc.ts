@@ -7,9 +7,14 @@ import { secretRule } from "./lint"
 import { aliasOf, assetById, db, fail, logActivity, now, recompile } from "./state"
 
 function mergeNotes(items: { id: string; text?: string }[]) {
+  if (items.length === 0 || items.length > 100 || new Set(items.map((i) => i.id)).size !== items.length) fail("settings-invalid")
   const notes = items.map((i) => db.notes.find((n) => n.id === i.id) ?? fail("not-found"))
+  if (notes.some((n) => n.status !== "pending" || n.assetId !== notes[0].assetId)) fail("settings-invalid")
   // 命中密钥的笔记必须编辑后才能并入（F-308 AC2）：编辑后的内容也要再扫一遍
   items.forEach((i, k) => {
+    if (notes[k].flags.includes("secret") && (i.text === undefined || i.text.trim() === notes[k].text.trim())) fail("note-has-secret")
+    const text = (i.text ?? notes[k].text).trim()
+    if (!text || [...text].length > 500 || ["\r", "\n", "\0"].some((character) => text.includes(character))) fail("settings-invalid")
     if (secretRule(i.text ?? notes[k].text)) fail("note-has-secret")
   })
   const asset = assetById(notes[0].assetId)

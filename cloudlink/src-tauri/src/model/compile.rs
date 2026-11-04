@@ -19,6 +19,7 @@ pub enum LintId {
     ProdStandardNoGuardrails,
     ProbeStale,
     SuspectedInjection,
+    PublishFailed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]

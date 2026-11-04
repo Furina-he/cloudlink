@@ -6,7 +6,7 @@ export type GuardDetailId = "entry-missing" | "self-test-failed" | "hooks-disabl
 
 export type GuardPlanned = { entry: string, backupPath: string, };
 
-export type GuardReasonId = "read-only" | "credential-read" | "volume-delete" | "data-delete" | "host-reboot" | "firewall" | "ssh-config" | "critical-service" | "file-transfer" | "interactive" | "cli-env-export" | "cli-write" | "cli-destroy" | "unparsed";
+export type GuardReasonId = "read-only" | "credential-read" | "volume-delete" | "data-delete" | "host-reboot" | "firewall" | "ssh-config" | "critical-service" | "file-transfer" | "interactive" | "cli-env-export" | "cli-write" | "cli-destroy" | "cli-account" | "cli-scope" | "unparsed";
 
 export type GuardRuleGroup = { id: GuardReasonId, examples: Array<string>, };
 

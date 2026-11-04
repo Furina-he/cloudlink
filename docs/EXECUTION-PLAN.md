@@ -28,13 +28,13 @@
 
 **范围：** PRD 第十章 v0.1 这一行，包括：
 
-- F-101 到 F-103、F-105 到 F-108；
+- F-101 到 F-108（含 F-104 云平台 CLI 接入与 Scope）；
 - F-201 到 F-205；
 - F-207 的默认英文输出；
 - F-301 到 F-308；
 - F-401、F-402、F-403、F-405。
 
-**策略：** 先做前端（基于 Mock IPC），再做 Rust 核心，最后联调。每个阶段都有验收门槛，门槛没过不进入下一阶段。
+**策略：** 先做前端（基于 Mock IPC），再做 Rust 核心，最后联调。各阶段按本计划的验收标准检查；阶段推进与提交遵循当前会话中的用户授权，未完成的验收项如实汇报。
 
 | 阶段 | 目标 | 主要产出 | 规模 | 依赖 |
 | :--- | :--- | :--- | :--- | :--- |
@@ -44,14 +44,14 @@
 | P3 | 挂载、Skills、活动、设置（已完成，v2.1） | 看板、矩阵、Agent 视角、目标管理和其余视图 | L | P1 |
 | P3.5 | 前端改到 v3.0（已完成） | 契约与 Mock 改版；服务器卡片加详情手风琴；Agent 视图；设置并入活动；删除项目级代码与 Token 估算 | L | P3 |
 | P3.6 | 前端改到 v3.1（配电盘减负 + 云 CLI） | 单列全宽双闸刀回路行（SSH + 云 CLI）；按需平推右侧面板（控制头 + 3 个平铺 Tab）；彻底移除 30 分钟临时解锁；SSH 一步到位自动转密钥；Cloudflare / Vercel / Oracle Cloud 环境向导与 Scope 圈定；`ProviderMark` 官方品牌 Logo | L | P3.5 |
-| P4 | Rust 核心（P4a 已完成） | db、env、ssh、cli、secret、compile、probe、deliver、guard、notes、ipc 模块，护栏程序 `cloudlink-guard`（覆盖 `ssh` + `wrangler/vercel/oci`），以及测试 | L（拆成 P4a、P4b、P4c 三次会话） | P3.6 的契约 |
+| P4 | Rust 核心 | db、env、ssh、cli、secret、compile、probe、deliver、guard、operations、notes、ipc 模块，护栏程序 `cloudlink-guard`（覆盖 `ssh` + `wrangler/vercel/oci`），以及测试 | L（拆成 P4a、P4b、P4c 三次会话） | P3.6 的契约 |
 | P5 | 联调与端到端验收 | 前端接入真实 IPC、WSL 测试靶机与云 CLI 检测验收、手工验收清单 | M | P3.6、P4 |
 | P6 | 打磨与打包 | 无障碍、性能、文案修订、Windows 安装包 | S | P5 |
 
 **会话建议：**
 
 - 每个阶段开一个会话，P4 拆成三个会话。
-- 每个阶段结束时：跑完验收门槛 → 汇报 → 你确认后再 `git commit`。
+- 每个阶段结束时，运行验收门槛并在会话中汇报，按已获授权提交；尚未获得提交授权时再确认。
 - P4 只依赖 P1 定下的类型契约，所以可以和 P2、P3 并行。做法是另开一个对话，并约定那个对话只改 `cloudlink/src-tauri/`。
 
 ---
@@ -82,7 +82,7 @@
 - Windows 的 `ssh-agent` 服务是停止状态。目前 Windows 的 ssh config 里配了 1 个 Host，它能否在 BatchMode 下连上，取决于 `IdentityFile` 指向的密钥有没有口令。P5 会单独验证。
 - 本机已有用户自己的 Skill：Windows 的 `~/.claude/skills` 下有 17 项，WSL 的 `~/.agents/skills` 下有 1 项（repo-to-resume-tailor）。**任何阶段都不能碰它们。** 测试一律在临时目录进行，P5 只用 `CLOUDLINK_HOME` 等覆盖指向临时的 Agent 目录；要在真实 Agent 里验证时，只分发 `test-vps` 这一个 Skill，验收后移除。
 
-**仓库：** 根目录已经是 Git 仓库，关联远端 https://github.com/Furina-he/cloudlink （**公开仓库**），默认分支为 `main`。根目录的 `.gitignore` 和 `.gitattributes` 已经提交。`.gitattributes` 让文本文件统一使用 LF 换行，这一点很重要：探测脚本要在 Linux 上执行，带 CRLF 就会出错。每个阶段结束后，等你确认再提交和推送。
+**仓库：** 根目录已经是 Git 仓库，关联远端 https://github.com/Furina-he/cloudlink （**公开仓库**），默认分支为 `main`。根目录的 `.gitignore` 和 `.gitattributes` 已经提交。`.gitattributes` 让文本文件统一使用 LF 换行，这一点很重要：探测脚本要在 Linux 上执行，带 CRLF 就会出错。提交和推送分别遵循当前会话中的用户授权。
 
 **推送说明（2026-10-28 实测）：** 本机环境变量 `GH_TOKEN` 里是一个细粒度 token，它没有 cloudlink 仓库的写权限，直接 `git push` 会返回 403。有两种处理方式，任选其一：
 
@@ -135,7 +135,7 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
    - 任何删除文件、覆盖目录的代码路径，都要先通过所有权检查（PRD 原则 6）。
    - 测试一律在临时目录里进行。所有路径都要能用 `CLOUDLINK_HOME` 等环境变量覆盖。
    - 测试绝不碰真实的 `~/.claude` 和 `~/.agents`。
-7. **阶段汇报：** 每个阶段结束时，按以下格式汇报：
+7. **阶段汇报：** 每个阶段结束时，在会话中汇报以下内容；README、PRD 和执行计划等长期文档只保留产品说明、接口约定、开发规范及验收标准，不追加验收记录或单独的阶段验收文档：
    - 已完成的任务；
    - 每条验收门槛对应的命令和结论；
    - 截图路径；
@@ -392,62 +392,80 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
 - 黄金样例：用 PRD 3.3 的示例服务器、7.8 夹具中的另外两台和 3.3 的示例全局内容编译 Windows 环境的总 Skill，结果与 `tests/golden/` 中的文件逐字节一致，内容与 PRD 5.2 的英文示例对应。
 - 密钥扫描：样本集漏放行数为 0。
 
-### P4b Rust 核心：探测、分发、IPC（L）
+### P4b Rust 核心：探测、分发、云 CLI、IPC（L）
 
 1. **probe：**
    - 内置探测脚本（PRD 8.3）。
-   - 执行命令：`ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes <alias> 'sh -s'`；WSL 目标通过 `wsl.exe` 执行。
-   - 30 秒超时，支持取消。
+   - 执行命令：`ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -- <alias> 'sh -s'`；WSL 目标通过 `wsl.exe` 执行，密码认证复用受控 `SSH_ASKPASS`。
+   - 默认 30 秒超时，支持取消；原始 stdout/stderr 只保留在有上限的内存缓冲中，不写入磁盘、数据库、日志或 IPC。
    - 输出按段解析；错误按 8.3 分类，只返回 id。
-   - 探测数据按不可信输入清洗（8.3）；自动合并，合并前保存快照，支持撤销最近一次；疑似注入的值列为待确认。
+   - 探测数据按不可信输入清洗（8.3）；自动合并，合并前保存快照，支持确认待处理项和撤销最近一次。保留人工标注与探测后的手工修改，失败段不用于推断服务已消失。
    - 用预先录制的样例输出测试解析，至少覆盖 Ubuntu、Alpine/BusyBox 和「无 docker 权限」三种情况。
 2. **deliver：**
    - 受管复制：把各运行环境的编译产物写进已启用的目标；WSL 目标经 `\\wsl.localhost\<发行版>\` 路径写入；先写暂存目录再整体交换。
-   - 所有权标记 `.cloudlink.json`，以及冲突判定。
-   - 列入计算：这台服务器是否点选了这个 Agent × 该环境是否有连接配置，每个「运行环境 × Agent」一行；不满足就记为未列入并给出原因 id。每个「运行环境 × Agent」编译一份总 Skill（2026-11-01）。
-   - 健康检查四类问题：副本缺失、副本被改动、待同步、冲突，并重新计算列入情况；支持修复。
-3. **ipc：**
-   - 实现 PRD 7.8 中除护栏、操作记录和笔记以外的命令和事件（这三部分在 P4c 实现）。
+   - 校验所有权标记 `.cloudlink.json`、整树内容哈希、祖先路径重叠及 symlink/reparse point，拒绝覆盖或删除外部内容。
+   - 列入计算：资源是否点选了这个 Agent × 资源是否通过连接验证 × 该环境是否有可用的 SSH 连接配置；CLI 资源则要求该环境的绑定账号就绪。一次资源验证允许其他已有可用配置的环境列入。每个「运行环境 × Agent」一行，不满足就记为未列入并给出原因 id；托管 SSH 还须校验完整配置与 Include 的实际生效位置。
+   - 健康检查四类问题：副本缺失、副本被改动、待同步、冲突，并重新计算列入情况；检查只报告状态，修复由具名命令执行。
+   - 编译受阻时保留上次成功的编译源，但禁止用旧源创建或修复副本；授权、导出字段或 Scope 缩减时，移除仍暴露旧授权的受管副本。
+3. **cli（F-104）：**
+   - 只检测已启用 Agent 的运行环境，通过 Login Shell 发现绝对路径、版本和账号；支持 Cloudflare Account ID、Vercel 稳定 Team/User ID 和 OCI Profile。
+   - Scope 按 provider/account 绑定与校验，覆盖 Zones/DNS 关联、Workers/Pages、Vercel 项目分页，以及 OCI compartments 与实例公网地址；过期、撤权或刷新失败时旧 Scope 选项不能继续用于新增授权。
+   - CLI 原始响应与临时认证数据只在子进程内存中投影，Rust 返回公开元数据和固定错误 ID；关闭 Wrangler 磁盘诊断日志，不改用户登录态。
+   - 「打开终端」只预填固定允许的安装/登录命令，等待用户回车执行。隔离运行默认注入 EmptyRunner 或 fixture runner，不探测真实 CLI。
+4. **ipc 与持久化协调：**
+   - 注册 PRD 7.8 的资源、连接、探测、分发、CLI、设置与活动命令和事件；护栏、操作记录、笔记及 `reset_data` 留到 P4c。
    - capability 按最小权限配置，不开放 shell 和 fs 插件。
-   - 日志里不出现原始探测输出和密码。
+   - 增加密码 revision 引用、失败/旧凭据的持久清理队列与生成/复制密钥回执；OS 凭据访问在状态锁与数据库锁外完成。
+   - 异步任务可取消，窗口关闭时取消活动任务；新任务和确认/撤销必须校验当前资源及最近运行身份。日志与事件只发送 ID、参数和清洗后的字段。
 
 **验收门槛：**
 
-- `cargo test` 通过，其中包括 deliver 模块在临时目录中的集成测试。依赖 WSL 的测试标记为 `#[ignore]`，留到 P5 手动运行。
-- clippy 和 fmt 通过。
-- ts-rs 导出的类型与前端契约没有差异；如果有差异，已经说明原因并同步修改。
+- `cargo fmt --check --manifest-path cloudlink/src-tauri/Cargo.toml` 通过。
+- `cargo clippy --locked --jobs 1 --manifest-path cloudlink/src-tauri/Cargo.toml --all-targets -- -D warnings` 通过。
+- `cargo test --locked --jobs 1 --manifest-path cloudlink/src-tauri/Cargo.toml -- --test-threads=1` 通过；覆盖临时目录中的分发、数据库回执与注入 runner 的 IPC 集成，不访问真实 Skills、SSH 配置、CLI 登录态或 OS 凭据库。
+- ts-rs 导出与前端契约同步，既有命令与事件载荷保持兼容。
+- 前端 `pnpm --dir cloudlink typecheck`、`pnpm --dir cloudlink lint`、`pnpm --dir cloudlink test` 和隔离桥回归 `node --test cloudlink/src-tauri/src/cli/metadata.test.cjs` 通过。
+- `pnpm --dir cloudlink e2e --workers=1 --trace=retain-on-failure` 通过；门槛截图按每个视图使用独立 page/context，覆盖 PRD 7.10 要求的全部视图、主题与尺寸，保留页面断言和控制台检查。
+- `pnpm --dir cloudlink build` 通过。
+
+隔离测试与 Mock E2E 不替代 P5 的真实 Windows/WSL、SSH、云 CLI 和 Agent 使用验收。
 
 ### P4c 护栏、操作记录与笔记（L）
 
 1. **guard-rules（规则 crate）：**
    - 按 PRD 8.6 实现保守的 shell 词法分析和判定规则。
-   - 命令样本集放在 `src-tauri/tests/guard-corpus/`，不少于 200 条。覆盖：巡检清单（PRD 5.6）的全部命令必须放行；常见写操作及其变体（引号、管道、`&&`、`sudo`、`docker exec`、`sh -c`、heredoc、重定向）在只读服务器上必须拦下；标准运维下的危险类别必须拦下；凭据读取在任何档位都拦下；临时解锁期间放行；`policy.json` 缺失时放行。
+   - 命令样本集放在 `src-tauri/tests/guard-corpus/`，不少于 200 条。覆盖：巡检清单（PRD 5.6）的全部命令必须放行；常见写操作及其变体（引号、管道、`&&`、`sudo`、`docker exec`、`sh -c`、heredoc、重定向）在只读资源上必须拦下；标准运维下的危险类别必须拦下；SSH 凭据读取与云 CLI 凭据导出在任何档位都拦下；账号与 Scope 必须匹配绑定资源；`policy.json` 缺失时放行。档位按 v3.1 直接切换，不实现临时解锁或倒计时。
 2. **cloudlink-guard 程序：**
    - 从标准输入读 hook 的 JSON，按 `policy.json` 判定，拦下时输出 deny JSON，并追加记录（精简脱敏）。
    - 只依赖标准库和 serde_json；作为 sidecar 打包（`bundle.externalBin`）。
 3. **guard 模块：**
-   - 原子写入 `policy.json`：服务器的别名、地址、档位、关键服务、解锁到期时间。
+   - 原子写入 `policy.json`：服务器的别名、地址、档位、关键服务，以及云 CLI 的 provider、绑定账号与已选 Scope。
    - 在临时 HOME 中测试 `settings.json` 的安装与移除：已有其他设置和 hook 时原样保留，键顺序不变；文件不是合法 JSON 时拒绝修改；生成备份文件；只删除自己的条目。
-   - 启动时把护栏程序复制到 `~/.cloudlink/bin/`（版本不同才复制）；自检；临时解锁与锁回。
-4. **实测并写进 PRD 8.6：** Claude Code 在 Windows 上执行 hook 命令用的 shell，以及路径的引号写法；WSL 中经 `/mnt/c` 调用的耗时；跳过权限确认模式下拦截是否生效。如果某种模式下 JSON 形式的拒绝不生效，改用退出码 2 加 stderr 说明原因（官方文档写明退出码 2 在权限规则之前生效）。
+   - 启动时把护栏程序复制到 `~/.cloudlink/bin/`（版本不同才复制）；自检；资源档位、授权与 Scope 变化时更新策略。
+4. **真实 Agent 验证：** 实测 Claude Code 在 Windows 上执行 hook 命令用的 shell、路径的引号写法、WSL 中经 `/mnt/c` 调用的耗时，以及跳过权限确认模式下拦截是否生效，结果在会话中汇报。只有真实验证证明 JSON 形式的拒绝不生效时，才调整为退出码 2 加 stderr 说明原因，并同步 PRD 8.6 的协议约定。
 5. **操作记录（F-307）：** 读入 JSONL、用完整规则集脱敏、30 天清理；`operations://new` 事件。
 6. **笔记（F-308）：** 收件箱读取（先重命名再读）、扫描、并入与忽略；`notes://new` 事件。
-7. **ipc：** 护栏、操作记录和笔记的命令，以及 `guard://changed` 事件。
+7. **ipc 与完整数据清理：** 护栏、操作记录和笔记的命令，以及 `guard://changed` 事件；实现 `reset_data`，统一清理受管分发、托管 ssh 配置、凭据库中的密码及清理回执、护栏 hook、笔记收件箱和操作记录，严格校验所有权并保留用户的其他文件与设置。该命令与完整 guard/notes 清理一起验收。
 
 **验收门槛：**
 
-- `cargo test` 通过，样本集全部符合预期：漏放行 0，误拦 0。
-- 在临时 HOME 中安装再移除护栏后，`settings.json` 与安装前逐字节相同；安装后除 CloudLink 的条目外，其余内容不变。
-- 护栏程序的判定耗时（Windows 原生，100 次取 p95）附在汇报里，不超过 50ms。
-- clippy 和 fmt 通过；ts-rs 导出的类型与前端契约一致。
+- `cargo test --locked --jobs 1 --manifest-path cloudlink/src-tauri/Cargo.toml -- --test-threads=1` 通过；规则样本集漏放行与误拦均为 0，巡检清单中的全部命令能通过只读白名单。
+- 临时 HOME 中安装再移除护栏，`settings.json` 与安装前逐字节相同；其他设置和 hook 原文保留；无所有权、损坏备份或外部移动 hook 时拒绝含糊清理。
+- 实际打包 Guard 的判定 p95 在 Windows 原生环境不超过 50ms，经 WSL 互操作不超过 300ms；中文、空格、单引号与字面 `$()` 路径引用保持原义。
+- 全工作区 `cargo fmt --check --manifest-path cloudlink/src-tauri/Cargo.toml` 与 `cargo clippy --locked --jobs 1 --manifest-path cloudlink/src-tauri/Cargo.toml --all-targets -- -D warnings` 通过。
+- ts-rs 导出与前端契约一致；前端 typecheck、lint、Vitest、CLI 桥回归、完整 Mock E2E 和生产前端 build 通过。
+- 完整重置及后台任务的并发回归通过；失败可重试，重启或迟到的任务不能恢复旧授权或旧前端状态。
+- 第 4 项真实 Claude Code 实测通过：确认实际 Windows hook shell，以及跳过权限确认模式下的拒绝行为。独立 sidecar、Git Bash 和 WSL 进程测试不能替代真实 Agent 验证；缺少证据时，在会话汇报中保留未验证状态。
+
+全新检出后，直接运行 Cargo 门禁前执行 `pnpm --dir cloudlink build:guard`，准备 Tauri 所需的目标三元组后缀 sidecar；`tauri dev/build` 的前置命令会自动执行。Rust 与 Vitest/Playwright 全套串行运行，本机测试隔离与内存规约见 `CC-SWITCH-EXPERIENCE.md` 第四章。
 
 ### P5 联调与端到端验收（M）
 
-1. 前端切换到真实 IPC（非 Mock 模式），逐项修复与契约不一致的地方。
+1. 前端切换到真实 IPC（非 Mock 模式），逐项修复与契约不一致的地方；在接入前满足 PRD 8.5 的 CSP 要求，并检查正式窗口的安全配置。
 2. **搭测试靶机：**
    - 在 WSL Ubuntu 中安装 `openssh-server` 和 `docker.io`，启动 2 个容器，例如 nginx 和 redis。
    - 在 Windows 和 WSL 的 ssh config 中各加一条 `Host test-vps`，指向 WSL 中的 sshd（例如 `localhost:2222`），使用专门的测试密钥。
-3. **手工验收清单**（逐条打勾并附截图）：
+3. **手工验收清单**（执行结果和截图在会话中逐项汇报）：
    - [ ] 首次启动引导能检测到 Windows、WSL，以及已安装的 Claude Code 和 Codex。
    - [ ] 在界面里新建 `test-vps`（私钥认证），测试连接时显示主机指纹，确认后连接成功；托管配置写入、Include 加在用户 config 开头且有备份。
    - [ ] 用密码新建一台（靶机临时开启密码登录），测试连接成功；「改用密钥登录」后公钥已追加、认证方式已切换，凭据库中的密码可删除。
@@ -470,7 +488,7 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
    - [ ] 护栏安装：同意对话框中展示的 JSON 与实际写入一致；生成了 `settings.json.cloudlink-bak`；`settings.json` 中原有的其他设置和 hook 原样保留。
    - [ ] 在 Claude Code 的跳过权限确认模式下（`--dangerously-skip-permissions`），对只读的 `test-vps`：让 Agent 重启一个容器，被拦下，Agent 收到原因并且没有尝试绕过；让它读取一个 `.env`，被拦下；巡检类命令全部放行。WSL 中再验证一次拦截。
    - [ ] 把 `test-vps` 切到标准运维：普通的容器重启放行，`docker compose down -v` 被拦下；把 nginx 容器标为「关键」后，`docker stop nginx` 被拦下。
-   - [ ] 临时解锁后，上面被拦的命令放行，记录标为「解锁期间放行」；「立即锁回」或到期后恢复拦截；关掉 CloudLink 后护栏照常工作。
+   - [ ] 切回「只读巡检」后，写操作恢复拦截；关掉 CloudLink 后护栏照常工作，模式取自已发布策略。
    - [ ] 操作记录：详情中能看到以上命令和结果，命令里故意写的假 Token 已脱敏。
    - [ ] 护栏自检：手动删掉 `settings.json` 中的条目后，Agent 页显示「护栏未生效」；重新安装后恢复。
    - [ ] 巡检：对 Claude Code 说「巡检一下所有服务器」，Agent 按清单逐台执行，没有命令被护栏拦下，最后给出汇报表。
@@ -479,7 +497,7 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
    - [ ] 用户原有的 Skill 完好无损：Windows `~/.claude/skills` 下的 17 项，以及 WSL `~/.agents/skills` 下的 repo-to-resume-tailor。验收前后各列一次目录，内容逐项相同。
 4. Playwright 的 Mock 用例全部仍然通过。
 
-**验收门槛：** 清单全部打勾；遗留问题列成清单，并标注严重程度。
+**验收门槛：** 清单全部通过；在会话中列出遗留问题，并标注严重程度。
 
 ### P6 打磨与打包（S）
 
@@ -499,7 +517,7 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
 
 - 第 0 节列出的功能编号全部实现，并且各自的验收标准（AC）全部通过。
 - PRD 7.10 的完成定义（DoD）全部满足。
-- P5 的手工验收清单全部打勾。
+- P5 的手工验收清单全部通过。
 - `cargo test`、`pnpm test`、`pnpm e2e`、`pnpm build`、`pnpm tauri build` 全部通过。
 
 ---
@@ -534,12 +552,15 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
 ```text
 你在 D:\desk\Desktop\cloudlink 中实施 CloudLink v0.1（Windows 优先）。这是 Git 仓库，远端为 https://github.com/Furina-he/cloudlink 。
 先按顺序通读：README.md → PRODUCT.md → DESIGN.md → docs/PRD.md（重点是第三到第八章）→ docs/EXECUTION-PLAN.md → docs/CC-SWITCH-EXPERIENCE.md。
-然后从 EXECUTION-PLAN 中第一个未完成的阶段开始执行（2026-10-30 时为 P3.5）。规则：
-1. 每个阶段只做这个阶段的任务。阶段结束时逐条运行验收门槛，把命令、结果和截图路径汇报给我；
-   等我确认后再进入下一阶段，git commit 也要等我确认。
+然后结合 README 的阶段概述、当前工作区和会话中的最新授权，继续已授权的阶段任务。规则：
+1. 阶段结束时逐条运行验收门槛，把命令、结果、截图路径和遗留问题在会话中汇报给我；
+   验收记录不写入 README、PRD、执行计划等长期文档，也不新建阶段验收文档。
+   阶段推进、git commit 和推送按当前会话中的用户授权执行，已明确授权的动作不重复确认。
 2. docs/PRD.md 第七章是硬约束：依赖只能来自白名单；7.3 映射表里已有实现的必须用；
    表里没有的，先给我候选方案，不要擅自引入依赖或自写组件。
 3. 遇到 PRD 没有覆盖、并且会影响产品行为的决定，先问我。
 4. 不要修改 docs/archive/ 下的文件。
-现在从 P3.5 开始。
+先检查已有实现和工作区改动，避免重复实现或覆盖尚未提交的工作。
+真实 Windows/WSL、SSH、云 CLI 与 Agent 联调按 P5 清单执行，缺少真实证据时在会话汇报中保留未验证状态。
+所有测试使用隔离目录，不触碰真实用户 Skills、SSH 配置、CLI 登录态或 OS 凭据库。
 ```

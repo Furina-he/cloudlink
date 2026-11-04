@@ -1,0 +1,38 @@
+@@os
+NAME="Alpine Linux"
+ID=alpine
+VERSION_ID=3.20.3
+PRETTY_NAME="Alpine Linux v3.20"
+@@status os 0
+@@kernel
+Linux 6.6.58-0-virt aarch64
+@@status kernel 0
+@@cpu
+4
+@@status cpu 0
+@@mem
+MemTotal: 4194304 kB
+@@status mem 0
+@@disk
+Filesystem           1024-blocks    Used Available Capacity Mounted on
+/dev/vda3               83886080 2097152  81788928       3% /
+@@status disk 0
+@@tools
+/usr/sbin/nginx
+/usr/bin/docker
+@@status tools 0
+@@panel
+@@status panel 0
+@@docker
+web	nginx:alpine	0.0.0.0:8080->80/tcp, :::8080->80/tcp	Up 20 minutes
+dns	coredns/coredns:1.11.3	127.0.0.1:1053->53/udp	Up 20 minutes
+@@status docker 0
+@@systemd
+@@status systemd 127
+@@listen
+Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State
+tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN
+tcp        0      0 :::22                   :::*                    LISTEN
+tcp        0      0 0.0.0.0:8080            0.0.0.0:*               LISTEN
+@@status listen 0

@@ -1,0 +1,43 @@
+@@os
+PRETTY_NAME="Ubuntu 24.04.1 LTS"
+NAME="Ubuntu"
+VERSION_ID="24.04"
+ID=ubuntu
+@@status os 0
+@@kernel
+Linux 6.8.0-48-generic x86_64
+@@status kernel 0
+@@cpu
+2
+@@status cpu 0
+@@mem
+MemTotal: 2034688 kB
+@@status mem 0
+@@disk
+Filesystem     1024-blocks     Used Available Capacity Mounted on
+/dev/vda1         41943040 12582912  29360128      30% /
+@@status disk 0
+@@tools
+/usr/sbin/nginx
+/usr/bin/docker
+/usr/local/bin/1pctl
+@@status tools 0
+@@panel
+1panel	/opt/1panel
+@@status panel 0
+@@docker
+openresty	openresty:1.25.3	0.0.0.0:80->80/tcp, [::]:80->80/tcp, 0.0.0.0:443->443/tcp, [::]:443->443/tcp	Up 3 hours
+redis	redis:7.4	127.0.0.1:6379->6379/tcp	Up 3 hours (healthy)
+api	ghcr.io/example/api@sha256:001122	8000/tcp	Up 3 hours
+@@status docker 0
+@@systemd
+cron.service loaded active running Regular background program processing daemon
+docker.service loaded active running Docker Application Container Engine
+ssh.service loaded active running OpenBSD Secure Shell server
+@@status systemd 0
+@@listen
+LISTEN 0 128 0.0.0.0:22 0.0.0.0:*
+LISTEN 0 4096 0.0.0.0:443 0.0.0.0:*
+LISTEN 0 511 127.0.0.1:6379 0.0.0.0:*
+LISTEN 0 128 [::]:22 [::]:*
+@@status listen 0

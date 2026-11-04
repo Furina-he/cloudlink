@@ -1,0 +1,9 @@
+[package]
+name = "cloudlink-guard"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+
+[dependencies]
+serde_json = "1"
+guard-rules = { path = "../guard-rules" }

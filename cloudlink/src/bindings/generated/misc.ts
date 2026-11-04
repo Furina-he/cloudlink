@@ -24,7 +24,7 @@ export type EnvSetting = { id: EnvId, enabled: boolean, };
 
 export type IpcError = { id: IpcErrorId, params?: Record<string, string | number>, };
 
-export type IpcErrorId = "not-found" | "alias-taken" | "alias-conflict" | "cannot-distribute" | "password-missing" | "password-target-changed" | "connection-failed" | "settings-invalid" | "interop-disabled" | "target-exists" | "source-missing" | "note-has-secret" | "internal";
+export type IpcErrorId = "not-found" | "alias-taken" | "alias-conflict" | "cannot-distribute" | "password-missing" | "password-target-changed" | "connection-failed" | "settings-invalid" | "interop-disabled" | "target-exists" | "source-missing" | "compile-blocked" | "cli-account-unavailable" | "cli-scope-permission" | "cli-scope-failed" | "cli-command-unsupported" | "terminal-command-invalid" | "note-has-secret" | "reset-incomplete" | "internal";
 
 export type OutputLanguage = "en";
 

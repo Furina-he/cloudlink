@@ -21,6 +21,7 @@ import { useCliStore } from "@/stores/cli"
 import { useDeliveryStore } from "@/stores/deliveries"
 import { useGuardStore } from "@/stores/guard"
 import { loadAll, useLoadError } from "@/stores/load"
+import { useNotesStore } from "@/stores/notes"
 import { togglePreview, useUIStore } from "@/stores/ui"
 
 const VIEW_COMPONENT: Record<ViewId, ComponentType<{ focusTitle: boolean }>> = {
@@ -53,23 +54,42 @@ function LoadErrorAlert() {
 }
 
 /**
- * 副本和护栏的健康检查（F-305）：窗口重新聚焦时检查，30 秒内最多一次；启动时的检查随首次加载完成。
- * 刚在终端里安装或登录云平台 CLI 的，不受节流，立即重新检测（F-104 AC2）
+ * 副本健康检查（F-305）：窗口重新聚焦时检查，30 秒内最多一次；启动时随首次加载完成。
+ * 护栏与笔记在窗口可见时每 60 秒读取，重新聚焦或恢复可见时立即读取（F-307/308）。
+ * 刚在终端里安装或登录云平台 CLI 的，不受节流，立即重新检测（F-104 AC2）。
  */
 const RECHECK_MS = 30_000
 
 function useRecheckOnFocus() {
   useEffect(() => {
     let last = Date.now()
+    let refreshing = false
+    const refreshFeedback = async () => {
+      if (refreshing || document.visibilityState !== "visible") return
+      refreshing = true
+      try {
+        // F-307/308: these reads import both the shared inbox and guard logs in the backend.
+        await Promise.allSettled([useNotesStore.getState().load(), useGuardStore.getState().load()])
+      } finally {
+        refreshing = false
+      }
+    }
     const onFocus = () => {
       useCliStore.getState().onFocus()
+      void refreshFeedback()
       if (Date.now() - last < RECHECK_MS || useDeliveryStore.getState().status !== "ready") return
       last = Date.now()
       void useDeliveryStore.getState().checkAll().catch(() => {})
-      void useGuardStore.getState().load()
     }
+    const onVisible = () => { void refreshFeedback() }
+    const timer = window.setInterval(() => { void refreshFeedback() }, 60_000)
     window.addEventListener("focus", onFocus)
-    return () => window.removeEventListener("focus", onFocus)
+    document.addEventListener("visibilitychange", onVisible)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener("focus", onFocus)
+      document.removeEventListener("visibilitychange", onVisible)
+    }
   }, [])
 }
 

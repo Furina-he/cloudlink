@@ -104,6 +104,15 @@ pub fn run_with_tick(
     opts: RunOpts<'_>,
     tick: &mut dyn FnMut() -> io::Result<()>,
 ) -> io::Result<Output> {
+    if opts.cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+        return Ok(Output {
+            code: None,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            ended: Ended::Cancelled,
+            elapsed: Duration::ZERO,
+        });
+    }
     let out = tempfile::tempfile()?;
     let err = tempfile::tempfile()?;
     let stdin = match opts.stdin {
@@ -209,5 +218,21 @@ mod tests {
         )
         .unwrap();
         assert_eq!(o.ended, Ended::Cancelled);
+    }
+
+    #[test]
+    fn pre_cancelled_command_never_starts_a_process() {
+        let tmp = tempfile::tempdir().unwrap();
+        let flag = AtomicBool::new(true);
+        let out = run(
+            command(tmp.path().join("must-not-start.exe")),
+            RunOpts {
+                cancel: Some(&flag),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(out.ended, Ended::Cancelled);
+        assert!(out.stdout.is_empty() && out.stderr.is_empty());
     }
 }

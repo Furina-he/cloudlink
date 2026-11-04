@@ -44,6 +44,8 @@ pub struct Target {
 #[ts(export, export_to = "delivery.ts")]
 pub enum InclusionReasonId {
     AgentOff,
+    Unverified,
+    EnvUnavailable,
     PasswordOnly,
     NotDefined,
     NotWritten,

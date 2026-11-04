@@ -95,7 +95,8 @@ export interface DeleteResult {
 }
 
 /** 分发开关打不开的原因（F-303 AC1） */
-export type DistributeBlockReason = "unverified" | "failed" | "password-only" | "cli-not-ready"
+export type DistributeBlockReason =
+  "unverified" | "failed" | "password-only" | "cli-not-ready"
 
 export type IpcErrorId =
   | "not-found"
@@ -116,8 +117,16 @@ export type IpcErrorId =
   | "target-exists"
   /** 复制到 WSL 的源文件不存在 */
   | "source-missing"
+  /** 编译受阻期间不能用旧产物创建或修复副本 */
+  | "compile-blocked"
+  | "cli-account-unavailable"
+  | "cli-scope-permission"
+  | "cli-scope-failed"
+  | "cli-command-unsupported"
+  | "terminal-command-invalid"
   /** 并入的笔记仍然命中密钥（F-308 AC2） */
   | "note-has-secret"
+  | "reset-incomplete"
   | "internal"
 
 /** IPC 失败时 invoke 抛出的对象。文案由 copy.ts 按 id 映射 */

@@ -24,6 +24,7 @@ import { ipc, toIpcError } from "@/lib/ipc"
 import { useActivityStore } from "@/stores/activity"
 import { useDeliveryStore } from "@/stores/deliveries"
 import { loadAll } from "@/stores/load"
+import { useOperationStore } from "@/stores/operations"
 import { useTargetStore } from "@/stores/targets"
 import { useUIStore } from "@/stores/ui"
 import { Section } from "./Section"
@@ -117,6 +118,7 @@ export function DangerSection() {
     attempt(async () => {
       await ipc.resetData()
       useUIStore.getState().selectAsset(null, { force: true })
+      useOperationStore.setState({ recentByAsset: {} })
       setTheme("system")
       loadAll()
       void useActivityStore.getState().load({})

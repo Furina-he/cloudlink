@@ -530,6 +530,7 @@ name = "cloudlink"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "guard-rules",
  "keyring",
  "log",
  "minijinja",
@@ -553,6 +554,14 @@ dependencies = [
  "ts-rs",
  "ulid",
  "zeroize",
+]
+
+[[package]]
+name = "cloudlink-guard"
+version = "0.1.0"
+dependencies = [
+ "guard-rules",
+ "serde_json",
 ]
 
 [[package]]
@@ -1692,6 +1701,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "guard-rules"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

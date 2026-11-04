@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use ssh_key::{HashAlg, KnownHosts, known_hosts::HostPatterns};
@@ -619,9 +619,22 @@ pub fn install_public_key(
     t: &TestTarget,
     public_openssh: &str,
 ) -> std::result::Result<(), SshError> {
+    install_public_key_cancellable(tools, tmp_dir, t, public_openssh, None)
+}
+
+pub fn install_public_key_cancellable(
+    tools: &SshTools,
+    tmp_dir: &std::path::Path,
+    t: &TestTarget,
+    public_openssh: &str,
+    cancel: Option<&AtomicBool>,
+) -> std::result::Result<(), SshError> {
     let alias = || params! {"alias" => t.alias.as_str()};
+    if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+        return Err(SshError::new(SshErrorId::Unknown, alias()));
+    }
     let remote = install_key_command(public_openssh).map_err(|_| SshError::new(SshErrorId::Unknown, alias()))?;
-    let (out, _) = run_ssh(tools, tmp_dir, t, Some(&remote), None, None, None)
+    let (out, _) = run_ssh(tools, tmp_dir, t, Some(&remote), None, None, cancel)
         .map_err(|_| SshError::new(SshErrorId::Unknown, alias()))?;
     if out.ended == Ended::Exited && out.code == Some(0) {
         Ok(())
@@ -813,6 +826,33 @@ mod tests {
         assert!(c.contains(">> ~/.ssh/authorized_keys"));
         assert!(!c.replace(">>", "").contains('>'), "never truncate");
         assert!(install_key_command("ssh-ed25519 AAAA x'; rm -rf ~").is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cancelled_key_install_never_sends_password_or_starts_remote_installation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (tools, _) = changed_key_tools(tmp.path());
+        let script = tmp.path().join("fake-ssh.ps1");
+        let code = std::fs::read_to_string(&script).unwrap().replace(
+            "exit 0\n",
+            "[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'remote-install'), 'yes')\nexit 0\n",
+        );
+        std::fs::write(script, code).unwrap();
+        let key = crate::secret::keygen::generate("hk-edge").unwrap();
+        let cancel = AtomicBool::new(true);
+        assert!(
+            install_public_key_cancellable(
+                &tools,
+                tmp.path(),
+                &target(tmp.path(), true),
+                &key.public_openssh,
+                Some(&cancel)
+            )
+            .is_err()
+        );
+        assert!(!tmp.path().join("received-password").exists());
+        assert!(!tmp.path().join("remote-install").exists());
     }
 
     /// Fake ssh requests the actual broker password and records when it would run a remote command.

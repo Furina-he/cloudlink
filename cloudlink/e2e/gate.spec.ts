@@ -46,18 +46,19 @@ const VIEWS: { name: string; open: (page: Page) => Promise<void> }[] = [
 
 for (const scheme of ["light", "dark"] as const) {
   for (const [width, height] of [[900, 640], [760, 520]]) {
-    test(`门槛截图：${scheme} ${width}`, async ({ page }) => {
-      const errors = collectConsoleErrors(page)
-      await page.emulateMedia({ colorScheme: scheme })
-      await page.setViewportSize({ width, height })
-      for (const v of VIEWS) {
+    // 每个视图使用独立的 page/context，避免同页连续重载开发模块耗尽 Chromium 资源。
+    for (const v of VIEWS) {
+      test(`门槛截图：${scheme} ${width} ${v.name}`, async ({ page }) => {
+        const errors = collectConsoleErrors(page)
+        await page.emulateMedia({ colorScheme: scheme })
+        await page.setViewportSize({ width, height })
         await ready(page)
         await v.open(page)
         // 焦点环不进截图
         await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
         await page.screenshot({ path: `${GATE}/${v.name}-${scheme}-${width}.png`, animations: "disabled" })
-      }
-      expect(errors).toEqual([])
-    })
+        expect(errors).toEqual([])
+      })
+    }
   }
 }

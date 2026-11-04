@@ -1,0 +1,34 @@
+@@os
+PRETTY_NAME="Ubuntu 24.04.1 LTS"
+NAME="Ubuntu"
+VERSION_ID="24.04"
+ID=ubuntu
+@@status os 0
+@@kernel
+Linux 6.8.0-48-generic x86_64
+@@status kernel 0
+@@cpu
+2
+@@status cpu 0
+@@mem
+MemTotal: 2034688 kB
+@@status mem 0
+@@disk
+Filesystem     1024-blocks     Used Available Capacity Mounted on
+/dev/vda1         41943040 12582912  29360128      30% /
+@@status disk 0
+@@tools
+/usr/bin/docker
+@@status tools 0
+@@panel
+@@status panel 0
+@@docker
+@@status docker 1
+@@systemd
+cron.service loaded active running Regular background program processing daemon
+ssh.service loaded active running OpenBSD Secure Shell server
+@@status systemd 0
+@@listen
+LISTEN 0 128 0.0.0.0:22 0.0.0.0:*
+LISTEN 0 128 [::]:22 [::]:*
+@@status listen 0

@@ -4,11 +4,11 @@
 
 use std::fs;
 use std::path::Path;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use super::SshTools;
-use super::connect::{TestTarget, install_public_key, run_test};
+use super::connect::{TestTarget, install_public_key_cancellable, run_test};
 use crate::env::EnvContext;
 use crate::error::{AppError, Result};
 use crate::model::asset::{AssetAuth, AuthMethod};
@@ -35,6 +35,9 @@ pub fn convert_to_key(
     cancel: Option<&AtomicBool>,
 ) -> std::result::Result<Converted, SshError> {
     let alias = || params! {"alias" => t.alias.as_str()};
+    if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+        return Err(SshError::new(SshErrorId::Unknown, alias()));
+    }
     let Some(host) = t
         .managed
         .as_ref()
@@ -46,10 +49,21 @@ pub fn convert_to_key(
     let path = keygen::save(&t.env.host_in_home(&[".ssh"]), &t.alias, &key)
         .map_err(|_| SshError::new(SshErrorId::Unknown, alias()))?;
     let discard = || {
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_file(keygen::pub_path(&path));
+        let public_path = keygen::pub_path(&path);
+        let public_content = format!("{}\n", key.public_openssh);
+        for (file, expected) in [
+            (&path, key.private_openssh.as_bytes()),
+            (&public_path, public_content.as_bytes()),
+        ] {
+            if !file.ancestors().any(crate::fsx::path_is_link)
+                && fs::symlink_metadata(file).is_ok_and(|m| m.is_file() && !crate::fsx::is_link(&m))
+                && fs::read(file).is_ok_and(|actual| zeroize::Zeroizing::new(actual).as_slice() == expected)
+            {
+                let _ = fs::remove_file(file);
+            }
+        }
     };
-    if let Err(e) = install_public_key(tools, tmp_dir, t, &key.public_openssh) {
+    if let Err(e) = install_public_key_cancellable(tools, tmp_dir, t, &key.public_openssh, cancel) {
         discard();
         return Err(e);
     }

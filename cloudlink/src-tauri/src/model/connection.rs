@@ -7,7 +7,7 @@ use super::asset::ConnectionInput;
 use super::env::EnvId;
 use super::probe::SshError;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "connection.ts")]
 pub struct ConnectionTestRequest {
@@ -22,6 +22,17 @@ pub struct ConnectionTestRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub env_id: Option<EnvId>,
+}
+
+impl std::fmt::Debug for ConnectionTestRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionTestRequest")
+            .field("asset_id", &self.asset_id)
+            .field("connection", &self.connection)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field("env_id", &self.env_id)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -69,4 +80,24 @@ pub struct ConnectionTestedEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub host_key: Option<HostKeyInfo>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_debug_never_exposes_the_password() {
+        let request = ConnectionTestRequest {
+            asset_id: None,
+            connection: ConnectionInput::Imported {
+                ssh_alias: "fixture".into(),
+            },
+            password: Some("unique-fixture-password".into()),
+            env_id: Some(EnvId::windows()),
+        };
+        let debug = format!("{request:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("unique-fixture-password"));
+    }
 }

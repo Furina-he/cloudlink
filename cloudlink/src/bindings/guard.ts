@@ -43,6 +43,10 @@ export type GuardReasonId =
   | "cli-write"
   /** 云平台 CLI 的删库、删站、销毁实例（标准运维档也拦下） */
   | "cli-destroy"
+  /** 账号无法匹配已绑定的云平台资源 */
+  | "cli-account"
+  /** 命令目标不在已公开的 Scope 内，或无法确认目标 */
+  | "cli-scope"
   | "unparsed"
 
 /** 护栏判定过的一条命令（F-307） */

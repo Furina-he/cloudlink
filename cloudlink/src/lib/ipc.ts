@@ -41,7 +41,8 @@ export type CliEnvStates = Partial<Record<EnvId, CliEnvState>>
 
 export const ipc = {
   detectEnvironments: () => invoke<Environment[]>("detect_environments"),
-  listSshHosts: (envId?: EnvId) => invoke<SshHostList>("list_ssh_hosts", { envId }),
+  listSshHosts: (envId?: EnvId) =>
+    invoke<SshHostList>("list_ssh_hosts", { envId }),
   listAssets: () => invoke<Asset[]>("list_assets"),
   saveAsset: (input: AssetInput) => invoke<SaveResult>("save_asset", { input }),
   /** removeGeneratedKey：一并删除 CloudLink 生成或复制的密钥（F-101 AC2，2026-10-31 补充） */
@@ -50,60 +51,90 @@ export const ipc = {
   importHosts: (hosts: ImportHost[], probeAfter: boolean) =>
     invoke<Asset[]>("import_hosts", { hosts, probeAfter }),
   /** 结果经 connection://tested 返回 */
-  testConnection: (req: ConnectionTestRequest) => invoke<{ testId: string }>("test_connection", { req }),
-  cancelConnectionTest: (testId: string) => invoke<void>("cancel_connection_test", { testId }),
-  trustHostKey: (testId: string, fingerprint: string) => invoke<void>("trust_host_key", { testId, fingerprint }),
+  testConnection: (req: ConnectionTestRequest) =>
+    invoke<{ testId: string }>("test_connection", { req }),
+  cancelConnectionTest: (testId: string) =>
+    invoke<void>("cancel_connection_test", { testId }),
+  trustHostKey: (testId: string, fingerprint: string) =>
+    invoke<void>("trust_host_key", { testId, fingerprint }),
   /** 写入系统凭据库；null 为删除 */
-  setPassword: (assetId: string, password: string | null) => invoke<void>("set_password", { assetId, password }),
-  convertToKeyAuth: (assetId: string) => invoke<Asset>("convert_to_key_auth", { assetId }),
+  setPassword: (assetId: string, password: string | null) =>
+    invoke<void>("set_password", { assetId, password }),
+  convertToKeyAuth: (assetId: string) =>
+    invoke<Asset>("convert_to_key_auth", { assetId }),
   /** F-108 AC4：复制到该发行版的 ~/.ssh/，600 权限，重名加后缀；返回副本路径（2026-10-31 补充） */
-  copyKeyToWsl: (req: { source: string; envId: EnvId }) => invoke<{ path: string }>("copy_key_to_wsl", { req }),
+  copyKeyToWsl: (req: { source: string; envId: EnvId }) =>
+    invoke<{ path: string }>("copy_key_to_wsl", { req }),
   getSshConfigStatus: () => invoke<SshConfigStatus[]>("get_ssh_config_status"),
-  addSshInclude: (envId: EnvId) => invoke<SshConfigStatus>("add_ssh_include", { envId }),
+  addSshInclude: (envId: EnvId) =>
+    invoke<SshConfigStatus>("add_ssh_include", { envId }),
   /** 把服务器分发给某个 Agent，或者停止分发（F-303）；返回这台服务器的列入情况 */
-  setDistribute: (assetId: string, agentKey: string, on: boolean) => invoke<Inclusion[]>("set_distribute", { assetId, agentKey, on }),
-  setMode: (assetId: string, mode: Mode) => invoke<SaveResult>("set_mode", { assetId, mode }),
+  setDistribute: (assetId: string, agentKey: string, on: boolean) =>
+    invoke<Inclusion[]>("set_distribute", { assetId, agentKey, on }),
+  setMode: (assetId: string, mode: Mode) =>
+    invoke<SaveResult>("set_mode", { assetId, mode }),
   /** F-104 AC1：只检测已启用 Agent 所在的运行环境（Login Shell）；带 assetId 时同时更新这项资源 */
-  detectCliEnvironment: (req: { provider: CliProvider; assetId?: string }) =>
-    invoke<CliEnvStates>("detect_cli_environment", { req }),
+  detectCliEnvironment: (req: {
+    provider: CliProvider
+    assetId?: string
+    account?: string
+  }) => invoke<CliEnvStates>("detect_cli_environment", { req }),
   /** F-104 AC3：拉取账号下的可选资源；带 assetId 时保留已勾选的项并更新这项资源 */
-  refreshCliScope: (req: { provider: CliProvider; assetId?: string }) => invoke<CliScopeItem[]>("refresh_cli_scope", { req }),
+  refreshCliScope: (req: {
+    provider: CliProvider
+    assetId?: string
+    account?: string
+  }) => invoke<CliScopeItem[]>("refresh_cli_scope", { req }),
   /** 范围勾选立即生效（PRD 6.4），重新编译（2026-11-02 补充） */
-  setCliScope: (assetId: string, selectedIds: string[]) => invoke<SaveResult>("set_cli_scope", { assetId, selectedIds }),
+  setCliScope: (assetId: string, selectedIds: string[]) =>
+    invoke<SaveResult>("set_cli_scope", { assetId, selectedIds }),
   /** F-104 AC2：在对应运行环境打开终端，预填安装或登录命令 */
-  openEnvTerminal: (req: { envId: EnvId; command: string }) => invoke<void>("open_env_terminal", { req }),
-  startProbe: (assetId: string) => invoke<{ runId: string }>("start_probe", { assetId }),
+  openEnvTerminal: (req: { envId: EnvId; command: string }) =>
+    invoke<void>("open_env_terminal", { req }),
+  startProbe: (assetId: string) =>
+    invoke<{ runId: string }>("start_probe", { assetId }),
   cancelProbe: (runId: string) => invoke<void>("cancel_probe", { runId }),
   /** 只用于待确认项 */
   confirmProbeItems: (runId: string, changeIds: string[]) =>
     invoke<SaveResult>("confirm_probe_items", { runId, changeIds }),
   undoProbe: (runId: string) => invoke<SaveResult>("undo_probe", { runId }),
   getSkillConfig: () => invoke<SkillConfig>("get_skill_config"),
-  saveSkillConfig: (input: SkillConfig) => invoke<CompileStatus[]>("save_skill_config", { input }),
+  saveSkillConfig: (input: SkillConfig) =>
+    invoke<CompileStatus[]>("save_skill_config", { input }),
   /** 带草稿时预览草稿 */
-  previewSkill: (req: PreviewRequest) => invoke<CompilePreview>("preview_skill", { req }),
+  previewSkill: (req: PreviewRequest) =>
+    invoke<CompilePreview>("preview_skill", { req }),
   getCompileStatus: () => invoke<CompileStatus[]>("get_compile_status"),
   listTargets: () => invoke<Target[]>("list_targets"),
-  setTargetEnabled: (id: string, enabled: boolean) => invoke<Target>("set_target_enabled", { id, enabled }),
-  addCustomTarget: (req: AddCustomTargetRequest) => invoke<Target>("add_custom_target", { req }),
-  removeCustomTarget: (id: string) => invoke<void>("remove_custom_target", { id }),
+  setTargetEnabled: (id: string, enabled: boolean) =>
+    invoke<Target>("set_target_enabled", { id, enabled }),
+  addCustomTarget: (req: AddCustomTargetRequest) =>
+    invoke<Target>("add_custom_target", { req }),
+  removeCustomTarget: (id: string) =>
+    invoke<void>("remove_custom_target", { id }),
   listInclusions: () => invoke<Inclusion[]>("list_inclusions"),
   listDeliveries: () => invoke<Delivery[]>("list_deliveries"),
   checkDeliveries: () => invoke<Delivery[]>("check_deliveries"),
   repairDelivery: (id: string) => invoke<Delivery>("repair_delivery", { id }),
   removeAllDeliveries: () => invoke<void>("remove_all_deliveries"),
   getGuardStatus: () => invoke<GuardStatus[]>("get_guard_status"),
-  installGuard: (envId: EnvId) => invoke<GuardStatus>("install_guard", { envId }),
+  installGuard: (envId: EnvId) =>
+    invoke<GuardStatus>("install_guard", { envId }),
   removeGuard: (envId: EnvId) => invoke<GuardStatus>("remove_guard", { envId }),
   getGuardRules: () => invoke<GuardRules>("get_guard_rules"),
-  listOperations: (q: OperationQuery) => invoke<Operation[]>("list_operations", { q }),
-  listNotes: (assetId?: string) => invoke<AgentNote[]>("list_notes", { assetId }),
+  listOperations: (q: OperationQuery) =>
+    invoke<Operation[]>("list_operations", { q }),
+  listNotes: (assetId?: string) =>
+    invoke<AgentNote[]>("list_notes", { assetId }),
   /** text 为编辑后的内容 */
-  mergeNotes: (items: { id: string; text?: string }[]) => invoke<SaveResult>("merge_notes", { items }),
+  mergeNotes: (items: { id: string; text?: string }[]) =>
+    invoke<SaveResult>("merge_notes", { items }),
   dismissNotes: (ids: string[]) => invoke<void>("dismiss_notes", { ids }),
-  listActivity: (q: ActivityQuery) => invoke<ActivityItem[]>("list_activity", { q }),
+  listActivity: (q: ActivityQuery) =>
+    invoke<ActivityItem[]>("list_activity", { q }),
   getSettings: () => invoke<Settings>("get_settings"),
-  updateSettings: (patch: Partial<Settings>) => invoke<Settings>("update_settings", { patch }),
+  updateSettings: (patch: Partial<Settings>) =>
+    invoke<Settings>("update_settings", { patch }),
   getProbeScript: () => invoke<string>("get_probe_script"),
   /** 清空数据（P3 契约扩展，2026-10-29 用户确认；v3 起同时删除托管 ssh 配置、凭据库中的密码、护栏 hook、收件箱和操作记录） */
   resetData: () => invoke<void>("reset_data"),

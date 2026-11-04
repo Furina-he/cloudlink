@@ -4,6 +4,12 @@
 
 use std::path::Path;
 
+mod p4b;
+mod p4c;
+
+pub use p4c::IngestClaim;
+mod reset;
+
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -79,6 +85,10 @@ const MIGRATIONS: &[&str] = &[
         json TEXT NOT NULL
     );
     "#,
+    // v2: durable probe results, credential revisions and generated-key ownership receipts.
+    p4b::MIGRATION,
+    // v3: recoverable inbox/log claims and bounded note ingestion.
+    p4c::MIGRATION,
 ];
 
 pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;

@@ -38,7 +38,10 @@ type Msg = (p: Params) => string
 /** 取参数，缺省时用占位，避免文案里出现 undefined */
 const v = (p: Params, key: string) => String(p?.[key] ?? "…")
 
-const MODE_LABEL: Record<Mode, string> = { "read-only": "只读巡检", standard: "标准运维" }
+const MODE_LABEL: Record<Mode, string> = {
+  "read-only": "只读巡检",
+  standard: "标准运维",
+}
 const AGENT_LABEL: Record<AgentId, string> = {
   "claude-code": "Claude Code",
   universal: "Codex",
@@ -50,35 +53,49 @@ const AGENT_SHORT: Record<Exclude<AgentId, "custom">, string> = {
   universal: "Codex",
 }
 const envShort = (id: EnvId) =>
-  id === "windows" ? "Windows" : id === "macos" ? "macOS" : id === "linux" ? "Linux" : "WSL"
-const envLong = (id: EnvId) => (id.startsWith("wsl:") ? `WSL ${id.slice(4)}` : envShort(id))
+  id === "windows"
+    ? "Windows"
+    : id === "macos"
+      ? "macOS"
+      : id === "linux"
+        ? "Linux"
+        : "WSL"
+const envLong = (id: EnvId) =>
+  id.startsWith("wsl:") ? `WSL ${id.slice(4)}` : envShort(id)
 const envOf = (p: Params) => envLong(v(p, "env") as EnvId)
 /** 「Claude Code（Windows）」：一份总 Skill 属于哪个 Agent、哪个运行环境；没有 target 参数时只写运行环境 */
-const targetOf = (p: Params) => (p?.target ? `${v(p, "target")}（${envOf(p)}）` : `${envOf(p)} `)
+const targetOf = (p: Params) =>
+  p?.target ? `${v(p, "target")}（${envOf(p)}）` : `${envOf(p)} `
 /** Lint 的主语：服务器的问题写别名，全局内容（关系、约定）的问题写「交给 Agent 的内容」 */
-const subject = (p: Params) => (p?.alias ? `${p.alias} 的信息` : "交给 Agent 的内容")
+const subject = (p: Params) =>
+  p?.alias ? `${p.alias} 的信息` : "交给 Agent 的内容"
 
 /** ssh 错误分类（PRD 8.3）：标题 + 下一步。探测和测试连接共用 */
 const SSH_ERROR: Record<SshErrorId, { title: Msg; hint: Msg }> = {
   "auth-failed": {
     title: (p) => `${v(p, "alias")} 拒绝了密钥认证`,
-    hint: () => "确认公钥已加入服务器的 ~/.ssh/authorized_keys；认证方式为 ssh-agent 时，在终端运行 ssh-add -l 确认密钥已加载。",
+    hint: () =>
+      "确认公钥已加入服务器的 ~/.ssh/authorized_keys；认证方式为 ssh-agent 时，在终端运行 ssh-add -l 确认密钥已加载。",
   },
   "password-rejected": {
     title: (p) => `${v(p, "alias")} 拒绝了密码`,
-    hint: () => "重新输入密码；确认服务器允许密码登录（PasswordAuthentication yes）。",
+    hint: () =>
+      "重新输入密码；确认服务器允许密码登录（PasswordAuthentication yes）。",
   },
   "host-key-unknown": {
     title: (p) => `本机还不认识 ${v(p, "alias")} 的主机密钥`,
-    hint: () => "点「测试连接」，核对指纹后信任。CloudLink 不会自动信任主机密钥。",
+    hint: () =>
+      "点「测试连接」，核对指纹后信任。CloudLink 不会自动信任主机密钥。",
   },
   "host-key-changed": {
-    title: (p) => `${v(p, "alias")} 的主机密钥变了，可能是重装了系统，也可能是中间人攻击`,
+    title: (p) =>
+      `${v(p, "alias")} 的主机密钥变了，可能是重装了系统，也可能是中间人攻击`,
     hint: () => "核实之后，手动更新 known_hosts。",
   },
   "resolve-failed": {
     title: (p) => `无法解析 ${v(p, "alias")} 的地址`,
-    hint: () => "检查地址是否填写正确；导入的服务器检查 ssh config 中的 HostName。",
+    hint: () =>
+      "检查地址是否填写正确；导入的服务器检查 ssh config 中的 HostName。",
   },
   timeout: {
     title: (p) => `连接 ${v(p, "alias")} 超时（10 秒）`,
@@ -94,7 +111,8 @@ const SSH_ERROR: Record<SshErrorId, { title: Msg; hint: Msg }> = {
   },
   "key-permissions": {
     title: () => "私钥文件权限过宽，ssh 拒绝使用",
-    hint: () => "WSL 中把私钥放到 ~/.ssh/ 并设置 600 权限，可以用「复制到 WSL」。",
+    hint: () =>
+      "WSL 中把私钥放到 ~/.ssh/ 并设置 600 权限，可以用「复制到 WSL」。",
   },
   "key-not-found": {
     title: (p) => `找不到私钥文件 ${v(p, "path")}`,
@@ -110,15 +128,19 @@ const SSH_ERROR: Record<SshErrorId, { title: Msg; hint: Msg }> = {
   },
 }
 /** 活动和 IPC 错误里带着 ssh 错误 id（params.error） */
-const sshTitle = (p: Params) => SSH_ERROR[(p?.error as SshErrorId) ?? "unknown"]?.title(p) ?? v(p, "error")
+const sshTitle = (p: Params) =>
+  SSH_ERROR[(p?.error as SshErrorId) ?? "unknown"]?.title(p) ?? v(p, "error")
 
 /** 未列入的原因（F-303 AC2），参数里带 env */
 const INCLUSION_REASON: Record<InclusionReasonId, Msg> = {
   "agent-off": () => "没有分发给这个 Agent",
+  unverified: () => "还没有通过连接验证，请先测试连接",
+  "env-unavailable": (p) => `${envOf(p)} 暂时不可用`,
   "password-only": () => "只用密码认证，Agent 无法输入密码",
   "not-defined": (p) => `${envOf(p)} 的 ssh config 里没有这个别名`,
   "not-written": (p) => `连接没有写入 ${envOf(p)}`,
-  "include-missing": (p) => `${envOf(p)} 的 ~/.ssh/config 还没有 Include 托管配置`,
+  "include-missing": (p) =>
+    `${envOf(p)} 的 ~/.ssh/config 还没有 Include 托管配置`,
   "no-key-in-env": (p) => `${envOf(p)} 中没有配置私钥`,
   "cli-not-installed": (p) => `${envOf(p)} 没有安装 ${v(p, "cli")}`,
   "cli-not-logged-in": (p) => `${envOf(p)} 的 ${v(p, "cli")} 还没有登录`,
@@ -129,7 +151,8 @@ const GUARD_DETAIL: Record<GuardDetailId, Msg> = {
   "entry-missing": () => "settings.json 中的条目被删除了",
   "self-test-failed": () => "护栏程序自检失败",
   "hooks-disabled": () => "settings.json 设置了 disableAllHooks",
-  "settings-invalid": () => "settings.json 不是合法的 JSON，CloudLink 没有修改它",
+  "settings-invalid": () =>
+    "settings.json 不是合法的 JSON，CloudLink 没有修改它",
   "interop-disabled": () => "WSL 互操作已关闭，护栏程序无法运行",
 }
 
@@ -145,7 +168,10 @@ export type ViewId = "servers" | "agents" | "settings"
 export const copy = {
   app: { name: "CloudLink", skipToMain: "跳到主内容" },
 
-  nav: { servers: "资源", agents: "Agent", settings: "设置" } satisfies Record<ViewId, string>,
+  nav: { servers: "资源", agents: "Agent", settings: "设置" } satisfies Record<
+    ViewId,
+    string
+  >,
 
   navBadge: {
     servers: (n: number) => `共 ${n} 项资源`,
@@ -167,7 +193,8 @@ export const copy = {
     empty: "没有匹配的命令",
     groups: { navigate: "跳转", servers: "资源", system: "系统" },
     // 中文和英文之间留一个空格（「前往 Agent」），与其余文案一致
-    goTo: (view: string) => (/^[A-Za-z]/.test(view) ? `前往 ${view}` : `前往${view}`),
+    goTo: (view: string) =>
+      /^[A-Za-z]/.test(view) ? `前往 ${view}` : `前往${view}`,
     actions: {
       newServer: "添加 SSH 服务器",
       addCli: (name: string) => `添加云平台 CLI：${name}`,
@@ -184,12 +211,23 @@ export const copy = {
       theme: "切换主题",
     },
     back: "返回",
-    theme: { system: "主题：跟随系统", light: "主题：浅色", dark: "主题：深色" },
-    themeSet: { system: "已切换为跟随系统", light: "已切换为浅色主题", dark: "已切换为深色主题" },
+    theme: {
+      system: "主题：跟随系统",
+      light: "主题：浅色",
+      dark: "主题：深色",
+    },
+    themeSet: {
+      system: "已切换为跟随系统",
+      light: "已切换为浅色主题",
+      dark: "已切换为深色主题",
+    },
   },
 
   env: {
-    tag: { prod: "生产", staging: "预发", dev: "开发" } satisfies Record<EnvTag, string>,
+    tag: { prod: "生产", staging: "预发", dev: "开发" } satisfies Record<
+      EnvTag,
+      string
+    >,
     short: envShort,
     long: envLong,
   },
@@ -201,8 +239,10 @@ export const copy = {
 
   mode: MODE_LABEL,
   modeHint: {
-    "read-only": "只允许巡检类命令，例如 docker ps、docker logs、df -h。需要改动时，Agent 先向你说明计划并停下。",
-    standard: "允许常规部署和重启服务。删除数据、改防火墙或 SSH 配置、停止关键服务、重启主机前，必须先征得你同意。",
+    "read-only":
+      "只允许巡检类命令，例如 docker ps、docker logs、df -h。需要改动时，Agent 先向你说明计划并停下。",
+    standard:
+      "允许常规部署和重启服务。删除数据、改防火墙或 SSH 配置、停止关键服务、重启主机前，必须先征得你同意。",
   } satisfies Record<Mode, string>,
 
   /** 回路行和详情的连接状态（6.11 状态词表）。changed 仍是「未验证」，另附一句提示（F-106 AC4） */
@@ -215,7 +255,11 @@ export const copy = {
   connChangedHint: "连接信息已修改，请重新测试",
   testing: "连接中",
 
-  auth: { key: "私钥文件", agent: "ssh-agent", password: "密码" } satisfies Record<AuthMethod, string>,
+  auth: {
+    key: "私钥文件",
+    agent: "ssh-agent",
+    password: "密码",
+  } satisfies Record<AuthMethod, string>,
 
   distributeBlock: DISTRIBUTE_BLOCK,
   inclusion: { included: "已列入", excluded: "未列入" },
@@ -244,12 +288,19 @@ export const copy = {
     pending: "正在写入副本。",
     ok: "",
     missing: "副本被外部程序删除了。点「修复」重新写入。",
-    modified: "副本被改动过，内容和 CloudLink 的编译结果不一致。「修复」会覆盖这些改动。",
+    modified:
+      "副本被改动过，内容和 CloudLink 的编译结果不一致。「修复」会覆盖这些改动。",
     outdated: "副本不是最新的编译结果，上次同步没有成功。点「修复」重新同步。",
-    conflict: "目录里已有一个不是 CloudLink 创建的 cloudlink-servers，CloudLink 没有覆盖它。先手动处理，再点「检查」。",
+    conflict:
+      "目录里已有一个不是 CloudLink 创建的 cloudlink-servers，CloudLink 没有覆盖它。先手动处理，再点「检查」。",
   } satisfies Record<DeliveryStatus, string>,
 
-  probeState: { never: "从未探测", ok: "正常", stale: "已过期", failed: "失败" } satisfies Record<ProbeState, string>,
+  probeState: {
+    never: "从未探测",
+    ok: "正常",
+    stale: "已过期",
+    failed: "失败",
+  } satisfies Record<ProbeState, string>,
   probing: "探测中",
 
   compileState: { ok: "正常", warning: "有警告", blocked: "编译受阻" },
@@ -262,7 +313,10 @@ export const copy = {
   } satisfies Record<GuardState, string>,
   guardDetail: GUARD_DETAIL,
 
-  decision: { allowed: "已放行", denied: "已拦下" } satisfies Record<OperationDecision, string>,
+  decision: { allowed: "已放行", denied: "已拦下" } satisfies Record<
+    OperationDecision,
+    string
+  >,
   /** 护栏拦下或标注的原因（8.6） */
   guardReason: {
     "read-only": "只读巡检的资源，这不是巡检类命令",
@@ -278,6 +332,8 @@ export const copy = {
     "cli-env-export": "导出云平台 CLI 的凭据",
     "cli-write": "只读巡检的云平台，这不是查询或日志命令",
     "cli-destroy": "删库、删站或销毁云资源",
+    "cli-account": "无法确认命令使用的是已绑定的云平台账号",
+    "cli-scope": "命令目标不在已公开的范围内，或无法确认目标",
     unparsed: "无法确认是只读命令",
   } satisfies Record<GuardReasonId, string>,
   unparsedAllowed: "未能解析，已放行",
@@ -290,7 +346,11 @@ export const copy = {
     "collect-ports": "采集监听端口",
     merge: "合并与编译",
   } satisfies Record<ProbeStep, string>,
-  probeStepStatus: { running: "进行中", done: "完成", error: "失败" } satisfies Record<ProbeStepStatus, string>,
+  probeStepStatus: {
+    running: "进行中",
+    done: "完成",
+    error: "失败",
+  } satisfies Record<ProbeStepStatus, string>,
 
   sshError: SSH_ERROR,
   /** 需要在终端执行的命令（6.4：用 CodeBlock 配复制按钮展示） */
@@ -301,32 +361,75 @@ export const copy = {
 
   /** Lint 规则（PRD 5.4）。带 alias 参数时主语是这台服务器 */
   lint: {
-    "description-too-long": (p) => `description 有 ${v(p, "chars")} 个字符，已截断到 1024 以内。缩短用途可以让更多资源写进描述`,
-    "secret-detected": (p) => `${subject(p)}第 ${v(p, "line")} 行疑似包含密钥（${v(p, "rule")}），已阻断发布`,
-    "export-disabled-field": (p) => `已关闭导出的「${v(p, "field")}」出现在 ${v(p, "alias")} 的产物中，已阻断发布`,
+    "description-too-long": (p) =>
+      `description 有 ${v(p, "chars")} 个字符，已截断到 1024 以内。缩短用途可以让更多资源写进描述`,
+    "secret-detected": (p) =>
+      `${subject(p)}第 ${v(p, "line")} 行疑似包含密钥（${v(p, "rule")}），已阻断发布`,
+    "export-disabled-field": (p) =>
+      `已关闭导出的「${v(p, "field")}」出现在 ${v(p, "alias")} 的产物中，已阻断发布`,
     "missing-reference": (p) => `引用的 ${v(p, "path")} 不存在`,
-    "body-too-long": (p) => `SKILL.md 正文 ${v(p, "lines")} 行，超过上限 ${v(p, "limit")} 行`,
-    "prod-standard-no-guardrails": (p) => `${v(p, "alias")} 是生产资源，使用标准运维档，但没有自定义红线，建议补充`,
-    "probe-stale": (p) => `${v(p, "alias")} 的探测数据已有 ${v(p, "days")} 天，建议重新探测`,
-    "suspected-injection": (p) => `${subject(p)}里的「${v(p, "value")}」疑似包含指令，请核实`,
+    "body-too-long": (p) =>
+      `SKILL.md 正文 ${v(p, "lines")} 行，超过上限 ${v(p, "limit")} 行`,
+    "prod-standard-no-guardrails": (p) =>
+      `${v(p, "alias")} 是生产资源，使用标准运维档，但没有自定义红线，建议补充`,
+    "probe-stale": (p) =>
+      `${v(p, "alias")} 的探测数据已有 ${v(p, "days")} 天，建议重新探测`,
+    "suspected-injection": (p) =>
+      `${subject(p)}里的「${v(p, "value")}」疑似包含指令，请核实`,
+    "publish-failed": (p) =>
+      `${targetOf(p)}的编译产物无法写入。检查目录后重试。`,
   } satisfies Record<LintId, Msg>,
-  lintLevel: { error: "错误", warning: "警告", info: "提示" } satisfies Record<LintLevel, string>,
+  lintLevel: { error: "错误", warning: "警告", info: "提示" } satisfies Record<
+    LintLevel,
+    string
+  >,
 
   /** IPC 错误（后端只给 id） */
   ipcError: {
     "not-found": () => "对象不存在，可能已被删除。刷新后重试。",
     "alias-taken": (p) => `${v(p, "alias")} 已被其他资源使用，请换一个。`,
-    "alias-conflict": (p) => `${envOf(p)} 的 ssh config 里已有 Host ${v(p, "alias")}，请换一个别名。`,
-    "cannot-distribute": (p) => DISTRIBUTE_BLOCK[v(p, "reason") as DistributeBlockReason] ?? "这项资源还不能分发",
-    "password-missing": () => "凭据库里没有这台服务器的密码，先填写密码并测试连接。",
-    "password-target-changed": () => "地址、端口、用户或认证方式改过了，已保存的密码不会发往新的目标。请重新填写密码再测试。",
+    "alias-conflict": (p) =>
+      `${envOf(p)} 的 ssh config 里已有 Host ${v(p, "alias")}，请换一个别名。`,
+    "cannot-distribute": (p) =>
+      DISTRIBUTE_BLOCK[v(p, "reason") as DistributeBlockReason] ??
+      "这项资源还不能分发",
+    "password-missing": () =>
+      "凭据库里没有这台服务器的密码，先填写密码并测试连接。",
+    "password-target-changed": () =>
+      "地址、端口、用户或认证方式改过了，已保存的密码不会发往新的目标。请重新填写密码再测试。",
     "connection-failed": (p) => `${sshTitle(p)}。认证方式没有切换。`,
-    "settings-invalid": (p) => `${v(p, "path")} 不是合法的 JSON，CloudLink 没有修改它。修好后再试。`,
-    "interop-disabled": (p) => `${envOf(p)} 的 WSL 互操作已关闭，护栏程序无法运行。`,
-    "target-exists": (p) => `${v(p, "path")} 已经是一个分发目标。`,
-    "source-missing": (p) => `找不到 ${v(p, "path")}。`,
+    "settings-invalid": (p) =>
+      p?.path
+        ? `${v(p, "path")} 不是合法的 JSON，CloudLink 没有修改它。修好后再试。`
+        : "输入的内容或路径不符合要求，请检查后重试。",
+    "interop-disabled": (p) =>
+      `${envOf(p)} 的 WSL 互操作已关闭，请启用后重试。`,
+    "target-exists": (p) =>
+      p?.path
+        ? `${v(p, "path")} 与已有目标冲突，或无法确认归属。`
+        : "目标目录存在冲突，或无法确认归属。请检查后重试。",
+    "source-missing": (p) =>
+      p?.path
+        ? `找不到 ${v(p, "path")}。`
+        : "找不到可用的源文件或最新编译产物。",
+    "compile-blocked": () =>
+      "编译受阻，暂时无法创建或修复副本。请先处理检查结果中的错误。",
+    "cli-account-unavailable": () =>
+      "当前 CLI 无法访问这个账号。请登录对应账号后重新检测。",
+    "cli-scope-permission": () =>
+      "当前账号没有读取资源范围的权限。请检查权限后重试。",
+    "cli-scope-failed": () =>
+      "无法读取当前账号的资源范围，请重新检测并刷新范围。",
+    "cli-command-unsupported": () =>
+      "当前 CLI 的命令或输出格式不受支持，请更新 CLI 后重新检测。",
+    "terminal-command-invalid": () =>
+      "这条命令不在支持的安装或登录指引中，请重新打开指引。",
     "note-has-secret": () => "这条笔记仍然疑似包含密钥。删掉密钥后再并入。",
-    internal: (p) => `内部错误：${v(p, "message")}。打开日志目录查看详情。`,
+    "reset-incomplete": () => "数据清理尚未完成，已暂停资源变更与分发。请在「设置 → 危险操作」中再次清空数据，重试剩余清理。",
+    internal: (p) =>
+      p?.message
+        ? `内部错误：${v(p, "message")}。打开日志目录查看详情。`
+        : "操作失败，请打开日志目录查看详情。",
   } satisfies Record<IpcErrorId, Msg>,
 
   common: {
@@ -364,11 +467,14 @@ export const copy = {
     clearSearch: "清除搜索",
     loading: "正在加载资源",
     loadFailedTitle: "没能加载资源",
-    rowOpen: (handle: string, name: string, state: string) => `${handle}，${name}，${state}`,
-    modeToggle: (handle: string, mode: string, next: string) => `${handle} 当前是${mode}，点击切换为${next}`,
+    rowOpen: (handle: string, name: string, state: string) =>
+      `${handle}，${name}，${state}`,
+    modeToggle: (handle: string, mode: string, next: string) =>
+      `${handle} 当前是${mode}，点击切换为${next}`,
     prodWritable: "生产环境已开启写权限",
     agentsLabel: (alias: string) => `将 ${alias} 分发给哪些 Agent`,
-    agentToggle: (alias: string, agent: string) => `将 ${alias} 分发给 ${agent}`,
+    agentToggle: (alias: string, agent: string) =>
+      `将 ${alias} 分发给 ${agent}`,
     noAgents: "没有启用的 Agent",
     notesBadge: (n: number) => `笔记 ${n}`,
     linkedTo: (aliases: string) => `关联 ${aliases}`,
@@ -378,7 +484,11 @@ export const copy = {
 
   /** 云平台 CLI（F-104、6.5） */
   cli: {
-    name: { cloudflare: "Cloudflare", vercel: "Vercel", oracle: "Oracle Cloud" } satisfies Record<CliProvider, string>,
+    name: {
+      cloudflare: "Cloudflare",
+      vercel: "Vercel",
+      oracle: "Oracle Cloud",
+    } satisfies Record<CliProvider, string>,
     blurb: {
       cloudflare: "域名 DNS、Workers、Pages、D1",
       vercel: "前端项目部署、域名与运行日志",
@@ -414,11 +524,13 @@ export const copy = {
       instance: (n: number) => `${n} 台实例`,
     } satisfies Record<CliScopeKind, (n: number) => string>,
     scopeNone: "未选资源",
-    versionAccount: (version: string, account?: string) => (account ? `${version} · ${account}` : version),
+    versionAccount: (version: string, account?: string) =>
+      account ? `${version} · ${account}` : version,
     envCheckTitle: "运行环境检查（仅检测已启用 Agent 的环境）",
     envCheckLabel: "各运行环境的 CLI 状态",
     autoRefreshHint: "在终端完成操作后切回本窗口，将自动刷新状态。",
-    noAgentEnvs: "还没有启用的 Agent，先到 Agent 页启用一个，这里才知道要检测哪个运行环境。",
+    noAgentEnvs:
+      "还没有启用的 Agent，先到 Agent 页启用一个，这里才知道要检测哪个运行环境。",
     goAgents: "前往 Agent 页",
     openTerminal: "打开终端",
     switchAccount: "打开终端切换账号",
@@ -439,9 +551,14 @@ export const copy = {
     scopeWaiting: "至少一个运行环境就绪后，才能拉取账号下的资源。",
     linked: (alias: string) => `已关联服务器 ${alias}`,
     addAsServer: "同时加为 SSH 服务器",
-    accountTitle: { cloudflare: "接入哪个账号", vercel: "接入哪个团队", oracle: "接入哪个 Profile" } satisfies Record<CliProvider, string>,
+    accountTitle: {
+      cloudflare: "接入哪个账号",
+      vercel: "接入哪个团队",
+      oracle: "接入哪个 Profile",
+    } satisfies Record<CliProvider, string>,
     accountAdded: "已添加",
-    allAccountsAdded: (login: string) => `这次登录下的账号都已接入。要接入别的账号，先在终端运行 ${login} 换一个登录，再重新检测。`,
+    allAccountsAdded: (login: string) =>
+      `这次登录下的账号都已接入。要接入别的账号，先在终端运行 ${login} 换一个登录，再重新检测。`,
     pathLabel: "路径",
     accountLabel: "账号",
     versionLabel: "版本",
@@ -452,7 +569,8 @@ export const copy = {
     enabled: (name: string) => `已接入 ${name}`,
     delete: "移除云平台",
     deleteTitle: (name: string) => `移除 ${name}？`,
-    deleteDescription: "它会从总 Skill 中移除。不会卸载本机的 CLI，也不会退出 CLI 的登录。",
+    deleteDescription:
+      "它会从总 Skill 中移除。不会卸载本机的 CLI，也不会退出 CLI 的登录。",
     removed: (name: string) => `已移除 ${name}`,
     detectFailed: "检测失败，稍后再试。",
     nameHint: "写进总览表，默认是云平台的名称。",
@@ -486,13 +604,15 @@ export const copy = {
       enabling: "已启用，正在后台探测服务…",
     },
     enabled: (alias: string) => `已启用 ${alias}，正在后台探测服务`,
-    keepPassword: (alias: string) => `${alias} 没能改用密钥登录，已保留密码。Agent 无法输入密码，这台服务器暂时不能分发。`,
+    keepPassword: (alias: string) =>
+      `${alias} 没能改用密钥登录，已保留密码。Agent 无法输入密码，这台服务器暂时不能分发。`,
   },
 
   /** 首次启动（PRD 6.8） */
   onboarding: {
     title: "还没有资源",
-    description: "接入服务器（SSH）或云平台（CLI），CloudLink 会把它们编译成一个 Skill 交给本机的 Agent，并在 Claude Code 上用护栏守住档位。",
+    description:
+      "接入服务器（SSH）或云平台（CLI），CloudLink 会把它们编译成一个 Skill 交给本机的 Agent，并在 Claude Code 上用护栏守住档位。",
     addSsh: "添加 SSH 服务器",
     connectCli: "连接云平台 CLI（Cloudflare / Vercel / Oracle）",
     importSsh: "从 ssh config 导入",
@@ -516,8 +636,10 @@ export const copy = {
     cores: (n: number) => `${n}C`,
     memory: (gb: number) => `${gb}G`,
     savedCompiled: "已保存，已编译",
-    compileBlocked: (n: number) => `编译受阻：这项资源有 ${n} 个错误，总 Skill 没有发布`,
-    compileBlockedOther: (targets: string) => `编译受阻：${targets}的总 Skill 里有其他资源出错，没有发布`,
+    compileBlocked: (n: number) =>
+      `编译受阻：这项资源有 ${n} 个错误，总 Skill 没有发布`,
+    compileBlockedOther: (targets: string) =>
+      `编译受阻：${targets}的总 Skill 里有其他资源出错，没有发布`,
     compileWarnings: (n: number) => `有警告：${n} 条`,
     showLint: "在预览中查看",
     saveFailed: "保存失败",
@@ -559,11 +681,14 @@ export const copy = {
     goAgents: "前往 Agent 页",
     agentKeyWarning:
       "Claude Code 在 Windows 上使用 Git Bash 的 ssh，读不到 Windows ssh-agent 服务里的密钥。请在 ssh config 中用 IdentityFile 指向它能直接读取的密钥，或者在 Git Bash 中加载 agent。",
-    distributed: (alias: string, agent: string) => `已把 ${alias} 分发给 ${agent}`,
-    undistributed: (alias: string, agent: string) => `${alias} 已停止分发给 ${agent}`,
+    distributed: (alias: string, agent: string) =>
+      `已把 ${alias} 分发给 ${agent}`,
+    undistributed: (alias: string, agent: string) =>
+      `${alias} 已停止分发给 ${agent}`,
     effectHint:
       "Claude Code 会自动加载变化；如果这次在会话运行中新建了 ~/.claude/skills，请在会话中执行 /reload-skills，已调用过的 Skill 要开新会话。Codex 没有生效时请重启。",
-    modeChanged: (alias: string, mode: string) => `${alias} 已切换为「${mode}」，已重新编译`,
+    modeChanged: (alias: string, mode: string) =>
+      `${alias} 已切换为「${mode}」，已重新编译`,
   },
   modeConfirm: {
     title: (alias: string) => `把 ${alias} 切换为标准运维？`,
@@ -583,7 +708,10 @@ export const copy = {
     editLabel: "编辑笔记",
     confirmEdit: "并入",
     cancelEdit: "取消",
-    flag: { secret: "疑似包含密钥", injection: "疑似注入" } satisfies Record<AgentNoteFlag, string>,
+    flag: { secret: "疑似包含密钥", injection: "疑似注入" } satisfies Record<
+      AgentNoteFlag,
+      string
+    >,
     secretHint: "命中密钥扫描，编辑删掉密钥后才能并入。",
     injectionHint: "里面像是写给 Agent 的指令，确认内容可信再并入。",
     dirtyHint: "详情有未保存的修改，先保存或放弃，再处理笔记。",
@@ -613,13 +741,16 @@ export const copy = {
     importedNote: "连接信息由你的 ssh config 维护",
     importedFrom: (envs: string) => `来源环境：${envs}`,
     lockedField: "只读，不可编辑",
-    resolvedNone: "还没有解析结果。下次探测时，CloudLink 会用 ssh -G 读取这个别名的生效配置。",
+    resolvedNone:
+      "还没有解析结果。下次探测时，CloudLink 会用 ssh -G 读取这个别名的生效配置。",
     resolvedAt: (rel: string) => `解析于${rel}`,
     advanced: "高级",
-    advancedSummary: (alias: string) => `别名 ${alias || "（未填写）"} · 跳板机 · 写入的运行环境`,
+    advancedSummary: (alias: string) =>
+      `别名 ${alias || "（未填写）"} · 跳板机 · 写入的运行环境`,
     exportTitle: "导出到 Skill",
     exportResolved: "导出解析后的连接信息",
-    exportResolvedHint: "默认不导出。打开后，地址、用户和端口会写进这台服务器的详情文件。",
+    exportResolvedHint:
+      "默认不导出。打开后，地址、用户和端口会写进这台服务器的详情文件。",
     exportListening: "导出监听端口",
     exportListeningHint: "默认不导出。打开后，监听地址和端口会写进详情文件。",
     listening: "监听端口",
@@ -652,22 +783,26 @@ export const copy = {
     passwordKeep: "已保存，留空则不修改",
     showPassword: "显示密码",
     hidePassword: "隐藏密码",
-    passwordAlert: "Agent 无法输入密码。测试连接通过后，可以一键改用密钥登录，否则这台服务器不能分发。",
+    passwordAlert:
+      "Agent 无法输入密码。测试连接通过后，可以一键改用密钥登录，否则这台服务器不能分发。",
     env: "环境",
     alias: "别名",
-    aliasHint: "Agent 用 ssh <别名> 连接。只能有字母、数字、点、下划线和连字符。",
+    aliasHint:
+      "Agent 用 ssh <别名> 连接。只能有字母、数字、点、下划线和连字符。",
     proxyJump: "跳板机",
     proxyJumpHint: "另一台服务器的别名，可选。",
     proxyJumpPlaceholder: "选择或输入别名",
     envs: "写入的运行环境",
-    envsHint: "托管配置写进这些运行环境的 ~/.ssh/cloudlink.conf，Agent 在其中才能连上。",
+    envsHint:
+      "托管配置写进这些运行环境的 ~/.ssh/cloudlink.conf，Agent 在其中才能连上。",
     cancel: "取消",
     save: "保存",
     saveAndProbe: "保存并探测",
     saving: "正在保存",
     required: "带 * 的为必填项",
     unverifiedTitle: "连接还没有通过验证",
-    unverifiedDescription: "连接未验证，保存后不能分发。服务器暂时关机时可以先保存，之后再测试连接。",
+    unverifiedDescription:
+      "连接未验证，保存后不能分发。服务器暂时关机时可以先保存，之后再测试连接。",
     unverifiedConfirm: "仍然保存",
     created: (alias: string) => `已保存 ${alias}`,
   },
@@ -676,7 +811,8 @@ export const copy = {
     button: "测试连接",
     cancel: "取消",
     running: "正在连接…",
-    ok: (ms: string, os?: string) => (os ? `已连接 · ${ms} · ${os}` : `已连接 · ${ms}`),
+    ok: (ms: string, os?: string) =>
+      os ? `已连接 · ${ms} · ${os}` : `已连接 · ${ms}`,
     cancelled: "已取消测试",
     stale: "连接参数已修改，请重新测试",
     convertKey: "改用密钥登录",
@@ -684,10 +820,12 @@ export const copy = {
 
   hostKey: {
     title: "首次连接，请核对主机指纹",
-    description: (alias: string) => `CloudLink 还不认识 ${alias} 的主机密钥。请到服务器控制台或用其他可信方式核对下面的指纹，一致后再信任。`,
+    description: (alias: string) =>
+      `CloudLink 还不认识 ${alias} 的主机密钥。请到服务器控制台或用其他可信方式核对下面的指纹，一致后再信任。`,
     trust: "信任并继续",
     changedTitle: (alias: string) => `${alias} 的主机密钥与已知记录不符`,
-    changedDescription: "可能是重装了系统，也可能是中间人攻击。CloudLink 已阻断这次连接。核实之后，手动更新 known_hosts。",
+    changedDescription:
+      "可能是重装了系统，也可能是中间人攻击。CloudLink 已阻断这次连接。核实之后，手动更新 known_hosts。",
   },
 
   include: {
@@ -698,7 +836,8 @@ export const copy = {
     add: "加入 Include",
     skip: "暂不加入",
     added: (env: string) => `已在 ${env} 的 ~/.ssh/config 开头加入 Include`,
-    skipped: "没有加入 Include。服务器在这些运行环境中记为「未列入」，设置的「ssh 配置」里有手动添加的说明。",
+    skipped:
+      "没有加入 Include。服务器在这些运行环境中记为「未列入」，设置的「ssh 配置」里有手动添加的说明。",
   },
 
   convertKey: {
@@ -728,7 +867,8 @@ export const copy = {
     provider: "云厂商",
     region: "地域",
     servedHostnames: "承载的站点",
-    servedHostnamesHint: "本机反代承载的域名，例如 api.example.com。会写进 description，你说「某个站点打不开」时 Agent 就能找到这台服务器。",
+    servedHostnamesHint:
+      "本机反代承载的域名，例如 api.example.com。会写进 description，你说「某个站点打不开」时 Agent 就能找到这台服务器。",
     servedHostnamesPlaceholder: "输入域名后选择「使用」",
     servedHostnamesEmpty: "输入域名，例如 api.example.com；不要写 IP 地址",
     summaryLine: (parts: string[]) => parts.join(" · "),
@@ -751,7 +891,10 @@ export const copy = {
   },
 
   /** 面板模板的名称和各目录的用途（目录本身见 lib/panelTemplates.ts） */
-  panelTemplate: { "1panel": "1Panel", bt: "宝塔" } satisfies Record<PanelTemplateId, string>,
+  panelTemplate: { "1panel": "1Panel", bt: "宝塔" } satisfies Record<
+    PanelTemplateId,
+    string
+  >,
   pathTemplates: {
     "1panel-openresty-conf": "OpenResty 站点配置目录",
     "1panel-sites": "网站根目录",
@@ -786,14 +929,16 @@ export const copy = {
     missing: "未发现",
     missingTip: "上次探测有，这次没发现。标注保留，不会自动删除。",
     sanitized: "已清洗",
-    sanitizedTip: "名称里有不允许的字符，已替换，防止往 Agent 上下文里注入指令。",
+    sanitizedTip:
+      "名称里有不允许的字符，已替换，防止往 Agent 上下文里注入指令。",
     add: "手动添加",
     edit: "编辑",
     remove: "删除",
     rowActions: (name: string) => `${name} 的操作`,
     roleAria: (name: string) => `${name} 的角色`,
     criticalAria: (name: string) => `把 ${name} 标为关键服务`,
-    empty: "还没有服务。探测会自动采集 Docker 容器和 systemd 服务，也可以手动添加。",
+    empty:
+      "还没有服务。探测会自动采集 Docker 容器和 systemd 服务，也可以手动添加。",
     exportImage: "导出镜像版本",
     exportImageHint: "关闭后，编译产物里不写镜像名和版本。",
   },
@@ -810,7 +955,8 @@ export const copy = {
     portsHint: "例如 127.0.0.1:8080->8080, 80->80/udp，多个用逗号分隔。",
     role: "角色",
     critical: "关键服务",
-    criticalHint: "护栏会拦下停止、删除或 kill 关键服务的命令，详情文件的红线里也会点名。",
+    criticalHint:
+      "护栏会拦下停止、删除或 kill 关键服务的命令，详情文件的红线里也会点名。",
     submitAdd: "添加服务",
     submitEdit: "保存修改",
   },
@@ -878,7 +1024,8 @@ export const copy = {
       `${alias} 目前未列入 ${target}的总 Skill：${reason}。下面按已列入计算。`,
     noTargets: "还没有启用的 Agent，下面按 Claude Code（Windows）计算。",
     emptyTitle: "没有可预览的内容",
-    emptyDescription: "还没有分发给这个 Agent 的资源。在资源配电盘的回路行上点亮它之后，这里显示编译出的总 Skill。",
+    emptyDescription:
+      "还没有分发给这个 Agent 的资源。在资源配电盘的回路行上点亮它之后，这里显示编译出的总 Skill。",
   },
 
   /** 探测 Sheet（PRD 6.4 探测流程） */
@@ -886,8 +1033,15 @@ export const copy = {
     title: "探测",
     description: "以只读方式采集系统信息、服务和监听端口，不会改动服务器。",
     /** 标题里状态词在前，别名单独用等宽字体 */
-    stateTitle: { idle: "探测", running: "正在探测", ok: "探测完成", failed: "探测失败", cancelled: "已取消探测" },
-    lastProbed: (rel: string, state: string) => `上次探测于${rel}，结果：${state}。`,
+    stateTitle: {
+      idle: "探测",
+      running: "正在探测",
+      ok: "探测完成",
+      failed: "探测失败",
+      cancelled: "已取消探测",
+    },
+    lastProbed: (rel: string, state: string) =>
+      `上次探测于${rel}，结果：${state}。`,
     cancelled: "已取消探测",
     cancel: "取消探测",
     retry: "重新探测",
@@ -897,7 +1051,11 @@ export const copy = {
     held: (n: number) => `待确认 ${n} 处：疑似指令注入，没有自动合并`,
     confirmed: (n: number) => `已合并 ${n} 处待确认项，已重新编译`,
     undone: "已撤销本次更新，已重新编译",
-    kind: { added: "新增", changed: "变化", missing: "未发现" } satisfies Record<ProbeChangeKind, string>,
+    kind: {
+      added: "新增",
+      changed: "变化",
+      missing: "未发现",
+    } satisfies Record<ProbeChangeKind, string>,
     field: {
       service: "服务",
       os: "系统",
@@ -914,18 +1072,22 @@ export const copy = {
     commands: "在终端执行",
     testNow: "测试连接",
     partialTitle: "部分信息没有采集到",
-    idle: (alias: string) => `还没有探测过 ${alias}。探测会以只读方式采集系统信息、服务和监听端口。`,
+    idle: (alias: string) =>
+      `还没有探测过 ${alias}。探测会以只读方式采集系统信息、服务和监听端口。`,
     start: "开始探测",
     scriptTitle: "探测脚本",
-    scriptDescription: "通过 ssh <别名> 'sh -s' 执行。只读，不使用 sudo，不采集环境变量、文件内容和密钥。",
+    scriptDescription:
+      "通过 ssh <别名> 'sh -s' 执行。只读，不使用 sudo，不采集环境变量、文件内容和密钥。",
   },
 
   probeToast: {
     view: "查看",
     undo: "撤销",
     updated: (alias: string, n: number) => `探测了 ${alias}，更新了 ${n} 处`,
-    updatedHeld: (alias: string, n: number, held: number) => `探测了 ${alias}，更新了 ${n} 处，${held} 处待确认`,
-    heldOnly: (alias: string, held: number) => `探测了 ${alias}，${held} 处待确认`,
+    updatedHeld: (alias: string, n: number, held: number) =>
+      `探测了 ${alias}，更新了 ${n} 处，${held} 处待确认`,
+    heldOnly: (alias: string, held: number) =>
+      `探测了 ${alias}，${held} 处待确认`,
     noChanges: (alias: string) => `探测了 ${alias}，未发现变化`,
     failed: (alias: string) => `探测 ${alias} 失败`,
     startedAll: (n: number) => `已开始探测 ${n} 台服务器`,
@@ -936,25 +1098,35 @@ export const copy = {
   importDialog: {
     title: "从 ssh config 导入主机",
     scanned: "已扫描：",
-    columns: { alias: "别名", hostname: "HostName", user: "User", port: "Port", envs: "来源环境", status: "状态" },
+    columns: {
+      alias: "别名",
+      hostname: "HostName",
+      user: "User",
+      port: "Port",
+      envs: "来源环境",
+      status: "状态",
+    },
     selectAll: "全选",
     selectRow: (alias: string) => `选择 ${alias}`,
     statusNew: "新",
     statusImported: "已导入",
-    skipped: (n: number, patterns: string) => `已跳过 ${n} 个通配 Host（${patterns}）`,
+    skipped: (n: number, patterns: string) =>
+      `已跳过 ${n} 个通配 Host（${patterns}）`,
     probeAfter: "导入后测试连接并探测",
     submit: (n: number) => (n ? `导入 ${n} 台` : "导入"),
     loading: "正在扫描 ssh config",
     loadFailed: "没能读取 ssh config",
     emptyTitle: "ssh config 里没有可以导入的主机",
-    emptyDescription: "CloudLink 托管配置里的 Host 不会出现在这里。在 ~/.ssh/config 中添加 Host 后重新打开，或者新建服务器。",
+    emptyDescription:
+      "CloudLink 托管配置里的 Host 不会出现在这里。在 ~/.ssh/config 中添加 Host 后重新打开，或者新建服务器。",
     done: (n: number) => `已导入 ${n} 台服务器`,
   },
 
   deleteDialog: {
     title: (alias: string) => `删除服务器 ${alias}？`,
     description: "它会从总 Skill 中移除，已分发的副本随之更新。",
-    managed: "同时删除托管 ssh 配置中的条目和凭据库中的密码。CloudLink 只删除自己创建的内容。",
+    managed:
+      "同时删除托管 ssh 配置中的条目和凭据库中的密码。CloudLink 只删除自己创建的内容。",
     imported: "连接信息在你自己的 ssh config 里，CloudLink 不会改动它。",
     removeKey: "一并删除 CloudLink 生成或复制的密钥",
     removeKeyHint: (paths: string) => `将删除：${paths}`,
@@ -972,7 +1144,8 @@ export const copy = {
 
   /** 可排序列表的屏幕阅读器播报（路径、红线、运维约定） */
   sortable: {
-    instructions: "按空格拿起。拿起后用上下方向键移动，再按空格放下，按 Esc 取消。",
+    instructions:
+      "按空格拿起。拿起后用上下方向键移动，再按空格放下，按 Esc 取消。",
     pickup: (n: number, total: number) => `已拿起第 ${n} 项，共 ${total} 项。`,
     over: (n: number) => `移动到第 ${n} 项。`,
     drop: (n: number) => `已放到第 ${n} 项。`,
@@ -1008,7 +1181,8 @@ export const copy = {
 
   /** Agent 视图（PRD 6.6） */
   agents: {
-    summary: (included: number, enabled: number) => `${included} 项资源已列入 · ${enabled} 个目标已启用`,
+    summary: (included: number, enabled: number) =>
+      `${included} 项资源已列入 · ${enabled} 个目标已启用`,
     problems: (n: number) => `${n} 个问题需要处理`,
     problemsLabel: (n: number) => `${n} 个问题需要处理，跳到第一个`,
     preview: "预览 Skill",
@@ -1016,23 +1190,27 @@ export const copy = {
     checked: (n: number) => `已检查 ${n} 个副本`,
     loading: "正在加载 Agent 目标",
     compileWarnings: (n: number) => `总 Skill 有 ${n} 条警告`,
-    compileBlocked: (n: number, targets: string) => `编译受阻：${n} 个错误，${targets}的总 Skill 没有发布`,
+    compileBlocked: (n: number, targets: string) =>
+      `编译受阻：${n} 个错误，${targets}的总 Skill 没有发布`,
   },
 
   skillContent: {
     title: "交给 Agent 的内容",
     hint: "不属于任何一项资源，写进总 Skill 的 SKILL.md，原文逐字输出。",
     relationships: "基础设施之间的关系",
-    relationshipsHint: "例如哪台反代哪台、哪些容器用哪台的数据库。用英文写，Agent 读起来最准确。",
+    relationshipsHint:
+      "例如哪台反代哪台、哪些容器用哪台的数据库。用英文写，Agent 读起来最准确。",
     conventions: "运维约定",
-    conventionsHint: "写进 SKILL.md 的「Rules for every server」，排在内置红线之后。",
+    conventionsHint:
+      "写进 SKILL.md 的「Rules for every server」，排在内置红线之后。",
     addConvention: "添加约定",
     conventionsEmpty: "还没有运维约定。",
     conventionAria: (n: number) => `第 ${n} 条运维约定`,
     dragAria: (n: number) => `拖动排序：第 ${n} 条运维约定`,
     removeAria: (n: number) => `删除第 ${n} 条运维约定`,
     healthCheck: "巡检清单",
-    healthCheckHint: "内置，Agent 巡检时只执行只读命令，清单中的命令都能通过护栏的只读白名单。",
+    healthCheckHint:
+      "内置，Agent 巡检时只执行只读命令，清单中的命令都能通过护栏的只读白名单。",
     viewHealthCheck: "查看",
     saved: "已保存，已重新编译",
   },
@@ -1044,7 +1222,8 @@ export const copy = {
     install: "安装",
     remove: "移除",
     reinstall: "重新安装",
-    boundary: "护栏只解析命令文本，能防手滑，防不了刻意绕过。Codex 没有护栏，它默认每条 ssh 都要你批准。",
+    boundary:
+      "护栏只解析命令文本，能防手滑，防不了刻意绕过。Codex 没有护栏，它默认每条 ssh 都要你批准。",
     noTarget: "还没有启用 Claude Code 目标，启用后可以在这里安装护栏。",
     installTitle: (env: string) => `为 ${env} 的 Claude Code 安装护栏？`,
     installDescription:
@@ -1054,7 +1233,8 @@ export const copy = {
     installConfirm: "安装护栏",
     installed: (env: string) => `已为 ${env} 的 Claude Code 安装护栏`,
     removeTitle: (env: string) => `移除 ${env} 的护栏？`,
-    removeDescription: "只删除 CloudLink 加入的那一条 hook。移除后，只读巡检只剩写给 Agent 的指令，没有拦截。",
+    removeDescription:
+      "只删除 CloudLink 加入的那一条 hook。移除后，只读巡检只剩写给 Agent 的指令，没有拦截。",
     removeConfirm: "移除护栏",
     removed: (env: string) => `已移除 ${env} 的护栏`,
     rulesTitle: "护栏规则",
@@ -1065,7 +1245,8 @@ export const copy = {
       "不能有输出重定向、tee、命令替换、sudo 或原地修改参数；docker exec 里的命令同样要在白名单内。交互式登录、经标准输入执行脚本、sh -c 包装和文件传输都拦下。",
     standardTitle: "标准运维：拦下这些危险类别",
     alwaysTitle: "任何档位都拦下",
-    unparsedNote: "解析不了的命令：只读资源上拦下，标准运维资源上放行并在记录中标注。",
+    unparsedNote:
+      "解析不了的命令：只读资源上拦下，标准运维资源上放行并在记录中标注。",
     loading: "正在加载规则",
   },
 
@@ -1082,22 +1263,27 @@ export const copy = {
     check: "检查",
     removeCustom: "移除",
     enabledToast: (label: string) => `已启用 ${label}，已写入总 Skill`,
-    disabledToast: (label: string) => `已停用 ${label}，已移除 CloudLink 分发的 cloudlink-servers`,
+    disabledToast: (label: string) =>
+      `已停用 ${label}，已移除 CloudLink 分发的 cloudlink-servers`,
     disableTitle: (label: string) => `停用 ${label}？`,
-    disableDescription: "CloudLink 会从这个目录移除自己分发的 cloudlink-servers，目录里的其他内容不受影响。",
+    disableDescription:
+      "CloudLink 会从这个目录移除自己分发的 cloudlink-servers，目录里的其他内容不受影响。",
     disableConfirm: "停用",
     repairTitle: "修复会覆盖副本里的改动",
-    repairDescription: (path: string) => `${path} 被改动过。修复会用 CloudLink 的编译结果覆盖它，改动会丢失。`,
+    repairDescription: (path: string) =>
+      `${path} 被改动过。修复会用 CloudLink 的编译结果覆盖它，改动会丢失。`,
     repairConfirm: "覆盖并修复",
     repaired: (label: string) => `已修复 ${label} 的副本`,
     removeTitle: (label: string) => `移除自定义目录 ${label}？`,
-    removeDescription: "CloudLink 会删除自己分发的 cloudlink-servers，并不再同步这个目录。",
+    removeDescription:
+      "CloudLink 会删除自己分发的 cloudlink-servers，并不再同步这个目录。",
     removed: (label: string) => `已移除 ${label}`,
   },
 
   customTarget: {
     title: "添加自定义目录",
-    description: "选择主流 Agent 自动填入默认目录与官方图标，或手动指定任意全局 skills 目录。",
+    description:
+      "选择主流 Agent 自动填入默认目录与官方图标，或手动指定任意全局 skills 目录。",
     presets: "常见 Agent 快捷填充",
     name: "名称",
     path: "目录",
@@ -1136,7 +1322,8 @@ export const copy = {
     themeOption: { system: "跟随系统", light: "浅色", dark: "深色" },
     outputLanguage: "编译产物语言",
     outputLanguageValue: "英文（English）",
-    outputLanguageHint: "v0.1 固定输出英文：模板文字是英文，你填写的用途、红线、关系、约定和笔记原样输出。界面只有简体中文。",
+    outputLanguageHint:
+      "v0.1 固定输出英文：模板文字是英文，你填写的用途、红线、关系、约定和笔记原样输出。界面只有简体中文。",
     defaultMode: "新建非生产资源的默认档位",
     defaultModeHint: "生产资源新建时固定为只读巡检。",
     envList: "已检测到的运行环境",
@@ -1146,38 +1333,46 @@ export const copy = {
     envUnavailableHint: "没有检测到这个环境，或者它没有启动。",
     redetect: "重新检测",
     redetected: "已重新检测运行环境与 Agent",
-    sshHint: "录入的连接写进 CloudLink 托管的 ~/.ssh/cloudlink.conf，用户 config 开头的一行 Include 让它生效。",
+    sshHint:
+      "录入的连接写进 CloudLink 托管的 ~/.ssh/cloudlink.conf，用户 config 开头的一行 Include 让它生效。",
     sshManaged: "托管文件",
     sshUserConfig: "用户 config",
     sshKnownHosts: "known_hosts",
     sshIncluded: "已加入 Include",
     sshNotIncluded: "未加入 Include",
     sshAddInclude: "加入 Include",
-    sshManual: "也可以手动把下面这一行加到 config 的开头。放在末尾会被前面的 Host * 覆盖。",
+    sshManual:
+      "也可以手动把下面这一行加到 config 的开头。放在末尾会被前面的 Host * 覆盖。",
     bodyLineLimit: "正文行数上限",
-    bodyLineLimitHint: "SKILL.md 正文超过时给出警告，默认 100。Anthropic 建议正文不超过 500 行。",
+    bodyLineLimitHint:
+      "SKILL.md 正文超过时给出警告，默认 100。Anthropic 建议正文不超过 500 行。",
     snapshot: "在 SKILL.md 中写入数据快照时间",
     snapshotHint: "让 Agent 知道这些信息采集于何时。",
     probeTimeout: "超时时间（秒）",
     probeTimeoutHint: "整个探测的超时。连接阶段固定 10 秒。",
     hostKey: "主机密钥策略",
     hostKeyValue: "严格校验（StrictHostKeyChecking=yes）",
-    hostKeyHint: "固定，不提供选项。首次连接的主机，在测试连接时核对指纹后信任。",
+    hostKeyHint:
+      "固定，不提供选项。首次连接的主机，在测试连接时核对指纹后信任。",
     probeScript: "探测脚本",
-    probeScriptHint: "只读，POSIX sh，不使用 sudo，不采集环境变量、文件内容和密钥。",
+    probeScriptHint:
+      "只读，POSIX sh，不使用 sudo，不采集环境变量、文件内容和密钥。",
     sshPath: "Windows ssh 路径",
     sshPathHint: "默认用系统 OpenSSH 的绝对路径，不依赖 PATH 顺序。",
     dataDir: "数据目录",
     logDir: "日志目录",
     importExport: "导出或导入 JSON",
     importExportLater: "v0.5 提供",
-    dangerHint: "这些操作不能撤销。CloudLink 只删除自己创建的副本、配置和数据。",
+    dangerHint:
+      "这些操作不能撤销。CloudLink 只删除自己创建的副本、配置和数据。",
     removeAll: "移除全部分发",
-    removeAllHint: "从所有 Agent 目标中移除 CloudLink 分发的 cloudlink-servers，并停用全部目标。资源信息保留。",
+    removeAllHint:
+      "从所有 Agent 目标中移除 CloudLink 分发的 cloudlink-servers，并停用全部目标。资源信息保留。",
     removeAllConfirm: "移除全部",
     removeAllDone: "已移除全部分发",
     resetData: "清空数据",
-    resetDataHint: "删除全部资源、托管 ssh 配置、凭据库中的密码、护栏的 hook、笔记收件箱、操作记录和活动日志，恢复默认设置。",
+    resetDataHint:
+      "删除全部资源、托管 ssh 配置、凭据库中的密码、护栏的 hook、笔记收件箱、操作记录和活动日志，恢复默认设置。",
     resetDataConfirm: "清空数据",
     resetDone: "已清空数据",
     typeToConfirm: (text: string) => `输入「${text}」确认`,
@@ -1203,27 +1398,41 @@ export const copy = {
   activity: {
     "test-ok": (p) => `测试了 ${v(p, "alias")} 的连接，耗时 ${v(p, "ms")}ms`,
     "test-failed": (p) => `测试 ${v(p, "alias")} 的连接失败：${sshTitle(p)}`,
-    "probe-updated": (p) => `探测了 ${v(p, "alias")}，更新了 ${v(p, "count")} 处`,
-    "probe-held": (p) => `探测了 ${v(p, "alias")}，更新了 ${v(p, "count")} 处，${v(p, "held")} 处待确认`,
+    "probe-updated": (p) =>
+      `探测了 ${v(p, "alias")}，更新了 ${v(p, "count")} 处`,
+    "probe-held": (p) =>
+      `探测了 ${v(p, "alias")}，更新了 ${v(p, "count")} 处，${v(p, "held")} 处待确认`,
     "probe-no-changes": (p) => `探测了 ${v(p, "alias")}，未发现变化`,
     "probe-failed": (p) => `探测 ${v(p, "alias")} 失败：${sshTitle(p)}`,
     "probe-undone": (p) => `撤销了 ${v(p, "alias")} 的探测更新`,
-    "compile-ok": (p) => `编译了 ${targetOf(p)}的总 Skill（${v(p, "count")} 项资源）`,
-    "compile-blocked": (p) => `${targetOf(p)}的总 Skill 编译受阻：${v(p, "count")} 个错误`,
+    "compile-ok": (p) =>
+      `编译了 ${targetOf(p)}的总 Skill（${v(p, "count")} 项资源）`,
+    "compile-blocked": (p) =>
+      `${targetOf(p)}的总 Skill 编译受阻：${v(p, "count")} 个错误`,
     "deliver-ok": (p) => `把总 Skill 同步到 ${v(p, "target")}（${envOf(p)}）`,
-    "remove-ok": (p) => `从 ${v(p, "target")}（${envOf(p)}）移除了 cloudlink-servers`,
+    "remove-ok": (p) =>
+      `从 ${v(p, "target")}（${envOf(p)}）移除了 cloudlink-servers`,
     "repair-ok": (p) => `修复了 ${v(p, "target")}（${envOf(p)}）的副本`,
-    "ssh-config-written": (p) => `写入了 ${envOf(p)} 的托管 ssh 配置（${v(p, "count")} 台服务器）`,
-    "ssh-include-added": (p) => `在 ${envOf(p)} 的 ~/.ssh/config 开头加入了 Include`,
+    "ssh-config-written": (p) =>
+      `写入了 ${envOf(p)} 的托管 ssh 配置（${v(p, "count")} 台服务器）`,
+    "ssh-include-added": (p) =>
+      `在 ${envOf(p)} 的 ~/.ssh/config 开头加入了 Include`,
     "guard-installed": (p) => `为 ${envOf(p)} 的 Claude Code 安装了护栏`,
     "guard-removed": (p) => `移除了 ${envOf(p)} 的护栏`,
-    "mode-changed": (p) => `把 ${v(p, "alias")} 切换为「${MODE_LABEL[v(p, "mode") as Mode] ?? v(p, "mode")}」`,
-    "cli-detected": (p) => `检测了 ${v(p, "alias")} 的 CLI：${v(p, "ready")}/${v(p, "total")} 个运行环境已就绪`,
-    "cli-scope-updated": (p) => `更新了 ${v(p, "alias")} 的资源范围（已选 ${v(p, "count")} 项）`,
-    "notes-merged": (p) => `并入了 ${v(p, "alias")} 的 ${v(p, "count")} 条 Agent 笔记`,
-    "notes-dismissed": (p) => `忽略了 ${v(p, "alias")} 的 ${v(p, "count")} 条 Agent 笔记`,
-    "agent-op-allowed": (p) => `Agent 在 ${v(p, "alias")} 上执行了 \`${v(p, "command")}\``,
-    "agent-op-denied": (p) => `Agent 在 ${v(p, "alias")} 上执行的 \`${v(p, "command")}\` 被护栏拦下`,
+    "mode-changed": (p) =>
+      `把 ${v(p, "alias")} 切换为「${MODE_LABEL[v(p, "mode") as Mode] ?? v(p, "mode")}」`,
+    "cli-detected": (p) =>
+      `检测了 ${v(p, "alias")} 的 CLI：${v(p, "ready")}/${v(p, "total")} 个运行环境已就绪`,
+    "cli-scope-updated": (p) =>
+      `更新了 ${v(p, "alias")} 的资源范围（已选 ${v(p, "count")} 项）`,
+    "notes-merged": (p) =>
+      `并入了 ${v(p, "alias")} 的 ${v(p, "count")} 条 Agent 笔记`,
+    "notes-dismissed": (p) =>
+      `忽略了 ${v(p, "alias")} 的 ${v(p, "count")} 条 Agent 笔记`,
+    "agent-op-allowed": (p) =>
+      `Agent 在 ${v(p, "alias")} 上执行了 \`${v(p, "command")}\``,
+    "agent-op-denied": (p) =>
+      `Agent 在 ${v(p, "alias")} 上执行的 \`${v(p, "command")}\` 被护栏拦下`,
   } satisfies Record<ActivityMessageId, Msg>,
 
   activityView: {
@@ -1236,11 +1445,13 @@ export const copy = {
     today: "今天",
     yesterday: "昨天",
     emptyTitle: "还没有活动记录",
-    emptyDescription: "测试连接、CLI 检测、探测、编译、分发、档位切换、护栏和 Agent 操作的记录会按天出现在这里。",
+    emptyDescription:
+      "测试连接、CLI 检测、探测、编译、分发、档位切换、护栏和 Agent 操作的记录会按天出现在这里。",
     noMatch: "没有符合筛选条件的记录",
     clearFilter: "清除筛选",
     failed: "失败",
-    retention: "日志在本地保留 30 天，不含原始探测输出、密码和解析后的连接信息。Agent 操作只记录经过护栏的命令（Claude Code）。",
+    retention:
+      "日志在本地保留 30 天，不含原始探测输出、密码和解析后的连接信息。Agent 操作只记录经过护栏的命令（Claude Code）。",
   },
 
   toast: { undo: "撤销" },

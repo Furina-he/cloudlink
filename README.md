@@ -18,25 +18,11 @@ CloudLink 是一个面向 AI Agent 的全栈基础设施配电盘与安全护栏
 
 ## 当前状态
 
-- **仓库：** https://github.com/Furina-he/cloudlink （公开，分支 `main`）。
-- **开发环境：** 2026-10-28 已在本机逐项核查，结果和还需补装的项目见 `docs/EXECUTION-PLAN.md` 第 1 节。
-- **2026-10-27：** 完成 PRD 评审、修订版 PRD、视觉规范和执行计划。
-- **2026-10-29：** P0 到 P3 完成（前端跑在 Mock 上，Rust 后端尚未开始）。
-- **2026-10-30 ~ 11-01：** 方向调整为 PRD v3 并完成 P3.5 前端初版。
-- **2026-11-02：** 升级为 **PRD v3.1（「钢制配电盘」减负 + 云平台 CLI 扩展）**：
-  - 首屏取消常驻左右分栏与多列卡片网格，改为单列全宽的「服务器 (SSH) + 云平台 (CLI)」双闸刀回路行，未选中时隐藏右侧面板；
-  - 详情面板砍掉 8 层折叠手风琴，改为「常驻控制头 + 3 个平铺 Tab（画像与规则 / 连接配置 / 动态）」，底层列入状态正常时隐身；
-  - 取消「临时解锁 30 分钟」，改为在主列表回路行直接切换档位（生产环境开启标准运维时琥珀色高亮提醒）；
-  - 新建 SSH 服务器支持密码自动转免密密钥并启用一步到位；
-  - 新增 Cloudflare（`wrangler`）、Vercel（`vercel`）、Oracle Cloud（`oci`）云平台 CLI 接入，所有云厂商与 Agent 一律使用官方品牌 SVG Logo。
-- **2026-11-02：** P3.6 前端 v3.1 改版在 Mock 下完成（紧凑窗口与顶部一体栏、单行回路、全宽详情、添加弹窗、SSH 一步到位、云平台 CLI 向导，取消临时解锁），等待验收。
-- **2026-11-03：** P3.7 完成：云平台同一家可接入多个账号（`handle` 为 `cloudflare`、`cloudflare-2`…），未安装 CLI 时给出可切换安装方式的安装指引。
-- **2026-11-04：** P4a 完成 Rust 核心的数据、环境、SSH 和编译部分：
-  - SQLite 迁移；Windows/WSL 环境检测；托管 ssh 配置与 Include；
-  - 测试连接（指纹确认、`SSH_ASKPASS` 回环、错误分类）；密码转免密与复制密钥到 WSL；
-  - 总 Skill 编译（黄金样例逐字节一致），Lint 8 条规则，内置 gitleaks 密钥扫描，原子发布；
-  - ts-rs 导出的类型与前端契约一致。
-- **下一步：** P4b 实现探测、分发和 IPC（PRD 7.8 的命令与事件，云平台 CLI 检测）。
+CloudLink v0.1 的前端和 Rust 核心已实现，当前进入 **P5 联调阶段**，验证真实 Tauri IPC、Windows/WSL SSH、云平台 CLI 与 Agent 使用闭环。阶段任务与验收标准见 [执行计划](docs/EXECUTION-PLAN.md)。
+
+仓库：[Furina-he/cloudlink](https://github.com/Furina-he/cloudlink)（公开，主分支 `main`）。开发环境见执行计划第 1 节；全新检出后，直接运行 Cargo 检查前先执行 `pnpm --dir cloudlink build:guard`，准备 Tauri 所需的护栏 sidecar。
+
+验收命令、结果、截图与遗留问题在开发会话中汇报；长期文档保留产品说明、接口约定和开发规范。
 
 ## 关键决策速览
 

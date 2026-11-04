@@ -1,4 +1,4 @@
-//! Claude Code 护栏与操作记录（F-306、F-307）。P4a 只定义类型，实现在 P4c
+//! Claude Code 护栏与操作记录（F-306、F-307）。
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -75,6 +75,8 @@ pub enum GuardReasonId {
     CliEnvExport,
     CliWrite,
     CliDestroy,
+    CliAccount,
+    CliScope,
     Unparsed,
 }
 

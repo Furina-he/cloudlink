@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm build"
+    "beforeDevCommand": "pnpm build:guard && pnpm dev",
+    "beforeBuildCommand": "pnpm build:guard && pnpm build"
   },
   "app": {
     "windows": [
@@ -29,6 +29,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": ["binaries/cloudlink-guard"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

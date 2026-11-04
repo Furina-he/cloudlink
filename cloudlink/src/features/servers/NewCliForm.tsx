@@ -3,6 +3,7 @@ import { useShallow } from "zustand/react/shallow"
 
 import type { CliAsset, CliProvider, Mode } from "@/bindings"
 import { ProviderMark } from "@/components/app/ProviderMark"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -10,9 +11,9 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 import { useAgentOptions } from "@/features/agents/agentKeys"
-import { copy } from "@/lib/copy"
+import { copy, ipcErrorText } from "@/lib/copy"
 import { cliEnvStatus, useAssetStore } from "@/stores/assets"
-import { emptyDetection, useCliStore } from "@/stores/cli"
+import { emptyDetection, scopeIsReady, useCliStore } from "@/stores/cli"
 import { useUIStore } from "@/stores/ui"
 import { loginCommand } from "@/lib/cliProviders"
 import { serverActions, toastError } from "./actions"
@@ -35,25 +36,71 @@ export function NewCliForm({ provider }: { provider: CliProvider }) {
   // 云平台默认按生产对待：只读巡检（F-202 AC2）
   const [mode, setMode] = useState<Mode>("read-only")
   const [saving, setSaving] = useState(false)
-  const ready = Object.values(detection.envStates).some((s) => s && cliEnvStatus(s) === "ready")
-  const bound = useAssetStore(useShallow((s) => s.ids.map((id) => s.byId[id]).flatMap((a) => (a.type === "cli" && a.cliProvider === provider ? [a.account ?? ""] : []))))
+  const ready = Object.values(detection.envStates).some(
+    (s) => s && cliEnvStatus(s) === "ready"
+  )
+  const bound = useAssetStore(
+    useShallow((s) =>
+      s.ids
+        .map((id) => s.byId[id])
+        .flatMap((a) =>
+          a.type === "cli" && a.cliProvider === provider
+            ? [a.account ?? ""]
+            : []
+        )
+    )
+  )
   const accounts = [
     ...new Set(
-      Object.values(detection.envStates).flatMap((s) => (s && cliEnvStatus(s) === "ready" ? (s.accounts ?? (s.account ? [s.account] : [])) : []))
+      Object.values(detection.envStates).flatMap((s) =>
+        s && cliEnvStatus(s) === "ready"
+          ? (s.accounts ?? (s.account ? [s.account] : []))
+          : []
+      )
     ),
   ]
   const [pickedAccount, setAccount] = useState<string | null>(null)
-  const account = pickedAccount ?? accounts.find((a) => !bound.includes(a)) ?? null
-  const allBound = ready && accounts.length > 0 && accounts.every((a) => bound.includes(a))
-  const noEnvs = !detection.detecting && Object.keys(detection.envStates).length === 0 && !detection.failed
+  const account =
+    pickedAccount ?? accounts.find((a) => !bound.includes(a)) ?? null
+  const allBound =
+    ready && accounts.length > 0 && accounts.every((a) => bound.includes(a))
+  const noEnvs =
+    !detection.detecting &&
+    Object.keys(detection.envStates).length === 0 &&
+    !detection.failed
+  const scope = detection.scopeAccount === account ? detection.scope : null
+  const scopeReady = scopeIsReady(detection, account)
+  const scopeLoading =
+    detection.scopeLoading ||
+    (ready && !allBound && !scope && !detection.scopeError)
 
   useEffect(() => {
-    useCliStore.getState().detect(provider).catch(toastError)
-    return () => useCliStore.getState().clear(provider)
+    const detect = () => {
+      void useCliStore.getState().detect(provider).catch(toastError)
+    }
+    detect()
+    window.addEventListener("focus", detect)
+    return () => {
+      window.removeEventListener("focus", detect)
+      useCliStore.getState().clear(provider)
+    }
   }, [provider])
 
+  useEffect(() => {
+    if (ready && !allBound)
+      useCliStore
+        .getState()
+        .refreshScope(provider, account ?? undefined)
+        .catch(toastError)
+  }, [provider, account, ready, allBound])
+
+  const selectAccount = (value: string) => {
+    useCliStore.getState().clearScope(provider, value)
+    setAccount(value)
+  }
+
   const save = async () => {
-    if (saving || !ready || allBound) return
+    if (saving || !ready || allBound || !scopeReady) return
     setSaving(true)
     try {
       const { asset } = await useAssetStore.getState().save({
@@ -61,17 +108,25 @@ export function NewCliForm({ provider }: { provider: CliProvider }) {
         cliProvider: provider,
         account,
         // 这家的第一个账号直接用云平台的名字，之后的带上账号区分
-        name: bound.length === 0 || !account ? copy.cli.name[provider] : `${copy.cli.name[provider]} · ${account}`,
+        name:
+          bound.length === 0 || !account
+            ? copy.cli.name[provider]
+            : `${copy.cli.name[provider]} · ${account}`,
         envTag: "prod",
         summary: "",
         guardrails: { rules: [] },
         notes: "",
-        scope: detection.scope ?? [],
+        scope: scope ?? [],
       })
       const saved = asset as CliAsset
-      for (const key of granted) await useAssetStore.getState().setDistribute(saved.id, key, true)
+      for (const key of granted)
+        await useAssetStore.getState().setDistribute(saved.id, key, true)
       if (mode !== saved.agent.mode) serverActions.requestMode(saved, mode)
-      toast.add({ title: copy.cli.enabled(saved.name), description: granted.length ? copy.agentSection.effectHint : undefined, type: "success" })
+      toast.add({
+        title: copy.cli.enabled(saved.name),
+        description: granted.length ? copy.agentSection.effectHint : undefined,
+        type: "success",
+      })
       // 完成后关闭弹窗回到主列表（PRD 6.5）
       useUIStore.getState().closeInspector({ force: true })
     } catch (e) {
@@ -82,22 +137,45 @@ export function NewCliForm({ provider }: { provider: CliProvider }) {
   }
 
   const setScope = (ids: string[]) =>
-    useCliStore.getState().setDraftScope(provider, (detection.scope ?? []).map((x) => ({ ...x, selected: ids.includes(x.id) })))
+    useCliStore.getState().setDraftScope(
+      provider,
+      (scope ?? []).map((x) => ({ ...x, selected: ids.includes(x.id) }))
+    )
 
   return (
-    <section aria-labelledby="detail-title" className="flex h-full min-h-0 flex-col">
-      <CreateHeader title={copy.create.titleCli(copy.cli.name[provider])} icon={<ProviderMark provider={provider} />} />
+    <section
+      aria-labelledby="detail-title"
+      className="flex h-full min-h-0 flex-col"
+    >
+      <CreateHeader
+        title={copy.create.titleCli(copy.cli.name[provider])}
+        icon={<ProviderMark provider={provider} />}
+      />
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-6 p-3 pb-6">
-          <p className="text-xs text-muted-foreground">{copy.cli.blurb[provider]}</p>
+          <p className="text-xs text-muted-foreground">
+            {copy.cli.blurb[provider]}
+          </p>
           <DetailGroup
             title={copy.cli.envCheckTitle}
-            action={<RecheckButton detecting={detection.detecting} onClick={() => useCliStore.getState().detect(provider).catch(toastError)} />}
+            action={
+              <RecheckButton
+                detecting={detection.detecting}
+                onClick={() =>
+                  useCliStore.getState().detect(provider).catch(toastError)
+                }
+              />
+            }
           >
             {noEnvs ? (
               <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 {copy.cli.noAgentEnvs}
-                <Button variant="link" size="xs" className="h-auto p-0" onClick={() => useUIStore.getState().setView("agents")}>
+                <Button
+                  variant="link"
+                  size="xs"
+                  className="h-auto p-0"
+                  onClick={() => useUIStore.getState().setView("agents")}
+                >
                   {copy.cli.goAgents}
                 </Button>
               </p>
@@ -107,52 +185,126 @@ export function NewCliForm({ provider }: { provider: CliProvider }) {
                   provider={provider}
                   envStates={detection.envStates}
                   detecting={detection.detecting}
-                  onOpenTerminal={(envId, command) => serverActions.openTerminal(envId, command, provider, null)}
+                  onOpenTerminal={(envId, command) =>
+                    serverActions.openTerminal(envId, command, provider, null)
+                  }
                 />
-                <p className="text-xs text-muted-foreground">{detection.failed ? copy.cli.detectFailed : copy.cli.autoRefreshHint}</p>
+                <p className="text-xs text-muted-foreground">
+                  {detection.failed
+                    ? copy.cli.detectFailed
+                    : copy.cli.autoRefreshHint}
+                </p>
               </>
             )}
           </DetailGroup>
           {accounts.length > 0 && (
             <DetailGroup title={copy.cli.accountTitle[provider]}>
-              <RadioGroup value={account ?? ""} onValueChange={(v) => setAccount(v as string)} aria-label={copy.cli.accountTitle[provider]} className="gap-0 divide-y rounded-lg border">
+              <RadioGroup
+                value={account ?? ""}
+                onValueChange={(v) => selectAccount(v as string)}
+                aria-label={copy.cli.accountTitle[provider]}
+                className="gap-0 divide-y rounded-lg border"
+              >
                 {accounts.map((a) => {
                   const taken = bound.includes(a)
                   const id = `account-${a}`
                   return (
-                    <Field key={a} orientation="horizontal" data-disabled={taken || undefined} className="min-h-9 items-center gap-2.5 px-2.5 py-1.5">
+                    <Field
+                      key={a}
+                      orientation="horizontal"
+                      data-disabled={taken || undefined}
+                      className="min-h-9 items-center gap-2.5 px-2.5 py-1.5"
+                    >
                       <RadioGroupItem value={a} id={id} disabled={taken} />
-                      <FieldLabel htmlFor={id} className="min-w-0 flex-1 truncate font-mono text-[0.8125rem] font-normal">
+                      <FieldLabel
+                        htmlFor={id}
+                        className="min-w-0 flex-1 truncate font-mono text-[0.8125rem] font-normal"
+                      >
                         {a}
                       </FieldLabel>
-                      {taken && <span className="shrink-0 text-xs text-muted-foreground">{copy.cli.accountAdded}</span>}
+                      {taken && (
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {copy.cli.accountAdded}
+                        </span>
+                      )}
                     </Field>
                   )
                 })}
               </RadioGroup>
-              {allBound && <p className="text-xs text-muted-foreground">{copy.cli.allAccountsAdded(loginCommand(provider))}</p>}
+              {allBound && (
+                <p className="text-xs text-muted-foreground">
+                  {copy.cli.allAccountsAdded(loginCommand(provider))}
+                </p>
+              )}
             </DetailGroup>
           )}
           <DetailGroup title={copy.cli.scopeTitle}>
-            <CliScopeList
-              provider={provider}
-              items={detection.scope}
-              loading={detection.scopeLoading}
-              waiting={!ready}
-              onChange={setScope}
-              onAddAsServer={(item) => useUIStore.getState().startCreate("ssh", { prefill: { host: item.address ?? "", name: item.name } })}
-            />
+            {detection.scopeError ? (
+              <Alert variant="destructive">
+                <AlertDescription className="flex flex-col gap-2">
+                  {ipcErrorText(
+                    detection.scopeError.id,
+                    detection.scopeError.params
+                  )}
+                  <RecheckButton
+                    detecting={detection.scopeLoading}
+                    onClick={() =>
+                      useCliStore
+                        .getState()
+                        .refreshScope(provider, account ?? undefined)
+                        .catch(toastError)
+                    }
+                  />
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <CliScopeList
+                provider={provider}
+                items={scope}
+                loading={scopeLoading}
+                waiting={!ready || allBound}
+                onChange={setScope}
+                onAddAsServer={(item) =>
+                  useUIStore
+                    .getState()
+                    .startCreate("ssh", {
+                      prefill: { host: item.address ?? "", name: item.name },
+                    })
+                }
+              />
+            )}
           </DetailGroup>
         </div>
       </ScrollArea>
       <div className="flex shrink-0 flex-col gap-3 border-t px-3 py-2.5">
-        <GrantFields title={copy.create.grant} agents={agents} selected={granted} onSelected={setGranted} mode={mode} onMode={setMode} prod />
+        <GrantFields
+          title={copy.create.grant}
+          agents={agents}
+          selected={granted}
+          onSelected={setGranted}
+          mode={mode}
+          onMode={setMode}
+          prod
+        />
         <div className="flex flex-wrap items-center justify-end gap-2">
-          {!ready && !detection.detecting && <span className="mr-auto text-xs text-muted-foreground">{copy.cli.notReadyHint}</span>}
-          <Button variant="ghost" size="sm" disabled={saving} onClick={() => useUIStore.getState().closeInspector()}>
+          {!ready && !detection.detecting && (
+            <span className="mr-auto text-xs text-muted-foreground">
+              {copy.cli.notReadyHint}
+            </span>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={saving}
+            onClick={() => useUIStore.getState().closeInspector()}
+          >
             {copy.common.cancel}
           </Button>
-          <Button size="sm" disabled={saving || !ready || allBound} onClick={() => void save()}>
+          <Button
+            size="sm"
+            disabled={saving || !ready || allBound || !scopeReady}
+            onClick={() => void save()}
+          >
             {saving && <Spinner data-icon="inline-start" aria-hidden />}
             {saving ? copy.cli.saving : copy.cli.saveEnable}
           </Button>
