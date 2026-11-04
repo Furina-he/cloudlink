@@ -1,0 +1,59 @@
+# {{ alias }} — {{ name }}
+
+> {{ env_title }} | Mode: {{ mode }}{% if snapshot %} | Snapshot: {{ snapshot }}{% endif +%}
+
+## Connect
+- `ssh {{ alias }} '<command>'`
+{% if system %}
+- System: {{ system }}
+{% endif %}
+{% if role %}
+- Role: {{ role }}
+{% endif %}
+{% if resolved %}
+- Resolved: {{ resolved }}
+{% endif %}
+{% if rules %}
+
+## Guardrails (must follow)
+{% for r in rules %}
+{{ loop.index }}. {{ r }}
+{% endfor %}
+{% endif %}
+{% if paths %}
+
+## Key directories
+| Key | Path | Purpose |
+| --- | --- | --- |
+{% for p in paths %}
+| {{ p.key }} | {{ p.path }} | {{ p.label }} |
+{% endfor %}
+{% endif %}
+{% if services %}
+
+## Services
+| Name | Kind | Image | Ports | Role | Critical |
+| --- | --- | --- | --- | --- | --- |
+{% for s in services %}
+| {{ s.name }} | {{ s.kind }} | {{ s.image }} | {{ s.ports }} | {{ s.role }} | {{ s.critical }} |
+{% endfor %}
+{% endif %}
+{% if sites %}
+
+## Sites served
+{{ sites }}
+{% endif %}
+{% if ports %}
+
+## Listening ports
+{% for p in ports %}
+- {{ p }}
+{% endfor %}
+{% endif %}
+{% if notes %}
+
+## Notes
+{{ notes }}
+{% endif %}
+
+Live metrics such as free disk or memory are not recorded here; check them on the host when needed (e.g. `df -h`, `free -m`).

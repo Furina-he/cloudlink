@@ -1,0 +1,20 @@
+# 每行一个不应被当作密钥的样本：编译产物里的常见内容
+Never ask for or record passwords, private keys or IP addresses; connect only through the SSH alias.
+Never read or print credential files (`.env`, `*.pem`, `*.key`, `id_*`, `/etc/shadow`, `~/.ssh/`) and never use `docker inspect` to view environment variables.
+| `openresty` | docker | `openresty:1.21` | `0.0.0.0:443->443/tcp` | Main gateway and SSL termination | yes |
+| nginx-conf | `/opt/1panel/apps/openresty/openresty/conf/conf.d` | OpenResty site configs |
+    ssh <alias> 'uptime; nproc; free -m; df -hP -x tmpfs -x devtmpfs -x overlay -x squashfs; docker ps -a --format "{{.Names}}	{{.Status}}"; systemctl --failed --no-legend --plain; journalctl -p err --since "24 hours ago" --no-pager | tail -n 30'
+- 2026-10-31: The API is deployed from /opt/1panel/docker/compose/api with `docker compose up -d --build`.
+- Target this account on every command: set `CLOUDFLARE_ACCOUNT_ID` to the id of `me@example.com` from `wrangler whoami`.
+Reset the password with `passwd deploy` if the user asks.
+password=<your password>
+password: ********
+token=$TOKEN
+api_key = ${API_KEY}
+Run `wrangler secret list` to see which secrets exist; never print their values.
+| `postgresql` | systemd | - | - | Primary database | yes |
+| `redis` | docker | `redis:7.4` | `127.0.0.1:6379->6379/tcp` | - | no |
+The PostgreSQL password lives in the vault; ask the user.
+image: ghcr.io/example/api:2026.10.31-3f9c2ab
+sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+Snapshot: 2026-10-31

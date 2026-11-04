@@ -31,7 +31,12 @@ CloudLink 是一个面向 AI Agent 的全栈基础设施配电盘与安全护栏
   - 新增 Cloudflare（`wrangler`）、Vercel（`vercel`）、Oracle Cloud（`oci`）云平台 CLI 接入，所有云厂商与 Agent 一律使用官方品牌 SVG Logo。
 - **2026-11-02：** P3.6 前端 v3.1 改版在 Mock 下完成（紧凑窗口与顶部一体栏、单行回路、全宽详情、添加弹窗、SSH 一步到位、云平台 CLI 向导，取消临时解锁），等待验收。
 - **2026-11-03：** P3.7 完成：云平台同一家可接入多个账号（`handle` 为 `cloudflare`、`cloudflare-2`…），未安装 CLI 时给出可切换安装方式的安装指引。
-- **下一步：** P4 Rust 后端开发（按 P3.7 契约实现 `CliAsset.handle/account`、`CliEnvState.accounts`）。
+- **2026-11-04：** P4a 完成 Rust 核心的数据、环境、SSH 和编译部分：
+  - SQLite 迁移；Windows/WSL 环境检测；托管 ssh 配置与 Include；
+  - 测试连接（指纹确认、`SSH_ASKPASS` 回环、错误分类）；密码转免密与复制密钥到 WSL；
+  - 总 Skill 编译（黄金样例逐字节一致），Lint 8 条规则，内置 gitleaks 密钥扫描，原子发布；
+  - ts-rs 导出的类型与前端契约一致。
+- **下一步：** P4b 实现探测、分发和 IPC（PRD 7.8 的命令与事件，云平台 CLI 检测）。
 
 ## 关键决策速览
 

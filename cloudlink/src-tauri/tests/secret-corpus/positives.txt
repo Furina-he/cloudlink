@@ -1,0 +1,32 @@
+# 每行一个必须被拦下的样本。⟨⟩ 只是把假令牌断开存放，测试读入时去掉（见 src/compile/secrets/tests.rs）
+AKIA⟨⟩NUX7BOYAE5YB4K6P
+aws_access_key_id = ASIA⟨⟩HSSNHU77Y4UL2NJO
+ghp_⟨⟩Rc985IuUFHa0GwFyBmp0Q2ZHYXaHVDIoJtWQ
+token: gho_⟨⟩7XBOcgGgvBiV5UI4a2XqN6xekf1S4x6tOApW
+github_pat_⟨⟩Cokgs_RZWoOyfSMLHhUNIyZgKOJNLqXgXAUmMtMRPptQInVuUUDJHcO7fSka_NtbFlhz6sRtkaiqadrJCD
+glpat-⟨⟩H8sm5YJwL1idLzTyH6Sz
+xoxb-⟨⟩93005550331-354729317257-AQfHP3vpzmJKemJjLSpQdF4a
+stripe sk_live_⟨⟩jV8Xblq2uOYsy8Z8awl22ZbG
+sk-⟨⟩l0PbjZYxKqCQYddkplDPT3BlbkFJdNv5zWaeoEpsQXD61cOE
+ANTHROPIC_API_KEY=sk-ant-api03-⟨⟩NVFV4Y8eHAEagzhnvo03hFa9ImteyS6qJ7EHzCmlj92FHUKYurqrIucWpIZGHeweOBOa6ciq9j2lI5WBmb4syTPVBJmqLAA
+key AIza⟨⟩Af4CiGIVUmqHIzcXRUIUFNio7jmXzokjbLd
+npm_⟨⟩5uduEjVmYoTd9BxpJHXnAAzAOOizmO9LDCfQ
+dop_v1_⟨⟩a4c18bfd30ce7d273606cf038c818e5b3384ac912d7007d59cb2e5489b48a692
+hf_⟨⟩hmJcFvIaCSxOMmgNefazKJgENmnrEHAGnP
+SG.⟨⟩uorg2tGywlh-nP_h0W0J9v.qF7de7Q9bneGLukqDkU4tqdK1bYkORUOTxr8k2KpPS-
+Authorization: Bearer ey⟨⟩JB5zdm9z6AwnqWmj2XSkku51i72CjDL.eyTVKFrAym2sSQW1d6MfeJQW88ItN585hgKhzILUGz.PsiyAv7sJUHK48b-28uNNLkYKCZUvu7I4Pt4-QjIuhh
+-----BEGIN OPENSSH ⟨⟩PRIVATE KEY-----
+-----BEGIN RSA ⟨⟩PRIVATE KEY-----
+-----BEGIN ⟨⟩PRIVATE KEY-----
+pass⟨⟩word=devpass-2026
+- 2026-10-31: db pass⟨⟩word: hunter2xyz
+| `redis` | docker | `redis:7.4` | requirepass in config, PASS⟨⟩WORD="S3cr3t!pw" | - | no |
+MYSQL_ROOT_PASS⟨⟩WORD=Zx9-qq77-Lm
+api_⟨⟩key = "nav7I9lxKfFJyekHdMOi4O7cGmODgZQI"
+secret⟨⟩=OTQbm0vGjVdE8cq2iM4dc5PC
+export TOK⟨⟩EN=Nn1ZzOjcLtoDtZ1P8kHkDmVEmPWxqdo2kmSl0CTr
+cloudflare_api_key = "ed355627903f9077f0830f58517d933d1932c"
+pypi-⟨⟩AgEIcHlwaS5vcmcLtTQMSDhL_H4FXu6AaIZBDgJWuX2aFxry9UG_H2MnWgGygFWuPIaf8DcX9gf
+heroku_api_⟨⟩key = "b9d6bdb7-2abf-6c41-99b3-11093fec3711"
+shpat_⟨⟩da62a32f8cde64b5b50241ef517d274e
+xoxp-⟨⟩17320368834-107921305367-1534870107640-2b821e199bb45698e3d23f020234353d

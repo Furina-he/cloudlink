@@ -1,11 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "enables the default permissions",
-  "windows": [
-    "main"
-  ],
+  "description": "最小权限：只开放核心能力、目录选择对话框和在资源管理器中显示文件；不开放 shell 与 fs 插件（PRD 8.5）",
+  "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "dialog:allow-open",
+    "opener:allow-reveal-item-in-dir"
   ]
 }

@@ -481,7 +481,7 @@ Connect only through the SSH aliases below: `ssh <alias> '<command>'`. Authentic
 hk-edge reverse-proxies api.example.com to the API containers on hk-edge; those containers use the PostgreSQL database on sg-db over the private network.
 
 ## Modes
-- **read-only**: inspection commands only, e.g. `docker ps`, `docker logs --tail 200 <container>`, `df -h`, `free -m`, `uptime`, `ss -tln`, `journalctl -u <service> -n 200`. If a change is needed, describe the plan to the user and stop; the user can unlock the server in CloudLink for 30 minutes.
+- **read-only**: inspection commands only, e.g. `docker ps`, `docker logs --tail 200 <container>`, `df -h`, `free -m`, `uptime`, `ss -tln`, `journalctl -u <service> -n 200`. If a change is needed, describe the plan to the user and stop; the user can switch the server to standard mode in CloudLink.
 - **standard**: routine deployments and service restarts are allowed. Ask the user before deleting data or volumes, changing the firewall or SSH configuration, stopping critical services, or rebooting.
 - In Claude Code, CloudLink's guard enforces these modes. A blocked command comes back with the reason.
 

@@ -1,0 +1,34 @@
+# {{ handle }} — {{ name }}
+
+> {{ env_title }} | Mode: {{ mode }}
+
+## Connect
+- Run `{{ binary }} <command>` in the local shell; it is already logged in. Never print or export its credentials.
+{% if account %}
+- Account: {{ account }}
+- {{ account_flag }}
+{% endif %}
+{% if role %}
+- Role: {{ role }}
+{% endif %}
+{% if rules %}
+
+## Guardrails (must follow)
+{% for r in rules %}
+{{ loop.index }}. {{ r }}
+{% endfor %}
+{% endif %}
+
+## Scope
+Only operate on these resources; ask the user before touching anything else in the account.
+
+| Kind | Name | Linked server |
+| --- | --- | --- |
+{% for s in scope %}
+| {{ s.kind }} | {{ s.name }} | {{ s.linked }} |
+{% endfor %}
+{% if notes %}
+
+## Notes
+{{ notes }}
+{% endif %}

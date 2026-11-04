@@ -319,6 +319,7 @@ export const copy = {
     "alias-conflict": (p) => `${envOf(p)} 的 ssh config 里已有 Host ${v(p, "alias")}，请换一个别名。`,
     "cannot-distribute": (p) => DISTRIBUTE_BLOCK[v(p, "reason") as DistributeBlockReason] ?? "这项资源还不能分发",
     "password-missing": () => "凭据库里没有这台服务器的密码，先填写密码并测试连接。",
+    "password-target-changed": () => "地址、端口、用户或认证方式改过了，已保存的密码不会发往新的目标。请重新填写密码再测试。",
     "connection-failed": (p) => `${sshTitle(p)}。认证方式没有切换。`,
     "settings-invalid": (p) => `${v(p, "path")} 不是合法的 JSON，CloudLink 没有修改它。修好后再试。`,
     "interop-disabled": (p) => `${envOf(p)} 的 WSL 互操作已关闭，护栏程序无法运行。`,

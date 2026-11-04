@@ -44,7 +44,7 @@
 | P3 | 挂载、Skills、活动、设置（已完成，v2.1） | 看板、矩阵、Agent 视角、目标管理和其余视图 | L | P1 |
 | P3.5 | 前端改到 v3.0（已完成） | 契约与 Mock 改版；服务器卡片加详情手风琴；Agent 视图；设置并入活动；删除项目级代码与 Token 估算 | L | P3 |
 | P3.6 | 前端改到 v3.1（配电盘减负 + 云 CLI） | 单列全宽双闸刀回路行（SSH + 云 CLI）；按需平推右侧面板（控制头 + 3 个平铺 Tab）；彻底移除 30 分钟临时解锁；SSH 一步到位自动转密钥；Cloudflare / Vercel / Oracle Cloud 环境向导与 Scope 圈定；`ProviderMark` 官方品牌 Logo | L | P3.5 |
-| P4 | Rust 核心 | db、env、ssh、cli、secret、compile、probe、deliver、guard、notes、ipc 模块，护栏程序 `cloudlink-guard`（覆盖 `ssh` + `wrangler/vercel/oci`），以及测试 | L（拆成 P4a、P4b、P4c 三次会话） | P3.6 的契约 |
+| P4 | Rust 核心（P4a 已完成） | db、env、ssh、cli、secret、compile、probe、deliver、guard、notes、ipc 模块，护栏程序 `cloudlink-guard`（覆盖 `ssh` + `wrangler/vercel/oci`），以及测试 | L（拆成 P4a、P4b、P4c 三次会话） | P3.6 的契约 |
 | P5 | 联调与端到端验收 | 前端接入真实 IPC、WSL 测试靶机与云 CLI 检测验收、手工验收清单 | M | P3.6、P4 |
 | P6 | 打磨与打包 | 无障碍、性能、文案修订、Windows 安装包 | S | P5 |
 

@@ -1,0 +1,4 @@
+# 从仓库根运行 cargo --manifest-path 时也必须更新同一份前端契约。
+[env]
+TS_RS_EXPORT_DIR = { value = "cloudlink/src/bindings/generated/", relative = true }
+TS_RS_LARGE_INT = "number"

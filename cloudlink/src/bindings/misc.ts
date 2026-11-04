@@ -106,6 +106,8 @@ export type IpcErrorId =
   | "cannot-distribute"
   /** 「改用密钥登录」需要凭据库里已有密码 */
   | "password-missing"
+  /** 没有填新密码，而连接目标（地址、端口、用户、认证方式）和已保存的记录不同：已保存的密码不会发往新目标（P4a） */
+  | "password-target-changed"
   /** 「改用密钥登录」时连接失败，认证方式没有切换（F-108 AC2） */
   | "connection-failed"
   /** settings.json 不是合法 JSON，没有修改（8.5） */
