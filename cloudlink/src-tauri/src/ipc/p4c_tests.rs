@@ -25,6 +25,18 @@ use crate::secret::store::{CredentialStore, MemoryCredentialStore};
 const ORIGINAL_SETTINGS: &[u8] = b"{\r\n  \"model\" : \"fixture-model\",\r\n  \"hooks\": { \"PostToolUse\": [] }, \"permissions\": {\"deny\": []}\r\n}\r\n";
 const ORIGINAL_SSH: &[u8] = b"Include ~/.ssh/cloudlink.conf\n\n# user-managed\nHost mine\n  HostName 192.0.2.9\n";
 
+fn original_ssh(paths: &Paths) -> String {
+    let env = EnvContext::windows(paths);
+    String::from_utf8_lossy(ORIGINAL_SSH).replace(
+        crate::ssh::managed::INCLUDE_LINE,
+        &crate::ssh::managed::include_line(
+            &env.managed_config_native(),
+            crate::ssh::managed::IncludeMode::for_env(&env),
+        )
+        .unwrap(),
+    )
+}
+
 #[derive(Default)]
 struct Events(Mutex<Vec<(String, Value)>>);
 
@@ -59,7 +71,7 @@ impl Fixture {
         fs::create_dir_all(paths.user_home.join(".claude")).unwrap();
         fs::create_dir_all(paths.user_home.join(".ssh")).unwrap();
         fs::write(paths.user_home.join(".claude/settings.json"), ORIGINAL_SETTINGS).unwrap();
-        fs::write(paths.user_home.join(".ssh/config"), ORIGINAL_SSH).unwrap();
+        fs::write(paths.user_home.join(".ssh/config"), original_ssh(&paths)).unwrap();
         let events = Arc::new(Events::default());
         let backend = Backend::with_guard_services(
             paths.clone(),
@@ -308,7 +320,7 @@ fn full_reset_removes_managed_data_and_preserves_user_files_and_keys() {
     );
     assert_eq!(
         fs::read(fixture.paths.user_home.join(".ssh/config")).unwrap(),
-        ORIGINAL_SSH
+        original_ssh(&fixture.paths).as_bytes()
     );
     assert_eq!(fs::read(foreign.join("SKILL.md")).unwrap(), b"user's own skill");
     assert_eq!(fs::read(&unknown).unwrap(), b"user's own file");

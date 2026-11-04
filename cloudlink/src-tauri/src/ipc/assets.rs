@@ -351,10 +351,15 @@ impl Backend {
             let write = check_ancestors(&path).and_then(|_| ssh::managed::write(&path, &hosts, env.is_windows()));
             let mut ok = write.is_ok();
             if ok
-                && !self.paths.isolated
+                && (!self.paths.isolated || env.is_windows())
                 && !cfg!(test)
-                && fs::read_to_string(env.host_in_home(&[".ssh", "config"]))
-                    .is_ok_and(|s| ssh::managed::is_included_at(&s, &env.managed_config_native()))
+                && fs::read_to_string(env.host_in_home(&[".ssh", "config"])).is_ok_and(|s| {
+                    ssh::managed::is_included_at(
+                        &s,
+                        &env.managed_config_native(),
+                        ssh::managed::IncludeMode::for_env(env),
+                    )
+                })
             {
                 let tools = self.tools()?;
                 ok = hosts

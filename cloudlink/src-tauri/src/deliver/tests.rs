@@ -31,7 +31,10 @@ impl Fixture {
             fs::create_dir_all(env.host_in_home(&[".ssh"])).unwrap();
             fs::write(
                 env.host_in_home(&[".ssh", "config"]),
-                "Include ~/.ssh/cloudlink.conf\nHost user-owned\n  HostName 127.0.0.1\n",
+                format!(
+                    "{}\nHost user-owned\n  HostName 127.0.0.1\n",
+                    managed::include_line(&env.managed_config_native(), managed::IncludeMode::for_env(env)).unwrap()
+                ),
             )
             .unwrap();
         }

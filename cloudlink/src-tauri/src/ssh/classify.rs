@@ -27,7 +27,7 @@ pub fn classify(stderr: &str, timed_out: bool, password_attempted: bool, alias: 
         || s.contains("timed out during banner exchange")
     {
         SshErrorId::Timeout
-    } else if s.to_lowercase().contains("passphrase") {
+    } else if !password_attempted && s.to_lowercase().contains("passphrase") {
         SshErrorId::NeedsInteraction
     } else if s.contains("Permission denied") || s.contains("Too many authentication failures") {
         if password_attempted {
@@ -113,6 +113,24 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&e).unwrap(),
             serde_json::json!({"id": "connection-refused", "params": {"alias": "sg-db"}})
+        );
+    }
+
+    #[test]
+    fn password_askpass_diagnostics_do_not_override_authentication_failure() {
+        let stderr = "debug1: read_passphrase: requested to askpass\r\ncloudlink@127.0.0.1: Permission denied (publickey,password).\r\n";
+        assert_eq!(
+            classify(stderr, false, true, "desktop-ssh").id,
+            SshErrorId::PasswordRejected
+        );
+    }
+
+    #[test]
+    fn encrypted_private_key_still_requires_interaction_when_authentication_fails() {
+        let stderr = "Enter passphrase for key 'fixture_ed25519':\r\ncloudlink@127.0.0.1: Permission denied (publickey,password).\r\n";
+        assert_eq!(
+            classify(stderr, false, false, "desktop-ssh").id,
+            SshErrorId::NeedsInteraction
         );
     }
 

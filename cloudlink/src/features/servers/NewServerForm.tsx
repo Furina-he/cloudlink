@@ -14,7 +14,7 @@ import { copy } from "@/lib/copy"
 import { HOTKEY_OPTIONS, HOTKEYS, isAlertOpen, KEY_HINT } from "@/lib/hotkeys"
 import { ipc } from "@/lib/ipc"
 import { selectCanDistribute, useAssetStore } from "@/stores/assets"
-import { NEW_KEY, useConnectionStore, type ConnectionTest } from "@/stores/connection"
+import { NEW_KEY, useConnectionStore } from "@/stores/connection"
 import { useProbeStore } from "@/stores/probe"
 import { useSettingsStore } from "@/stores/settings"
 import { useUIStore } from "@/stores/ui"
@@ -33,20 +33,6 @@ import { useSaveFlow, type RevealTarget } from "./useSaveFlow"
 
 type Stage = "testing" | "converting" | "enabling"
 
-/** 等这次测试连接出结果（主机指纹由全局的 HostKeyDialog 确认，确认后同一次测试继续） */
-function awaitTest(key: string): Promise<ConnectionTest["status"]> {
-  return new Promise((resolve) => {
-    const check = (t: ConnectionTest | undefined) => {
-      if (t && t.testId && (t.status === "ok" || t.status === "failed" || t.status === "cancelled")) {
-        unsubscribe()
-        resolve(t.status)
-      }
-    }
-    const unsubscribe = useConnectionStore.subscribe((s) => check(s.testsByKey[key]))
-    check(useConnectionStore.getState().testsByKey[key])
-  })
-}
-
 /**
  * 添加 SSH 服务器（PRD 6.5 分支 A）：居中弹窗里填写，主按钮「连接并启用」一步到位——
  * 测试连接 → 保存并写入托管 ssh 配置 → 密码方式自动生成 ed25519 密钥、安装公钥并删除保存的密码（F-108 AC1、AC3）
@@ -60,6 +46,7 @@ export function NewServerForm() {
   const conn = useConnectionTest(form, NEW_KEY, undefined)
   const [stage, setStage] = useState<Stage | null>(null)
   const [failed, setFailed] = useState(false)
+  const [saveIntent, setSaveIntent] = useState<"connect-enable" | "save-only">("connect-enable")
   const { agents } = useAgentOptions()
   // 默认授权给全部启用的 Agent；用户点过之后以用户的选择为准（Agent 列表可能比弹窗晚到）
   const [picked, setGranted] = useState<string[] | null>(null)
@@ -134,6 +121,7 @@ export function NewServerForm() {
 
   const connectEnable = async () => {
     if (stage || flow.saving) return
+    setSaveIntent("connect-enable")
     if (!(await form.trigger())) {
       const target = firstError(form.formState.errors)
       if (target) reveal(target)
@@ -145,18 +133,22 @@ export function NewServerForm() {
       setStage(null)
       return
     }
-    const result = await awaitTest(NEW_KEY)
+    const result = await useConnectionStore.getState().waitForResult(NEW_KEY)
     if (result !== "ok") {
       setStage(null)
       setFailed(result === "failed")
       return
     }
     const password = form.getValues("connection.method") === "password"
-    flow.submit({ pipeline: true, after: (saved) => void enable(saved, password) })
+    flow.submit({ pipeline: true, after: (saved) => void enable(saved, password), onInterrupted: () => setStage(null) })
   }
 
   /** 只保存，不授权（F-106 AC3）：标为「未验证」，回路行上有「测试连接」 */
-  const saveOnly = () => flow.submit({ skipUnverified: true })
+  const saveOnly = () => {
+    if (stage || flow.saving) return
+    setSaveIntent("save-only")
+    flow.submit({ skipUnverified: true })
+  }
 
   // 表单本身就在添加弹窗里，所以只让给弹窗上面的确认对话框
   useHotkeys(HOTKEYS.save, () => !isAlertOpen() && void connectEnable(), HOTKEY_OPTIONS)
@@ -174,7 +166,9 @@ export function NewServerForm() {
 
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-4 p-3 pb-6">
-            {flow.error && <SaveErrorAlert error={flow.error} onRetry={() => flow.submit()} />}
+            {flow.error && (
+              <SaveErrorAlert error={flow.error} onRetry={() => saveIntent === "save-only" ? saveOnly() : void connectEnable()} />
+            )}
             <p className="text-xs text-muted-foreground">{copy.serverForm.required}</p>
             <FieldGroup className="@container/field-group gap-4">
               <ConnectionFields onHostChange={alias.sync} />

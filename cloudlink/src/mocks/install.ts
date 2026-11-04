@@ -47,4 +47,22 @@ export function installMocks() {
     },
     { shouldMockEvents: true }
   )
+  // @tauri-apps/api 2.12.4 sends eventId, while its mock unlisten still reads id.
+  // Keep StrictMode cleanup faithful to the native event plugin until upstream aligns them.
+  const internals = (
+    window as unknown as {
+      __TAURI_INTERNALS__: {
+        invoke: typeof import("@tauri-apps/api/core").invoke
+      }
+    }
+  ).__TAURI_INTERNALS__
+  const mockInvoke = internals.invoke
+  internals.invoke = (command, payload, options) =>
+    mockInvoke(
+      command,
+      command === "plugin:event|unlisten" && payload && "eventId" in payload
+        ? { ...payload, id: payload.eventId }
+        : payload,
+      options
+    )
 }

@@ -485,16 +485,49 @@ fn ssh_command_has_strict_policy_and_separator_in_each_environment() {
             "ControlPath=none",
             "ClearAllForwardings=yes",
             "ForwardAgent=no",
+            "GlobalKnownHostsFile=none",
+            "IdentityAgent=none",
+            "IdentityFile=none",
             "-T",
         ] {
             assert!(args.iter().any(|s| s == required));
         }
+        assert!(args.contains(&format!(
+            "UserKnownHostsFile={}",
+            crate::ssh::managed::quote_path(&env.known_hosts_native())
+        )));
         if env.distro().is_some() {
             assert_eq!(&args[..4], ["-d", "Ubuntu-24.04", "-e", "ssh"]);
         } else {
             assert_eq!(command.get_program(), tools.windows_ssh.as_os_str());
         }
     }
+}
+
+#[test]
+fn production_probe_leaves_imported_host_files_and_identity_selection_to_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut paths = crate::paths::Paths::isolated_in(tmp.path());
+    paths.isolated = false;
+    let env = crate::env::EnvContext::windows(&paths);
+    let tools = SshTools {
+        windows_ssh: tmp.path().join("nonexistent-ssh.exe"),
+    };
+    let command = ssh_command(&tools, &env, "fixture", false);
+    let args: Vec<_> = command.get_args().map(|s| s.to_string_lossy().into_owned()).collect();
+    for option in [
+        "UserKnownHostsFile=",
+        "GlobalKnownHostsFile=",
+        "IdentityAgent=",
+        "IdentityFile=",
+    ] {
+        assert!(args.iter().all(|arg| !arg.starts_with(option)));
+    }
+    assert!(
+        command
+            .get_envs()
+            .all(|(key, _)| key != "SSH_AUTH_SOCK" && key != "SSH_AGENT_PID")
+    );
 }
 
 #[test]

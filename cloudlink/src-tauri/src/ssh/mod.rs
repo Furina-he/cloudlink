@@ -40,7 +40,7 @@ pub struct SshTools {
 
 impl SshTools {
     pub fn command(&self, env: &EnvContext, tool: Tool) -> Command {
-        match env.distro() {
+        let mut command = match env.distro() {
             None => {
                 let exe = match tool {
                     Tool::Ssh => self.windows_ssh.clone(),
@@ -53,13 +53,19 @@ impl SshTools {
                 c.args(["-d", distro, "-e", tool.name()]);
                 c
             }
+        };
+        if env.isolated && tool == Tool::Ssh {
+            command.env_remove("SSH_AUTH_SOCK").env_remove("SSH_AGENT_PID");
         }
+        command
     }
 
     /// `ssh -F <config> -G -- <alias>`
     pub fn effective(&self, env: &EnvContext, config_native: &str, alias: &str) -> Option<config::Effective> {
         validate::alias_ok(alias).then_some(())?;
+        managed::check_isolated_config(env, config_native).ok()?;
         let mut cmd = self.command(env, Tool::Ssh);
+        cmd.args(isolated_options(env, None));
         cmd.args(["-F", &crate::fsx::ssh_path(config_native), "-G", "--", alias]);
         let o = proc::run(
             cmd,
@@ -73,13 +79,54 @@ impl SshTools {
     }
 }
 
+/// `-F` selects a config file, but OpenSSH still resolves default keys and known_hosts
+/// against its OS account. Only isolated calls disable those defaults; explicit IdentityFile
+/// entries in the supplied config remain available because that option is additive.
+/// Isolated sessions only connect directly: proxy subprocesses do not inherit these options.
+pub(crate) fn isolated_options(env: &EnvContext, pinned_known_hosts: Option<&str>) -> Vec<String> {
+    if !env.isolated {
+        return Vec::new();
+    }
+    let known_hosts = pinned_known_hosts
+        .map(str::to_string)
+        .unwrap_or_else(|| env.known_hosts_native());
+    [
+        format!("UserKnownHostsFile={}", managed::quote_path(&known_hosts)),
+        "GlobalKnownHostsFile=none".into(),
+        "IdentityAgent=none".into(),
+        "IdentityFile=none".into(),
+        "GSSAPIAuthentication=no".into(),
+        "HostbasedAuthentication=no".into(),
+        "ProxyCommand=none".into(),
+        "ProxyJump=none".into(),
+    ]
+    .into_iter()
+    .flat_map(|option| ["-o".into(), option])
+    .collect()
+}
+
 /// 用户 config 里的 Host（不含 CloudLink 托管文件里的），按别名小写去重
 fn user_hosts(env: &EnvContext) -> config::ScanResult {
-    let mut r = config::scan(&env.to_host(&env.ssh_config_native()), &env.host_home);
-    let managed: BTreeSet<String> = managed::managed_aliases(&env.to_host(&env.managed_config_native()))
-        .into_iter()
-        .map(|a| a.to_lowercase())
-        .collect();
+    let user_config = env.to_host(&env.ssh_config_native());
+    let mut r = if env.isolated {
+        // The only permitted Include is the managed file excluded below. Never
+        // let the parser expand legacy or WSL-native Include paths on this host.
+        if crate::paths::validate_file(&user_config).is_err() {
+            return config::ScanResult::default();
+        }
+        std::fs::read_to_string(&user_config)
+            .map(|text| config::scan_text(&text))
+            .unwrap_or_default()
+    } else {
+        config::scan(&user_config, &env.host_home)
+    };
+    let managed_config = env.to_host(&env.managed_config_native());
+    let aliases = if !env.isolated || crate::paths::validate_file(&managed_config).is_ok() {
+        managed::managed_aliases(&managed_config)
+    } else {
+        Vec::new()
+    };
+    let managed: BTreeSet<String> = aliases.into_iter().map(|a| a.to_lowercase()).collect();
     r.hosts.retain(|h| !managed.contains(&h.alias.to_lowercase()));
     r
 }
@@ -212,5 +259,192 @@ mod tests {
             "managed hosts are ours, not a conflict"
         );
         assert_eq!(defined_in(&envs, "box"), vec![wsl.id.clone()]);
+    }
+
+    #[test]
+    fn isolated_config_checks_reject_legacy_foreign_and_nested_includes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = EnvContext::windows(&Paths::isolated_in(tmp.path()));
+        let config = env.host_in_home(&[".ssh", "config"]);
+        let managed_config = env.host_in_home(&[".ssh", "cloudlink.conf"]);
+        fs::create_dir_all(config.parent().unwrap()).unwrap();
+        fs::write(&managed_config, format!("{}\nHost managed\n", managed::MANAGED_HEADER)).unwrap();
+        let native = env.ssh_config_native();
+        let include = format!("Include {}\n", managed::quote_path(&env.managed_config_native()));
+        fs::write(&config, &include).unwrap();
+        assert!(managed::check_isolated_config(&env, &native).is_ok());
+
+        let foreign = managed::quote_path(&tmp.path().join("foreign.conf").to_string_lossy());
+        for unsafe_config in [
+            "Include ~/.ssh/cloudlink.conf\n".to_string(),
+            "Include cloudlink.conf\n".to_string(),
+            "Host fixture\n  Include ~/.ssh/cloudlink.conf\n".to_string(),
+            format!("Include {foreign}\n"),
+            format!("{}Include {foreign}\n", include),
+        ] {
+            fs::write(&config, &unsafe_config).unwrap();
+            assert!(
+                managed::check_isolated_config(&env, &native).is_err(),
+                "unsafe Include accepted: {unsafe_config}"
+            );
+        }
+        fs::write(&config, &include).unwrap();
+        fs::write(&managed_config, format!("{}\n{include}", managed::MANAGED_HEADER)).unwrap();
+        assert!(managed::check_isolated_config(&env, &native).is_err());
+    }
+
+    #[test]
+    fn production_config_check_preserves_user_include_rules() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut env = EnvContext::windows(&Paths::isolated_in(tmp.path()));
+        let config = env.host_in_home(&[".ssh", "config"]);
+        fs::create_dir_all(config.parent().unwrap()).unwrap();
+        fs::write(&config, "Include ~/.ssh/conf.d/*.conf\nHost fixture\n").unwrap();
+        assert!(managed::check_isolated_config(&env, &env.ssh_config_native()).is_err());
+        env.isolated = false;
+        assert!(managed::check_isolated_config(&env, &env.ssh_config_native()).is_ok());
+    }
+
+    #[test]
+    fn isolated_host_scan_never_follows_native_or_foreign_includes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::isolated_in(tmp.path());
+        let envs = detect(
+            &paths,
+            &FakeSystem {
+                distros: vec!["Ubuntu-24.04".into()],
+                ..Default::default()
+            },
+        );
+        let foreign = tmp.path().join("foreign.conf");
+        fs::write(&foreign, "Host must-not-be-imported\n").unwrap();
+        for env in envs {
+            let config = env.host_in_home(&[".ssh", "config"]);
+            let managed_config = env.host_in_home(&[".ssh", "cloudlink.conf"]);
+            fs::create_dir_all(config.parent().unwrap()).unwrap();
+            fs::write(
+                &managed_config,
+                format!(
+                    "{}\nHost managed\nInclude {}\n",
+                    managed::MANAGED_HEADER,
+                    managed::quote_path(&foreign.to_string_lossy())
+                ),
+            )
+            .unwrap();
+            for include in [
+                managed::quote_path(&env.managed_config_native()),
+                managed::quote_path(&foreign.to_string_lossy()),
+                "~/.ssh/cloudlink.conf".to_string(),
+            ] {
+                fs::write(&config, format!("Include {include}\nHost kept\n  HostName 127.0.0.1\n")).unwrap();
+                assert_eq!(
+                    user_hosts(&env)
+                        .hosts
+                        .iter()
+                        .map(|host| host.alias.as_str())
+                        .collect::<Vec<_>>(),
+                    ["kept"]
+                );
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn isolated_ssh_g_keeps_explicit_key_without_os_profile_defaults() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::isolated_in(tmp.path());
+        let mut env = EnvContext::windows(&paths);
+        let config = tmp.path().join("fixture.conf");
+        let key = crate::fsx::ssh_path(&tmp.path().join("fixture-key").to_string_lossy());
+        let custom_hosts = crate::fsx::ssh_path(&tmp.path().join("custom-known-hosts").to_string_lossy());
+        let custom_global = crate::fsx::ssh_path(&tmp.path().join("custom-global-hosts").to_string_lossy());
+        let custom_agent = crate::fsx::ssh_path(&tmp.path().join("custom-agent").to_string_lossy());
+        fs::write(
+            &config,
+            format!(
+                "Host isolation-jump isolation-command\n  HostName 127.0.0.1\n  User fixture\n  IdentityFile \"{key}\"\n  \
+                 UserKnownHostsFile \"{custom_hosts}\"\n  GlobalKnownHostsFile \"{custom_global}\"\n  \
+                 IdentityAgent \"{custom_agent}\"\n\n\
+                 Host isolation-jump\n  ProxyJump jump-fixture\n\n\
+                 Host isolation-command\n  ProxyCommand cloudlink-proxy-fixture --host %h --port %p\n"
+            ),
+        )
+        .unwrap();
+        let program_data = tmp.path().join("ProgramData");
+        fs::create_dir(&program_data).unwrap();
+        let tools = SshTools {
+            windows_ssh: PathBuf::from(crate::model::misc::DEFAULT_WINDOWS_SSH),
+        };
+        for (alias, expected_proxy) in [
+            ("isolation-jump", "proxyjump jump-fixture"),
+            (
+                "isolation-command",
+                "proxycommand cloudlink-proxy-fixture --host %h --port %p",
+            ),
+        ] {
+            for isolated in [true, false] {
+                env.isolated = isolated;
+                let mut command = tools.command(&env, Tool::Ssh);
+                command.env_clear();
+                for name in ["SystemRoot", "WINDIR"] {
+                    if let Some(value) = std::env::var_os(name) {
+                        command.env(name, value);
+                    }
+                }
+                command
+                    .env("ProgramData", &program_data)
+                    .env("HOME", &paths.user_home)
+                    .env("USERPROFILE", &paths.user_home)
+                    .env("APPDATA", tmp.path())
+                    .env("LOCALAPPDATA", tmp.path())
+                    .env("TEMP", tmp.path())
+                    .env("TMP", tmp.path())
+                    .args(isolated_options(&env, None))
+                    .arg("-F")
+                    .arg(&config)
+                    // Print effective configuration only; neither proxy is executed.
+                    .args(["-G", "--", alias]);
+                let output = proc::run(
+                    command,
+                    RunOpts {
+                        timeout: Duration::from_secs(10),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                assert!(output.success(), "{}", output.stderr_str());
+                let config = output.stdout_str();
+                assert!(config.lines().any(|line| line == format!("identityfile {key}")));
+                assert!(!config.contains("~/.ssh/id_"));
+                if isolated {
+                    assert!(config.lines().any(|line| line == "identityfile none"));
+                    assert!(config.lines().any(|line| line == "identityagent none"));
+                    assert!(config.lines().any(|line| line == "globalknownhostsfile none"));
+                    assert!(config.lines().any(|line| {
+                        line == format!("userknownhostsfile {}", crate::fsx::ssh_path(&env.known_hosts_native()))
+                    }));
+                    for proxy in config
+                        .lines()
+                        .filter(|line| line.starts_with("proxyjump ") || line.starts_with("proxycommand "))
+                    {
+                        assert!(
+                            matches!(proxy, "proxyjump none" | "proxycommand none"),
+                            "isolated {alias} retained {proxy}"
+                        );
+                    }
+                } else {
+                    for expected in [
+                        format!("userknownhostsfile {custom_hosts}"),
+                        format!("globalknownhostsfile {custom_global}"),
+                        format!("identityagent {custom_agent}"),
+                    ] {
+                        assert!(config.lines().any(|line| line == expected));
+                    }
+                    assert!(!config.lines().any(|line| line == "identityfile none"));
+                    assert!(config.lines().any(|line| line == expected_proxy));
+                }
+            }
+        }
     }
 }

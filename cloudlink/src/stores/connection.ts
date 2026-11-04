@@ -1,7 +1,13 @@
 // 测试连接（F-106）：结果经 connection://tested 返回，在按钮旁原地显示
 import { create } from "zustand"
 
-import type { Asset, ConnectionInput, ConnectionTestedEvent, ConnectionTestRequest, SshError } from "@/bindings"
+import type {
+  Asset,
+  ConnectionInput,
+  ConnectionTestedEvent,
+  ConnectionTestRequest,
+  SshError,
+} from "@/bindings"
 import { ipc, toIpcError } from "@/lib/ipc"
 import { useAssetStore } from "./assets"
 
@@ -26,6 +32,8 @@ interface ConnectionState {
   testsByKey: Record<string, ConnectionTest>
 
   test: (key: string, req: ConnectionTestRequest) => Promise<void>
+  /** 等当前请求结束；取消、清除或被另一请求替换时也会结束 */
+  waitForResult: (key: string) => Promise<"ok" | "failed" | "cancelled">
   cancel: (key: string) => Promise<void>
   /** 用户核对指纹后信任（F-106 AC2）；同一次测试继续进行 */
   trustHostKey: (key: string) => Promise<void>
@@ -39,24 +47,40 @@ interface ConnectionState {
 function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable)
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.keys(value).sort().map((k) => [k, stable((value as Record<string, unknown>)[k])]))
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((k) => [k, stable((value as Record<string, unknown>)[k])])
+    )
   }
   return value
 }
 
-export const connectionSignature = (c: ConnectionInput) => JSON.stringify(stable(c))
-
-/** 事件可能先于 invoke 返回到达：先记下，拿到 testId 后再应用 */
-const early = new Map<string, ConnectionTestedEvent>()
+export const connectionSignature = (c: ConnectionInput) =>
+  JSON.stringify(stable(c))
 
 /** 从右键菜单、命令面板发起的测试：结果用 Toast 播报（详情里的测试连接原地显示） */
-const announce = new Map<string, (e: ConnectionTestedEvent) => void>()
+type ConnectionResult = Omit<ConnectionTestedEvent, "testId">
+const announce = new Map<string, (e: ConnectionResult) => void>()
 
-export function announceTest(key: string, notify: (e: ConnectionTestedEvent) => void) {
+export function announceTest(
+  key: string,
+  notify: (e: ConnectionResult) => void
+) {
   announce.set(key, notify)
 }
 
-const apply = (t: ConnectionTest, e: ConnectionTestedEvent): ConnectionTest => ({
+function notifyResult(key: string, result: ConnectionResult) {
+  if (result.status === "host-key") return
+  const notify = announce.get(key)
+  announce.delete(key)
+  notify?.(result)
+}
+
+const apply = (
+  t: ConnectionTest,
+  e: ConnectionTestedEvent
+): ConnectionTest => ({
   ...t,
   status: e.status,
   ms: e.ms,
@@ -65,104 +89,217 @@ const apply = (t: ConnectionTest, e: ConnectionTestedEvent): ConnectionTest => (
   hostKey: e.hostKey,
 })
 
-export const useConnectionStore = create<ConnectionState>()((set, get) => ({
-  testsByKey: {},
+export const useConnectionStore = create<ConnectionState>()((
+  set,
+  get,
+  store
+) => {
+  let sequence = 0
+  const requests = new Map<string, number>()
+  const pending = new Set<number>()
+  // 只在等待 invoke 返回时保留早到事件，最后一个请求登记完就清理无主事件。
+  const early = new Map<string, ConnectionTestedEvent>()
+  const clearEarly = () => {
+    if (!pending.size) early.clear()
+  }
+  const cancelRetired = (testId: string) =>
+    ipc.cancelConnectionTest(testId).catch(() => undefined)
+  const running = (test: ConnectionTest) =>
+    test.status === "running" || test.status === "host-key"
 
-  test: async (key, req) => {
-    set((s) => ({
-      testsByKey: {
-        ...s.testsByKey,
-        [key]: {
-          testId: null,
-          status: "running",
-          signature: connectionSignature(req.connection),
-          alias: req.connection.sshAlias || (req.connection.source === "managed" ? req.connection.host : ""),
-        },
-      },
-    }))
-    let testId: string
-    try {
-      testId = (await ipc.testConnection(req)).testId
-    } catch (e) {
-      const err = toIpcError(e)
+  return {
+    testsByKey: {},
+
+    test: async (key, req) => {
+      const previous = get().testsByKey[key]
+      const request = ++sequence
+      requests.set(key, request)
+      pending.add(request)
       set((s) => ({
-        testsByKey: { ...s.testsByKey, [key]: { ...s.testsByKey[key], status: "failed", error: { id: "unknown", params: err.params } } },
+        testsByKey: {
+          ...s.testsByKey,
+          [key]: {
+            testId: null,
+            status: "running",
+            signature: connectionSignature(req.connection),
+            alias:
+              req.connection.sshAlias ||
+              (req.connection.source === "managed" ? req.connection.host : ""),
+          },
+        },
       }))
-      return
-    }
-    set((s) => {
-      const current = s.testsByKey[key]
-      if (!current || current.testId !== null) return s
-      const pending = early.get(testId)
+      if (previous?.testId && running(previous))
+        void cancelRetired(previous.testId)
+      let testId: string
+      try {
+        testId = (await ipc.testConnection(req)).testId
+      } catch (e) {
+        pending.delete(request)
+        clearEarly()
+        if (requests.get(key) !== request) return
+        const err = toIpcError(e)
+        const error: SshError = {
+          id: "unknown",
+          params: { ...err.params, alias: get().testsByKey[key].alias },
+        }
+        set((s) => ({
+          testsByKey: {
+            ...s.testsByKey,
+            [key]: { ...s.testsByKey[key], status: "failed", error },
+          },
+        }))
+        notifyResult(key, { status: "failed", error })
+        return
+      }
+      pending.delete(request)
+      if (requests.get(key) !== request) {
+        early.delete(testId)
+        clearEarly()
+        await cancelRetired(testId)
+        return
+      }
+      set((s) => {
+        const current = s.testsByKey[key]
+        if (!current || current.testId !== null) return s
+        return {
+          testsByKey: { ...s.testsByKey, [key]: { ...current, testId } },
+        }
+      })
+      const event = early.get(testId)
       early.delete(testId)
-      const next = { ...current, testId }
-      return { testsByKey: { ...s.testsByKey, [key]: pending ? apply(next, pending) : next } }
-    })
-  },
+      clearEarly()
+      // 与正常到达的事件走同一条路径，保留 Toast 和已保存资源的刷新。
+      if (event) get()._onTested(event)
+    },
 
-  cancel: async (key) => {
-    const t = get().testsByKey[key]
-    if (!t?.testId) return
-    // 先在界面上结束，不等后端的 cancelled 事件
-    set((s) => ({ testsByKey: { ...s.testsByKey, [key]: { ...t, status: "cancelled", hostKey: undefined } } }))
-    announce.delete(key)
-    try {
-      await ipc.cancelConnectionTest(t.testId)
-    } catch (e) {
-      throw toIpcError(e)
-    }
-  },
+    waitForResult: (key) => {
+      const request = requests.get(key)
+      return new Promise((resolve) => {
+        const check = () => {
+          const test = get().testsByKey[key]
+          if (!test || requests.get(key) !== request) {
+            unsubscribe()
+            resolve("cancelled")
+          } else if (
+            test.status === "ok" ||
+            test.status === "failed" ||
+            test.status === "cancelled"
+          ) {
+            unsubscribe()
+            resolve(test.status)
+          }
+        }
+        const unsubscribe = store.subscribe(check)
+        check()
+      })
+    },
 
-  trustHostKey: async (key) => {
-    const t = get().testsByKey[key]
-    if (!t?.testId || !t.hostKey) return
-    set((s) => ({ testsByKey: { ...s.testsByKey, [key]: { ...t, status: "running", hostKey: undefined } } }))
-    try {
-      await ipc.trustHostKey(t.testId, t.hostKey.fingerprint)
-    } catch (e) {
-      throw toIpcError(e)
-    }
-  },
-
-  clear: (key) =>
-    set((s) => {
-      if (!s.testsByKey[key]) return s
-      const testsByKey = { ...s.testsByKey }
-      delete testsByKey[key]
-      return { testsByKey }
-    }),
-
-  convertToKey: async (assetId) => {
-    let asset: Asset
-    try {
-      asset = await ipc.convertToKeyAuth(assetId)
-    } catch (e) {
-      throw toIpcError(e)
-    }
-    useAssetStore.getState()._upsert(asset)
-    get().clear(assetId)
-    return asset
-  },
-
-  _onTested: (e) => {
-    const entry = Object.entries(get().testsByKey).find(([, t]) => t.testId === e.testId)
-    if (!entry) {
-      early.set(e.testId, e)
-      return
-    }
-    const [key, t] = entry
-    set((s) => ({ testsByKey: { ...s.testsByKey, [key]: apply(t, e) } }))
-    const notify = announce.get(key)
-    if (notify && e.status !== "host-key") {
+    cancel: async (key) => {
+      const t = get().testsByKey[key]
+      requests.delete(key)
       announce.delete(key)
-      notify(e)
-    }
-    // 已保存的服务器：后端可能更新了验证结果（参数与已保存的一致时）
-    if (key !== NEW_KEY && (e.status === "ok" || e.status === "failed")) void useAssetStore.getState().refresh()
-  },
-}))
+      if (!t) return
+      // 先在界面上结束，不等后端的 cancelled 事件
+      set((s) => ({
+        testsByKey: {
+          ...s.testsByKey,
+          [key]: { ...t, status: "cancelled", hostKey: undefined },
+        },
+      }))
+      // invoke 尚未返回时，test() 会在拿到 ID 后补发取消。
+      if (!t.testId) return
+      try {
+        await ipc.cancelConnectionTest(t.testId)
+      } catch (e) {
+        throw toIpcError(e)
+      }
+    },
+
+    trustHostKey: async (key) => {
+      const t = get().testsByKey[key]
+      if (!t?.testId || !t.hostKey || t.status !== "host-key") return
+      const request = requests.get(key)
+      set((s) => ({
+        testsByKey: {
+          ...s.testsByKey,
+          [key]: { ...t, status: "running", hostKey: undefined },
+        },
+      }))
+      try {
+        await ipc.trustHostKey(t.testId, t.hostKey.fingerprint)
+      } catch (e) {
+        const current = get().testsByKey[key]
+        if (
+          requests.get(key) !== request ||
+          current?.testId !== t.testId ||
+          current.status !== "running"
+        )
+          return
+        const err = toIpcError(e)
+        set((s) => ({
+          testsByKey: {
+            ...s.testsByKey,
+            [key]: {
+              ...current,
+              status: "failed",
+              error: { id: "unknown", params: err.params },
+            },
+          },
+        }))
+        throw err
+      }
+    },
+
+    clear: (key) => {
+      const previous = get().testsByKey[key]
+      requests.delete(key)
+      announce.delete(key)
+      if (previous?.testId) early.delete(previous.testId)
+      set((s) => {
+        if (!s.testsByKey[key]) return s
+        const testsByKey = { ...s.testsByKey }
+        delete testsByKey[key]
+        return { testsByKey }
+      })
+      if (previous?.testId && running(previous))
+        void cancelRetired(previous.testId)
+    },
+
+    convertToKey: async (assetId) => {
+      let asset: Asset
+      try {
+        asset = await ipc.convertToKeyAuth(assetId)
+      } catch (e) {
+        throw toIpcError(e)
+      }
+      useAssetStore.getState()._upsert(asset)
+      get().clear(assetId)
+      return asset
+    },
+
+    _onTested: (e) => {
+      const entry = Object.entries(get().testsByKey).find(
+        ([, t]) => t.testId === e.testId
+      )
+      if (!entry) {
+        if (pending.size) early.set(e.testId, e)
+        return
+      }
+      const [key, t] = entry
+      if (!running(t)) return
+      set((s) => ({ testsByKey: { ...s.testsByKey, [key]: apply(t, e) } }))
+      notifyResult(key, e)
+      // 已保存的服务器：后端可能更新了验证结果（参数与已保存的一致时）
+      if (key !== NEW_KEY && (e.status === "ok" || e.status === "failed"))
+        void useAssetStore.getState().refresh()
+    },
+  }
+})
 
 /** 表单参数改过之后，旧的测试结果不再算数 */
-export function isTestCurrent(t: ConnectionTest | undefined, connection: ConnectionInput): boolean {
+export function isTestCurrent(
+  t: ConnectionTest | undefined,
+  connection: ConnectionInput
+): boolean {
   return !!t && t.signature === connectionSignature(connection)
 }

@@ -1,6 +1,6 @@
 //! 文件系统安全操作：原子写入、链接/重解析点检测、所有权校验后的删除（PRD 原则 6、CC-SWITCH 3.3）
 
-use std::fs::{self, File, Metadata};
+use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -53,6 +53,84 @@ pub fn write_atomic(path: &Path, content: &[u8]) -> io::Result<()> {
         let _ = fs::remove_file(&tmp);
     }
     result
+}
+
+/// Restrict a newly created, still-empty file while its creator holds an exclusive handle.
+/// Callers own the file; this is never used on a user's original config or an existing private key.
+#[cfg(windows)]
+pub(crate) fn restrict_file_to_current_user(path: &Path) -> io::Result<()> {
+    use crate::proc::{self, RunOpts};
+
+    let system = PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into())).join("System32");
+    let options = || RunOpts {
+        timeout: Duration::from_secs(5),
+        max_output: 4096,
+        ..Default::default()
+    };
+    let mut identity = proc::command(system.join("whoami.exe"));
+    identity.args(["/user", "/fo", "csv", "/nh"]);
+    let identity = proc::run(identity, options()).map_err(|_| io::Error::other("could not determine file owner"))?;
+    if !identity.success() {
+        return Err(io::Error::other("could not determine file owner"));
+    }
+    let output = identity.stdout_str();
+    let sid = output
+        .split(['"', ',', '\r', '\n'])
+        .find(|value| {
+            value.starts_with("S-1-")
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || byte == b'S' || byte == b'-')
+        })
+        .ok_or_else(|| io::Error::other("file owner SID unavailable"))?;
+    let mut acl = proc::command(system.join("icacls.exe"));
+    acl.arg(path)
+        .args(["/inheritance:r", "/grant:r", &format!("*{sid}:F"), "/q"]);
+    let result = proc::run(acl, options()).map_err(|_| io::Error::other("could not protect file permissions"))?;
+    if !result.success() {
+        return Err(io::Error::other("could not protect file permissions"));
+    }
+    Ok(())
+}
+
+/// Caller first verifies managed-file ownership. Protect the temporary file before publishing it.
+/// A failure leaves the unique temporary file in place instead of risking cleanup of a replaced path.
+pub(crate) fn write_restricted_atomic(path: &Path, content: &[u8]) -> io::Result<()> {
+    if path_is_link(path) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "refusing to replace a link",
+        ));
+    }
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let tmp = tmp_sibling(path);
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.share_mode(0);
+    }
+    let mut file = options.open(&tmp)?;
+    #[cfg(windows)]
+    restrict_file_to_current_user(&tmp)?;
+    file.write_all(content)?;
+    file.sync_all()?;
+    drop(file);
+    if path_is_link(path) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "refusing to replace a link",
+        ));
+    }
+    rename_retry(&tmp, path)
 }
 
 /// Windows 上文件可能被短暂占用：退避重试 3 次（PRD 8.4 第 5 步）

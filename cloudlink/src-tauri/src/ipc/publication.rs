@@ -145,11 +145,14 @@ impl Backend {
         let previous_inclusions = self.list_inclusions()?;
         let mut inclusions = deliver::compute_inclusions(&assets, &envs, &targets);
         // An exact generated file is necessary, but the user's other configuration can still override it.
-        if !self.paths.isolated && !cfg!(test) {
+        if !cfg!(test) {
             let tools = self.tools()?;
             let mut mismatches = BTreeMap::new();
             for asset in &assets {
-                for env in envs.iter().filter(|e| e.available) {
+                for env in envs
+                    .iter()
+                    .filter(|e| e.available && (!self.paths.isolated || e.is_windows()))
+                {
                     if let Some(host) = ssh::managed::ManagedHost::from_asset(asset, env) {
                         let fields = ssh::readback_mismatches(&tools, env, &host);
                         if !fields.is_empty() {

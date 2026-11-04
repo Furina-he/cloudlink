@@ -125,8 +125,13 @@ fn reason_for(asset: &Asset, env: &EnvContext, agent_key: &str, managed_written:
     }
     let user_config = env.host_in_home(&[".ssh", "config"]);
     let included = super::paths::reject_link_ancestors(&user_config).is_ok()
-        && fs::read_to_string(&user_config)
-            .is_ok_and(|config| managed::is_included_at(&config, &env.managed_config_native()));
+        && fs::read_to_string(&user_config).is_ok_and(|config| {
+            managed::is_included_at(
+                &config,
+                &env.managed_config_native(),
+                managed::IncludeMode::for_env(env),
+            )
+        });
     if !included {
         return Some(Reason::IncludeMissing);
     }

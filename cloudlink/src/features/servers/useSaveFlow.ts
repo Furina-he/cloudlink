@@ -20,6 +20,8 @@ export type RevealTarget = NonNullable<ReturnType<typeof firstError>>
 export interface SubmitOptions {
   /** 保存成功之后接着做的事 */
   after?: (a: ServerAsset) => void
+  /** 保存失败、校验未通过或确认被关闭时结束调用方的流水线 */
+  onInterrupted?: () => void
   /** 「连接并启用」的流水线：留在添加面板显示阶段进度，保存后不跳转、不自动探测，也不再问「未验证」 */
   pipeline?: boolean
   /** 「仅保存（暂不启用）」：用户已经看到连接失败，不再问「未验证」 */
@@ -100,6 +102,7 @@ export function useSaveFlow({
       } else {
         setError(err)
       }
+      opts.onInterrupted?.()
     } finally {
       setSaving(false)
     }
@@ -122,6 +125,7 @@ export function useSaveFlow({
       (errors: FieldErrors<ServerFormValues>) => {
         const target = firstError(errors)
         if (target) reveal(target)
+        opts.onInterrupted?.()
       }
     )()
   }
@@ -132,7 +136,10 @@ export function useSaveFlow({
     error,
     clearError: () => setError(null),
     confirm,
-    cancelConfirm: () => setConfirm(null),
+    cancelConfirm: () => {
+      setConfirm(null)
+      confirm?.opts.onInterrupted?.()
+    },
     confirmUnverified: () => {
       if (confirm?.stage !== "unverified") return
       setConfirm(null)
@@ -152,6 +159,7 @@ export function useSaveFlow({
       } catch (e) {
         toastError(e)
         setSaving(false)
+        opts.onInterrupted?.()
         return
       }
       await doSave(values, opts)

@@ -182,6 +182,9 @@ export const copy = {
   shell: {
     nav: "主导航",
     openCommand: "打开命令面板",
+    starting: "正在打开 CloudLink…",
+    startFailed: "暂时无法打开 CloudLink",
+    startFailedHint: "未能连接应用服务。请重试；若仍无法打开，请重启 CloudLink。",
     loadFailed: "加载数据失败",
     retry: "重试",
   },

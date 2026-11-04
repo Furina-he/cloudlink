@@ -185,6 +185,85 @@ fn exported_ip_in_user_text_is_an_error() {
 }
 
 #[test]
+fn loopback_health_check_is_static_but_user_address_exports_still_block() {
+    let mut local = testkit::dev_box();
+    local.connection.host = Some("127.0.0.1".into());
+    local.connection.resolved = None;
+    local.export.resolved_connection = false;
+    let preview = compile_with(&[Asset::Vps(local.clone())], &SkillConfig::default());
+    assert!(!preview.blocked, "{:#?}", preview.lint);
+    for file in &preview.files {
+        if file.path == "references/health-check.md" {
+            assert_eq!(file.content, render::HEALTH_CHECK);
+        } else {
+            assert!(!file.content.contains("127.0.0.1"));
+        }
+    }
+
+    local.notes = "The server address is 127.0.0.1".into();
+    let preview = compile_with(&[Asset::Vps(local.clone())], &SkillConfig::default());
+    assert!(preview.blocked);
+    assert!(preview.lint.iter().any(|item| item.id == LintId::ExportDisabledField
+        && item.file.as_deref() == Some("references/dev-box.md")));
+
+    local.notes.clear();
+    let config = SkillConfig {
+        relationships: "The server address is 127.0.0.1".into(),
+        conventions: vec![],
+    };
+    let preview = compile_with(&[Asset::Vps(local)], &config);
+    assert!(preview.blocked);
+    assert!(
+        preview
+            .lint
+            .iter()
+            .any(|item| item.id == LintId::ExportDisabledField && item.file.as_deref() == Some("SKILL.md"))
+    );
+}
+
+#[test]
+fn modified_health_check_is_scanned_for_disabled_fields_and_secrets() {
+    let mut local = testkit::dev_box();
+    local.connection.host = Some("127.0.0.1".into());
+    local.connection.resolved = None;
+    local.export.resolved_connection = false;
+    let assets = [Asset::Vps(local)];
+    let listed: Vec<&Asset> = assets.iter().collect();
+    let config = SkillConfig::default();
+    let mut rendered = render::render_skill(&render::RenderInput {
+        assets: &listed,
+        all_assets: &assets,
+        config: &config,
+        inbox: "C:/Users/me/.cloudlink/inbox",
+        snapshot: None,
+    });
+    let health_check = rendered
+        .files
+        .iter_mut()
+        .find(|file| file.path == "references/health-check.md")
+        .unwrap();
+    health_check.content.push_str(&format!(
+        "\nThe server address is 127.0.0.1\n{}=devpass-2026\n",
+        "password"
+    ));
+
+    let items = lint::lint(&lint::LintInput {
+        assets: &listed,
+        rendered: &rendered,
+        body_line_limit: 100,
+        now_secs: now(),
+    });
+    for expected in [LintId::ExportDisabledField, LintId::SecretDetected] {
+        assert!(
+            items
+                .iter()
+                .any(|item| item.id == expected && item.file.as_deref() == Some("references/health-check.md")),
+            "missing {expected:?}: {items:#?}"
+        );
+    }
+}
+
+#[test]
 fn warnings_and_info() {
     let mut sg = testkit::sg_db();
     sg.guardrails.rules.clear();

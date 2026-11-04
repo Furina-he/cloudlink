@@ -21,12 +21,19 @@ import { useProbeStore } from "@/stores/probe"
 import { useSkillStore } from "@/stores/skills"
 
 export async function subscribeBackendEvents(): Promise<UnlistenFn> {
-  const offs = await Promise.all([
-    listen<ProbeProgressEvent>("probe://progress", (e) => useProbeStore.getState()._onProgress(e.payload)),
-    listen<ProbeFinishedEvent>("probe://finished", (e) => useProbeStore.getState()._onFinished(e.payload)),
-    listen<ConnectionTestedEvent>("connection://tested", (e) => useConnectionStore.getState()._onTested(e.payload)),
-    listen<{ deliveries: Delivery[]; inclusions: Inclusion[] }>("deliveries://changed", (e) =>
-      useDeliveryStore.getState()._onChanged(e.payload)
+  const subscriptions = await Promise.allSettled([
+    listen<ProbeProgressEvent>("probe://progress", (e) =>
+      useProbeStore.getState()._onProgress(e.payload)
+    ),
+    listen<ProbeFinishedEvent>("probe://finished", (e) =>
+      useProbeStore.getState()._onFinished(e.payload)
+    ),
+    listen<ConnectionTestedEvent>("connection://tested", (e) =>
+      useConnectionStore.getState()._onTested(e.payload)
+    ),
+    listen<{ deliveries: Delivery[]; inclusions: Inclusion[] }>(
+      "deliveries://changed",
+      (e) => useDeliveryStore.getState()._onChanged(e.payload)
     ),
     listen<{ statuses: CompileStatus[] }>("compile://finished", (e) =>
       useSkillStore.getState()._onCompiled(e.payload.statuses)
@@ -34,13 +41,26 @@ export async function subscribeBackendEvents(): Promise<UnlistenFn> {
     listen<{ statuses: GuardStatus[] }>("guard://changed", (e) =>
       useGuardStore.getState()._onChanged(e.payload.statuses)
     ),
-    listen<{ assetId: string; count: number; denied: number }>("operations://new", (e) =>
-      useOperationStore.getState()._onNew(e.payload.assetId)
+    listen<{ assetId: string; count: number; denied: number }>(
+      "operations://new",
+      (e) => useOperationStore.getState()._onNew(e.payload.assetId)
     ),
     listen<{ assetId: string; count: number }>("notes://new", (e) =>
       useNotesStore.getState()._onNew(e.payload.assetId)
     ),
-    listen<{ item: ActivityItem }>("activity://new", (e) => useActivityStore.getState()._onNew(e.payload.item)),
+    listen<{ item: ActivityItem }>("activity://new", (e) =>
+      useActivityStore.getState()._onNew(e.payload.item)
+    ),
   ])
+  const offs = subscriptions.flatMap((subscription) =>
+    subscription.status === "fulfilled" ? [subscription.value] : []
+  )
+  const failed = subscriptions.find(
+    (subscription) => subscription.status === "rejected"
+  )
+  if (failed) {
+    offs.forEach((off) => off())
+    throw failed.reason
+  }
   return () => offs.forEach((off) => off())
 }

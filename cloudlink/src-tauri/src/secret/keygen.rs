@@ -56,8 +56,7 @@ pub fn pub_path(private: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
-/// 以 create_new 写入，已存在就失败（不覆盖）
-pub fn write_new(path: &Path, content: &[u8]) -> io::Result<()> {
+fn create_new(path: &Path) -> io::Result<fs::File> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
@@ -68,7 +67,18 @@ pub fn write_new(path: &Path, content: &[u8]) -> io::Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         opts.mode(0o600);
     }
-    let mut f = opts.open(path)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Deny access from creation, including before the inherited ACL is restricted.
+        opts.share_mode(0);
+    }
+    opts.open(path)
+}
+
+/// 以 create_new 写入，已存在就失败（不覆盖）。WSL 副本由调用方设置 Linux 权限。
+pub fn write_new(path: &Path, content: &[u8]) -> io::Result<()> {
+    let mut f = create_new(path)?;
     f.write_all(content)?;
     f.sync_all()
 }
@@ -76,7 +86,11 @@ pub fn write_new(path: &Path, content: &[u8]) -> io::Result<()> {
 /// 把生成的密钥写到 `dir/cloudlink_<alias>`（重名加后缀），返回私钥路径
 pub fn save(dir: &Path, alias: &str, key: &GeneratedKey) -> Result<PathBuf> {
     let path = unique_key_path(dir, &format!("cloudlink_{alias}"));
-    write_new(&path, key.private_openssh.as_bytes())?;
+    let mut private = create_new(&path)?;
+    #[cfg(windows)]
+    crate::fsx::restrict_file_to_current_user(&path)?;
+    private.write_all(key.private_openssh.as_bytes())?;
+    private.sync_all()?;
     write_new(&pub_path(&path), format!("{}\n", key.public_openssh).as_bytes())?;
     Ok(path)
 }
@@ -100,5 +114,56 @@ mod tests {
         assert_eq!(b.file_name().unwrap(), "cloudlink_hk-edge-2");
         assert_eq!(fs::read_to_string(&a).unwrap(), k.private_openssh.as_str());
         assert!(write_new(&a, b"x").is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_file_stays_exclusive_until_permissions_and_content_are_ready() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pending-private-key");
+        let mut private = create_new(&path).unwrap();
+        for protected in [false, true] {
+            if protected {
+                crate::fsx::restrict_file_to_current_user(&path).unwrap();
+            }
+            assert_eq!(fs::File::open(&path).unwrap_err().raw_os_error(), Some(32));
+            assert_eq!(
+                OpenOptions::new().write(true).open(&path).unwrap_err().raw_os_error(),
+                Some(32)
+            );
+            assert_eq!(fs::remove_file(&path).unwrap_err().raw_os_error(), Some(32));
+        }
+        private.write_all(b"synthetic private content").unwrap();
+        private.sync_all().unwrap();
+        drop(private);
+        assert_eq!(fs::read(path).unwrap(), b"synthetic private content");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_generated_key_is_accepted_even_under_a_permissive_parent() {
+        use crate::proc::{self, RunOpts};
+
+        let directory = tempfile::tempdir().unwrap();
+        let system =
+            PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into())).join("System32");
+        let mut acl = proc::command(system.join("icacls.exe"));
+        acl.arg(directory.path()).args(["/grant", "*S-1-1-0:(OI)(CI)R", "/q"]);
+        assert!(proc::run(acl, RunOpts::default()).unwrap().success());
+
+        let key = generate("permission-fixture").unwrap();
+        let file = save(directory.path(), "permission-fixture", &key).unwrap();
+        let program_data = directory.path().join("ProgramData");
+        fs::create_dir(&program_data).unwrap();
+        let mut check = proc::command(system.join("OpenSSH/ssh-keygen.exe"));
+        check.args(["-y", "-f"]).arg(file).env("ProgramData", program_data);
+        let result = proc::run(check, RunOpts::default()).unwrap();
+        assert!(result.success(), "{}", result.stderr_str());
+        let public = result.stdout_str();
+        assert!(public.starts_with("ssh-ed25519 "));
+        assert_eq!(
+            public.split_whitespace().nth(1),
+            key.public_openssh.split_whitespace().nth(1)
+        );
     }
 }

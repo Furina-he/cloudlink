@@ -22,6 +22,8 @@ pub struct EnvContext {
     pub id: EnvId,
     pub label: String,
     pub kind: EnvKind,
+    /// Explicit path overrides must also constrain the SSH client's built-in profile fallbacks.
+    pub isolated: bool,
     /// 该环境写法的家目录
     pub home: String,
     /// CloudLink 能访问的家目录位置
@@ -41,6 +43,7 @@ impl EnvContext {
             id: EnvId::windows(),
             label: "Windows".into(),
             kind: EnvKind::Windows,
+            isolated: paths.isolated,
             home: paths.user_home.to_string_lossy().into_owned(),
             host_home: paths.user_home.clone(),
             host_root: None,
@@ -64,6 +67,7 @@ impl EnvContext {
             kind: EnvKind::Wsl {
                 distro: distro.to_string(),
             },
+            isolated: paths.isolated,
             host_home: join_native(&root, &home),
             home,
             host_root: Some(root),

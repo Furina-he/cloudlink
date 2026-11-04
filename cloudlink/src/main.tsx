@@ -4,11 +4,11 @@ import { MotionConfig } from "motion/react"
 
 import "./index.css"
 import App from "./App.tsx"
+import { BackendGate } from "@/components/app/BackendGate"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { Toaster } from "@/components/ui/toast"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { copy } from "@/lib/copy"
-import { subscribeBackendEvents } from "@/lib/events"
 
 async function bootstrap() {
   // Mock 模式（pnpm dev:mock）：先装好 mockIPC，再订阅事件、渲染（PRD 7.8）。动态导入，正式构建不打包夹具
@@ -16,8 +16,6 @@ async function bootstrap() {
     const { installMocks } = await import("@/mocks/install")
     installMocks()
   }
-  await subscribeBackendEvents()
-
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
       <ThemeProvider>
@@ -27,7 +25,9 @@ async function bootstrap() {
         >
           <TooltipProvider>
             <Toaster closeLabel={copy.common.close}>
-              <App />
+              <BackendGate>
+                <App />
+              </BackendGate>
             </Toaster>
           </TooltipProvider>
         </MotionConfig>

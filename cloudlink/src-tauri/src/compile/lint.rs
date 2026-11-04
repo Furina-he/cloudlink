@@ -165,6 +165,11 @@ pub fn lint(input: &LintInput) -> Vec<LintItem> {
         }
         'fields: for (field, value) in disabled {
             for f in &r.files {
+                // This exact bundled file has no resource input. Its loopback certificate
+                // check must not be mistaken for exporting a localhost server's address.
+                if f.path == "references/health-check.md" && f.content == super::render::HEALTH_CHECK {
+                    continue;
+                }
                 if let Some(line) = line_of(&f.content, &value) {
                     out.push(at(
                         item(

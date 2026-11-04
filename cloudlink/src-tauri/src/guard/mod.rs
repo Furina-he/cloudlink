@@ -33,7 +33,7 @@ pub struct ProcessSelfTest;
 
 impl SelfTest for ProcessSelfTest {
     fn run(&self, paths: &Paths, env: &EnvContext) -> bool {
-        if !runtime_valid(paths) || !env.available || !env.interop {
+        if (paths.isolated && env.distro().is_some()) || !runtime_valid(paths) || !env.available || !env.interop {
             return false;
         }
         let mut command = if let Some(distro) = env.distro() {

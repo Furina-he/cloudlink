@@ -28,6 +28,17 @@ const ACCOUNT_A: &str = "11111111111111111111111111111111";
 const ACCOUNT_B: &str = "22222222222222222222222222222222";
 const USER_CONFIG: &str = "Include ~/.ssh/cloudlink.conf\nHost user-owned\n  HostName 127.0.0.1\n";
 
+fn user_config(env: &EnvContext) -> String {
+    USER_CONFIG.replace(
+        crate::ssh::managed::INCLUDE_LINE,
+        &crate::ssh::managed::include_line(
+            &env.managed_config_native(),
+            crate::ssh::managed::IncludeMode::for_env(env),
+        )
+        .unwrap(),
+    )
+}
+
 #[derive(Default)]
 struct RecordingEvents {
     items: Mutex<Vec<(String, Value)>>,
@@ -143,7 +154,7 @@ impl Fixture {
             for directory in [".ssh", ".claude", ".codex"] {
                 fs::create_dir_all(environment.host_in_home(&[directory])).unwrap();
             }
-            fs::write(environment.host_in_home(&[".ssh", "config"]), USER_CONFIG).unwrap();
+            fs::write(environment.host_in_home(&[".ssh", "config"]), user_config(&environment)).unwrap();
             fs::write(
                 environment.host_in_home(&[".ssh", "fixture-key"]),
                 "unusable fixture key\n",
@@ -241,13 +252,61 @@ impl Fixture {
         for environment in self.backend.contexts(false).unwrap() {
             assert_eq!(
                 fs::read_to_string(environment.host_in_home(&[".ssh", "config"])).unwrap(),
-                USER_CONFIG
+                user_config(&environment)
             );
             assert_eq!(
                 fs::read_to_string(environment.host_in_home(&[".claude", "skills", "user-skill", "SKILL.md"])).unwrap(),
                 "keep this neighboring user skill\n",
             );
         }
+    }
+}
+
+#[test]
+fn isolated_include_status_and_reset_keep_original_backup_bytes() {
+    let fixture = Fixture::with_runner(Arc::new(cli::EmptyRunner), true);
+    let environments = fixture.backend.contexts(false).unwrap();
+    let original = "\u{feff}# user-owned settings\r\nHost mine\r\n  HostName 127.0.0.1\r\n";
+    let mut written = Vec::new();
+    for environment in &environments {
+        let config = environment.host_in_home(&[".ssh", "config"]);
+        fs::write(&config, original).unwrap();
+        assert!(
+            !fixture
+                .backend
+                .get_ssh_config_status()
+                .unwrap()
+                .iter()
+                .find(|status| status.env_id == environment.id)
+                .unwrap()
+                .included
+        );
+        let status = fixture.backend.add_ssh_include(&environment.id).unwrap();
+        let expected_line = crate::ssh::managed::include_line(
+            &environment.managed_config_native(),
+            crate::ssh::managed::IncludeMode::Isolated,
+        )
+        .unwrap();
+        assert!(status.included);
+        assert_eq!(status.include_line, expected_line);
+        let text = fs::read_to_string(&config).unwrap();
+        assert_eq!(
+            text,
+            format!(
+                "\u{feff}{expected_line}\r\n\r\n{}",
+                original.trim_start_matches('\u{feff}')
+            )
+        );
+        let backup = config.with_file_name("config.cloudlink-bak");
+        assert_eq!(fs::read(&backup).unwrap(), original.as_bytes());
+        fixture.backend.add_ssh_include(&environment.id).unwrap();
+        assert!(!config.with_file_name("config.cloudlink-bak-2").exists());
+        written.push((config, backup, text));
+    }
+    fixture.backend.reset_data().unwrap();
+    for (config, backup, text) in written {
+        assert_eq!(fs::read_to_string(config).unwrap(), text);
+        assert_eq!(fs::read(backup).unwrap(), original.as_bytes());
     }
 }
 
@@ -672,7 +731,7 @@ fn custom_targets_reject_existing_target_overlap_and_protected_directories() {
 #[test]
 fn scope_payload_uses_trusted_account_metadata_and_rejects_cross_account_ids() {
     let runner = Arc::new(MetadataRunner::default());
-    let fixture = Fixture::with_runner(runner, false);
+    let fixture = Fixture::with_runner(runner.clone(), false);
     let server = fixture.seed_ready_server();
     fixture.backend.detect_cli_environment(cli_request(None, None)).unwrap();
     let catalog_a = fixture
@@ -714,9 +773,14 @@ fn scope_payload_uses_trusted_account_metadata_and_rejects_cross_account_ids() {
             .save_asset(AssetInput::Cli(cli_input(ACCOUNT_B, Some(catalog_a)))),
         IpcErrorId::CliScopeFailed,
     );
+    runner.calls.lock().unwrap().clear();
     assert_ipc(
         fixture.backend.set_cli_scope(saved_a.id(), &["zone:b".into()]),
         IpcErrorId::CliScopeFailed,
+    );
+    assert!(
+        runner.calls.lock().unwrap().is_empty(),
+        "invalid scope must not refresh account state"
     );
     assert_eq!(
         fixture.backend.database().unwrap().require_asset(saved_a.id()).unwrap(),
@@ -1490,7 +1554,11 @@ impl RevisionFixture {
         let paths = Paths::isolated_in(temp.path());
         fs::create_dir_all(paths.user_home.join(".ssh")).unwrap();
         fs::create_dir_all(paths.user_home.join(".claude")).unwrap();
-        fs::write(paths.user_home.join(".ssh").join("config"), USER_CONFIG).unwrap();
+        fs::write(
+            paths.user_home.join(".ssh").join("config"),
+            user_config(&EnvContext::windows(&paths)),
+        )
+        .unwrap();
         let store = Arc::new(RevisionCredentialStore::default());
         let backend = Backend::with_services(
             paths,

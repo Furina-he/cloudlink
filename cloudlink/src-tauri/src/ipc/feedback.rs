@@ -136,7 +136,7 @@ impl Backend {
             return Err(AppError::ipc(IpcErrorId::NotFound));
         }
         let env = self.context(env_id)?;
-        if !self.paths.isolated && !cfg!(test) {
+        if !cfg!(test) {
             self.prepare_guard_binary()?;
         }
         guard::write_policy(&self.paths, &self.list_assets()?)?;

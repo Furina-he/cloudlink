@@ -86,6 +86,7 @@ fn ssh_command(tools: &SshTools, env: &EnvContext, alias: &str, password: bool) 
     ] {
         command.args(["-o", option]);
     }
+    command.args(crate::ssh::isolated_options(env, None));
     command.args(["--", alias, "sh -s"]);
     command
 }
@@ -116,6 +117,13 @@ pub fn execute(
         return Err(ExecuteError::Failed(SshError::new(
             SshErrorId::ResolveFailed,
             p! {"alias" => alias},
+        )));
+    }
+    if crate::ssh::managed::check_isolated_config(env, &env.ssh_config_native()).is_err() {
+        progress(Step::ResolveAlias, Status::Error, Some(0));
+        return Err(ExecuteError::Failed(SshError::new(
+            SshErrorId::Unknown,
+            p! {"alias" => alias, "reason" => "unsafe-config"},
         )));
     }
     progress(Step::ResolveAlias, Status::Done, Some(0));
@@ -223,3 +231,46 @@ pub fn execute(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod isolated_config_tests {
+    use super::*;
+
+    #[test]
+    fn isolated_probe_rejects_legacy_include_before_starting_ssh() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = EnvContext::windows(&crate::paths::Paths::isolated_in(tmp.path()));
+        let config = env.host_in_home(&[".ssh", "config"]);
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(&config, "Include ~/.ssh/cloudlink.conf\nHost fixture\n").unwrap();
+        let tools = SshTools {
+            windows_ssh: tmp.path().join("must-not-start.exe"),
+        };
+        let mut phases = Vec::new();
+        let error = execute(
+            &tools,
+            &env,
+            "fixture",
+            None,
+            Duration::from_secs(1),
+            &AtomicBool::new(false),
+            &mut |step, status, _| phases.push((step, status)),
+        )
+        .unwrap_err();
+        let ExecuteError::Failed(error) = error else {
+            panic!("unsafe config must fail before starting a probe");
+        };
+        assert_eq!(error.id, SshErrorId::Unknown);
+        assert_eq!(
+            error.params.unwrap()["reason"],
+            crate::model::ParamValue::from("unsafe-config")
+        );
+        assert_eq!(
+            phases,
+            [
+                (ProbeStep::ResolveAlias, ProbeStepStatus::Running),
+                (ProbeStep::ResolveAlias, ProbeStepStatus::Error),
+            ]
+        );
+    }
+}

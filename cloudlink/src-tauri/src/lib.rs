@@ -4,6 +4,7 @@ pub mod cli;
 pub mod compile;
 pub mod db;
 pub mod deliver;
+mod desktop;
 pub mod env;
 pub mod error;
 pub mod fsx;
@@ -26,21 +27,38 @@ pub mod testkit;
 pub fn run() {
     use std::sync::Arc;
     use tauri::Manager;
+    use tauri_plugin_log::{Target, TargetKind};
 
-    let app = tauri::Builder::default()
+    let paths = paths::Paths::from_env().expect("invalid CloudLink paths");
+    let mut context = tauri::generate_context!();
+    desktop::configure(context.config_mut(), &paths).expect("could not prepare CloudLink desktop storage");
+    let log_dir = paths.log_dir();
+
+    let mut builder = tauri::Builder::default();
+    if !paths.isolated {
         // 单实例插件必须最先注册；askpass 辅助进程在 main() 第一行就已经退出，不会走到这里
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        // 隔离实例不转发给另一个数据根的窗口，也不读取它的插件状态。
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             use tauri::Manager;
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.unminimize();
                 let _ = w.set_focus();
             }
-        }))
+        }));
+    }
+    let app = builder
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_log::Builder::default()
+                .targets([
+                    Target::new(TargetKind::Stdout),
+                    Target::new(TargetKind::Folder {
+                        path: log_dir,
+                        file_name: None,
+                    }),
+                ])
                 .level(if cfg!(debug_assertions) {
                     log::LevelFilter::Info
                 } else {
@@ -48,8 +66,7 @@ pub fn run() {
                 })
                 .build(),
         )
-        .setup(|app| {
-            let paths = paths::Paths::from_env()?;
+        .setup(move |app| {
             let events = Arc::new(ipc::TauriEvents(app.handle().clone()));
             app.manage(ipc::Backend::open(paths, events)?);
             Ok(())
@@ -106,7 +123,7 @@ pub fn run() {
             ipc::commands::get_probe_script,
             ipc::commands::reset_data,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while running CloudLink");
     app.run(|handle, event| {
         if matches!(

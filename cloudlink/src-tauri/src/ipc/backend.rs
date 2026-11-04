@@ -82,8 +82,22 @@ impl Backend {
         } else {
             Arc::new(cli::SystemRunner::new(&paths))
         };
-        let backend = Self::with_services(paths, system, credentials, cli::Service::new(runner), events)?;
-        if !isolated && !backend.database()?.reset_pending()? && backend.prepare_guard_binary().is_err() {
+        // A desktop session can check its own packaged helper without consulting user profiles.
+        // Unit tests keep using injected services; isolated WSL execution stays disabled.
+        let guard_test: Arc<dyn crate::guard::SelfTest> = if cfg!(test) {
+            Arc::new(super::feedback::NoProcessSelfTest)
+        } else {
+            Arc::new(crate::guard::ProcessSelfTest)
+        };
+        let backend = Self::with_guard_services(
+            paths,
+            system,
+            credentials,
+            cli::Service::new(runner),
+            events,
+            guard_test,
+        )?;
+        if !cfg!(test) && !backend.database()?.reset_pending()? && backend.prepare_guard_binary().is_err() {
             log::warn!("CloudLink guard binary is unavailable; guard health will report it");
         }
         Ok(backend)
@@ -369,7 +383,9 @@ impl Backend {
     fn environment(&self, e: &EnvContext) -> Environment {
         let config = e.host_in_home(&[".ssh", "config"]);
         let included = check_ancestors(&config).is_ok()
-            && fs::read_to_string(config).is_ok_and(|s| managed::is_included_at(&s, &e.managed_config_native()));
+            && fs::read_to_string(config).is_ok_and(|s| {
+                managed::is_included_at(&s, &e.managed_config_native(), managed::IncludeMode::for_env(e))
+            });
         Environment {
             id: e.id.clone(),
             label: e.label.clone(),
@@ -385,18 +401,22 @@ impl Backend {
     }
 
     pub fn get_ssh_config_status(&self) -> Result<Vec<SshConfigStatus>> {
-        Ok(self
-            .contexts(false)?
+        self.contexts(false)?
             .iter()
-            .map(|env| SshConfigStatus {
-                env_id: env.id.clone(),
-                managed_path: env.managed_config_native(),
-                user_config_path: env.ssh_config_native(),
-                included: self.environment(env).managed_ssh_config.included,
-                include_line: managed::INCLUDE_LINE.into(),
-                known_hosts_path: env.known_hosts_native(),
+            .map(|env| {
+                Ok(SshConfigStatus {
+                    env_id: env.id.clone(),
+                    managed_path: env.managed_config_native(),
+                    user_config_path: env.ssh_config_native(),
+                    included: self.environment(env).managed_ssh_config.included,
+                    include_line: managed::include_line(
+                        &env.managed_config_native(),
+                        managed::IncludeMode::for_env(env),
+                    )?,
+                    known_hosts_path: env.known_hosts_native(),
+                })
             })
-            .collect())
+            .collect()
     }
 
     pub fn add_ssh_include(&self, env_id: &EnvId) -> Result<SshConfigStatus> {
@@ -404,7 +424,12 @@ impl Backend {
         let env = self.context(env_id)?;
         let config = env.host_in_home(&[".ssh", "config"]);
         check_ancestors(&config)?;
-        managed::add_include_at(&config, &env.managed_config_native())?;
+        check_ancestors(&env.host_in_home(&[".ssh", "cloudlink.conf"]))?;
+        managed::add_include_at(
+            &config,
+            &env.managed_config_native(),
+            managed::IncludeMode::for_env(&env),
+        )?;
         let mut settings = self.get_settings()?;
         if !settings.ssh_include_asked.contains(env_id) {
             settings.ssh_include_asked.push(env_id.clone());
@@ -806,6 +831,13 @@ impl Backend {
         }
         let snapshot = self.database()?.require_asset(asset_id)?;
         let cli = snapshot.as_cli().ok_or_else(|| AppError::ipc(IpcErrorId::NotFound))?;
+        // Reject IDs outside this saved account before refresh can mutate its state or timestamps.
+        if selected_ids
+            .iter()
+            .any(|id| !cli.cli.scope.iter().any(|scope| &scope.id == id))
+        {
+            return Err(AppError::ipc(IpcErrorId::CliScopeFailed));
+        }
         let adds_scope = selected_ids
             .iter()
             .any(|id| !cli.cli.scope.iter().any(|s| &s.id == id && s.selected));

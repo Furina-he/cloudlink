@@ -203,6 +203,7 @@ fn run_ssh(
         }
         None => (t.env.ssh_config_native(), None),
     };
+    super::managed::check_isolated_config(&t.env, &config_native)?;
     let mut args = if let Some(remote_command) = remote {
         let mut args = test_args(&config_native, &t.alias, t.password.is_some(), false);
         *args.last_mut().expect("remote command") = remote_command.to_string();
@@ -228,6 +229,8 @@ fn run_ssh(
     } else {
         host_key_args(&config_native, known_hosts, &t.alias)
     };
+    let dd = args.iter().position(|arg| arg == "--").expect("ssh target separator");
+    args.splice(dd..dd, super::isolated_options(&t.env, known_hosts));
     if accept.is_some() {
         for arg in &mut args {
             if arg == "StrictHostKeyChecking=yes" {
@@ -873,6 +876,7 @@ mod tests {
             dir.join("fake-ssh.ps1"),
             r#"$hostKey = '__HOST_PUBLIC_KEY__'
 $fingerprint = '__HOST_FINGERPRINT__'
+[IO.File]::WriteAllLines((Join-Path $PSScriptRoot 'received-arguments'), [string[]]$args)
 [Console]::Error.WriteLine("debug1: Server host key: ssh-ed25519 $fingerprint")
 if ($args -contains 'StrictHostKeyChecking=accept-new') {
     foreach ($arg in $args) {
@@ -909,6 +913,38 @@ exit 0
             },
             fingerprint,
         )
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn imported_isolated_connection_keeps_the_pinned_file_and_production_options() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (tools, _) = changed_key_tools(tmp.path());
+        let mut t = target(tmp.path(), false);
+        t.managed = None;
+        let pin = tmp.path().join("pinned-hosts").to_string_lossy().into_owned();
+        for (isolated, pinned) in [(true, Some(pin.as_str())), (true, None), (false, None)] {
+            t.env.isolated = isolated;
+            run_ssh(&tools, tmp.path(), &t, Some(TEST_COMMAND), None, pinned, None).unwrap();
+            let args = std::fs::read_to_string(tmp.path().join("received-arguments")).unwrap();
+            let known_hosts: Vec<_> = args
+                .lines()
+                .filter_map(|arg| arg.strip_prefix("UserKnownHostsFile="))
+                .map(|path| path.trim_matches('"'))
+                .collect();
+            if isolated {
+                let expected = fsx::ssh_path(pinned.unwrap_or(&t.env.known_hosts_native()));
+                assert!(!known_hosts.is_empty());
+                assert!(known_hosts.iter().all(|arg| *arg == expected));
+                for expected in ["GlobalKnownHostsFile=none", "IdentityAgent=none", "IdentityFile=none"] {
+                    assert!(args.lines().any(|arg| arg == expected));
+                }
+            } else {
+                assert!(known_hosts.is_empty());
+                assert!(!args.lines().any(|arg| arg.starts_with("IdentityAgent=")));
+                assert!(!args.lines().any(|arg| arg.starts_with("GlobalKnownHostsFile=")));
+            }
+        }
     }
 
     #[cfg(windows)]

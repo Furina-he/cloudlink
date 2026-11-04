@@ -7,7 +7,7 @@
 //! 没有设置 `CLOUDLINK_HOME` 时，才使用真实家目录下的 `~/.cloudlink`。
 
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::error::{AppError, Result};
 
@@ -25,20 +25,27 @@ pub struct Paths {
 
 /// 从一组环境变量解析路径。抽成纯函数，测试时传入假的变量表
 pub fn resolve(get: impl Fn(&str) -> Option<OsString>, real_home: impl FnOnce() -> Option<PathBuf>) -> Result<Paths> {
-    let non_empty = |k: &str| get(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let user_override = get("CLOUDLINK_USER_HOME");
+    let wsl_override = get("CLOUDLINK_WSL_ROOT");
     if let Some(override_dir) = get("CLOUDLINK_HOME") {
-        if override_dir.is_empty() {
-            return Err(AppError::internal("CLOUDLINK_HOME must not be empty"));
-        }
-        let data_dir = PathBuf::from(override_dir);
-        let user_home = non_empty("CLOUDLINK_USER_HOME").unwrap_or_else(|| data_dir.join("home"));
-        let wsl_root = non_empty("CLOUDLINK_WSL_ROOT").unwrap_or_else(|| data_dir.join("wsl"));
+        let data_dir = override_path("CLOUDLINK_HOME", override_dir)?;
+        let user_home = user_override
+            .map(|p| override_path("CLOUDLINK_USER_HOME", p))
+            .transpose()?
+            .unwrap_or_else(|| data_dir.join("home"));
+        let wsl_root = wsl_override
+            .map(|p| override_path("CLOUDLINK_WSL_ROOT", p))
+            .transpose()?
+            .unwrap_or_else(|| data_dir.join("wsl"));
         return Ok(Paths {
             data_dir,
             user_home,
             wsl_root,
             isolated: true,
         });
+    }
+    if user_override.is_some() || wsl_override.is_some() {
+        return Err(AppError::internal("path overrides require CLOUDLINK_HOME"));
     }
     let home = real_home().ok_or_else(|| AppError::internal("home directory not found"))?;
     Ok(Paths {
@@ -47,6 +54,72 @@ pub fn resolve(get: impl Fn(&str) -> Option<OsString>, real_home: impl FnOnce() 
         wsl_root: PathBuf::from(r"\\wsl.localhost"),
         isolated: false,
     })
+}
+
+fn override_path(name: &str, value: OsString) -> Result<PathBuf> {
+    let path = PathBuf::from(value);
+    if !path.is_absolute() || path.components().any(|part| part == Component::ParentDir) {
+        return Err(AppError::internal(format!(
+            "{name} must be an absolute path without parent segments"
+        )));
+    }
+    Ok(path)
+}
+
+/// Check from the filesystem root down, so even inspecting a child never follows a linked ancestor.
+pub(crate) fn validate_directory(path: &Path) -> Result<()> {
+    if !path.is_absolute() || path.components().any(|part| part == Component::ParentDir) {
+        return Err(AppError::internal("application directories must use absolute paths"));
+    }
+    for ancestor in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
+        match std::fs::symlink_metadata(ancestor) {
+            Ok(meta) if crate::fsx::is_link(&meta) || !meta.is_dir() => {
+                return Err(AppError::internal("application directory is not a plain directory"));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+/// Plugin-owned storage may contain arbitrary nested files, but never links or special files.
+/// Inspect metadata only; do not read contents or descend until each directory is checked.
+pub(crate) fn validate_directory_tree(root: &Path) -> Result<()> {
+    validate_directory(root)?;
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let meta = match std::fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && path.as_path() == root => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        if crate::fsx::is_link(&meta) || (!meta.is_dir() && !meta.is_file()) {
+            return Err(AppError::internal(
+                "application storage contains a linked or special entry",
+            ));
+        }
+        if meta.is_dir() {
+            for entry in std::fs::read_dir(path)? {
+                pending.push(entry?.path());
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_file(path: &Path) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::internal("application file must have a directory"))?;
+    validate_directory(parent)?;
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() && !crate::fsx::is_link(&meta) => Ok(()),
+        Ok(_) => Err(AppError::internal("application file is not a plain file")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 impl Paths {
@@ -62,6 +135,19 @@ impl Paths {
             wsl_root: root.join("wsl"),
             isolated: true,
         }
+    }
+
+    /// Run before Tauri initializes plugins or creates the WebView, not only when the backend opens.
+    pub fn validate_startup(&self) -> Result<()> {
+        for directory in [&self.data_dir, &self.user_home] {
+            validate_directory(directory)?;
+        }
+        // The log plugin opens existing files directly, including during startup.
+        validate_directory_tree(&self.log_dir())?;
+        if self.isolated {
+            validate_directory(&self.wsl_root)?;
+        }
+        Ok(())
     }
 
     pub fn db_file(&self) -> PathBuf {
@@ -139,5 +225,84 @@ mod tests {
             "an invalid isolation override must never enable real paths"
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn invalid_or_incomplete_overrides_never_read_real_home() {
+        let isolated = tempfile::tempdir().unwrap();
+        let unused_home = tempfile::tempdir().unwrap();
+        let root = isolated.path().to_str().unwrap();
+        let real = unused_home.path().to_str().unwrap();
+        for pairs in [
+            vec![("CLOUDLINK_HOME", "relative")],
+            vec![("CLOUDLINK_HOME", "../outside")],
+            vec![("CLOUDLINK_USER_HOME", real)],
+            vec![("CLOUDLINK_WSL_ROOT", real)],
+            vec![("CLOUDLINK_USER_HOME", "")],
+            vec![("CLOUDLINK_WSL_ROOT", "")],
+            vec![("CLOUDLINK_HOME", root), ("CLOUDLINK_USER_HOME", "")],
+            vec![("CLOUDLINK_HOME", root), ("CLOUDLINK_WSL_ROOT", "")],
+            vec![("CLOUDLINK_HOME", root), ("CLOUDLINK_USER_HOME", "relative")],
+            vec![("CLOUDLINK_HOME", root), ("CLOUDLINK_WSL_ROOT", "relative")],
+        ] {
+            assert!(
+                resolve(vars(&pairs), || panic!("must not read the real home")).is_err(),
+                "invalid path overrides were accepted: {pairs:?}"
+            );
+        }
+        assert_eq!(std::fs::read_dir(unused_home.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn override_parent_segments_are_rejected_before_directory_access() {
+        let isolated = tempfile::tempdir().unwrap();
+        let path = isolated.path().join("missing").join("..").join("data");
+        assert!(
+            resolve(vars(&[("CLOUDLINK_HOME", path.to_str().unwrap())]), || {
+                panic!("must not read the real home")
+            })
+            .is_err()
+        );
+        assert!(!isolated.path().join("missing").exists());
+    }
+
+    #[test]
+    fn startup_validation_rejects_a_file_in_directory_ancestors() {
+        let isolated = tempfile::tempdir().unwrap();
+        let blocked = isolated.path().join("file");
+        std::fs::write(&blocked, b"keep").unwrap();
+        let paths = Paths::isolated_in(&blocked.join("child"));
+        assert!(paths.validate_startup().is_err());
+        assert_eq!(std::fs::read(blocked).unwrap(), b"keep");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn startup_validation_rejects_junction_ancestors_before_writing() {
+        use std::os::windows::process::CommandExt;
+
+        let isolated = tempfile::tempdir().unwrap();
+        let target = isolated.path().join("outside");
+        std::fs::create_dir(&target).unwrap();
+        let link = isolated.path().join("linked");
+        match std::os::windows::fs::symlink_dir(&target, &link) {
+            Ok(()) => {}
+            Err(error) if error.raw_os_error() == Some(1314) => {
+                let result = crate::proc::command("cmd.exe")
+                    .args(["/D", "/V:OFF", "/C"])
+                    .raw_arg(r#"mklink /J "%CLOUDLINK_TEST_LINK%" "%CLOUDLINK_TEST_TARGET%""#)
+                    .env("CLOUDLINK_TEST_LINK", &link)
+                    .env("CLOUDLINK_TEST_TARGET", &target)
+                    .output()
+                    .unwrap();
+                assert!(result.status.success());
+            }
+            Err(error) => panic!("cannot create directory link: {error}"),
+        }
+        let paths = Paths::isolated_in(&link.join("not-created"));
+        assert!(paths.validate_startup().is_err());
+        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
+        assert!(crate::fsx::path_is_link(&link));
+        std::fs::remove_dir(link).unwrap();
     }
 }
