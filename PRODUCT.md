@@ -63,7 +63,7 @@ Tauri v2（Rust 后端）+ React 19 + Vite + TypeScript + Tailwind CSS v4。
 ## Operating Context
 
 - 这个工具和终端并排使用，默认窗口尺寸对标 CC Switch（**`900×640`**，最小 **`760×520`**）。
-- **无左侧大边栏、无顶部面包屑栏、无左右分栏挤压**：顶部只有一条 48px 极简一体栏（`CloudLink` + `资源 / Agent / 设置` 分段切换 + 右侧搜索与 `+ 添加服务器`、`+ 云平台`）；首屏是单行零噪点的资源回路列表（每行只保留 4 个核心元素，全屏零省略号）；点击添加时弹出居中 `Dialog`（或独立聚焦卡片），点击某行进入带 `← 返回` 的全宽详情视图。
+- **无左侧大边栏、无顶部面包屑栏、无左右分栏挤压**：顶部只有一条 48px 极简一体栏（`CloudLink` + `资源 / Agent / 设置` 分段切换 + 右侧搜索与 `+ 添加服务器`、`+ 云平台`；发现新版本时最右侧多一个更新提醒）；首屏是单行零噪点的资源回路列表（每行只保留 4 个核心元素，全屏零省略号）；点击添加时弹出居中 `Dialog`（或独立聚焦卡片），点击某行进入带 `← 返回` 的全宽详情视图。
 - Agent 运行在 Windows 原生环境或某个 WSL2 发行版中。同一台电脑上会同时存在多个运行环境，每个环境有各自的 `~/.ssh/config` 和 CLI 安装/登录态。
 - Agent 的 SSH 认证完全交给系统 OpenSSH。界面录入的连接写进 CloudLink 托管的 `~/.ssh/cloudlink.conf`，经用户同意后通过 Include 生效，Agent 照常用 `ssh <别名>`。
 - SSH 认证支持私钥、ssh-agent 和密码。用户在新建时填密码点击「连接并启用」，CloudLink 自动验证连接、生成 ed25519 免密密钥并安装公钥，无缝切换为密钥认证后分发给 Agent。
@@ -79,10 +79,10 @@ Tauri v2（Rust 后端）+ React 19 + Vite + TypeScript + Tailwind CSS v4。
 - **官方品牌图标：** Agent 标识（Claude Code、Codex、Cursor、Windsurf、Gemini CLI、GitHub Copilot、OpenCode 等）与云平台 CLI 标识（Cloudflare、Vercel、Oracle）一律使用官方品牌 SVG Logo，不自绘、不用通用替代图标或文字缩写。
 - **红线是写给 Agent 的指令，属于建议性约束。** Claude Code 上的护栏能拦下越界命令，但只解析命令文本，防不了刻意绕过。界面上必须如实标注两者的边界。
 - **不导出敏感信息。** Skill 中不写入密码、私钥或 API Secret；IP 和解析后的主机信息默认不导出；护栏强制拦截 `vercel env pull` 等 CLI 凭据导出命令。
+- **检测更新（F-406，2026-11-05 新增）：** 默认开启，可在「设置 → 通用」关闭。只请求 GitHub Releases 上的 `latest.json`，不上传任何数据。没有新版本时界面上不出现任何更新元素；发现新版本时只在顶栏出现一个提醒按钮，由用户决定何时下载安装。安装包通过签名校验才会安装。
 - **档位是资源的属性，不设临时解锁倒计时。** 生产资源默认只读巡检，切到标准运维要二次确认并在行内琥珀色高亮提醒；切回只读巡检一键完成。
 - **术语表：** 资源、服务器（SSH）、云平台（CLI）、作品范围（Scope）、Skill、总 Skill、档位（只读巡检 / 标准运维）、红线、护栏、操作记录、Agent 笔记、测试连接、探测、编译、分发、列入、Agent 目标、副本缺失、冲突。
 - **未决事项：**
-  - CloudLink 自身的应用 Logo 和品牌资产。
   - CloudLink 的商标检索：Dell、Mitel、Genetec 等公司有同名的企业产品。
   - 是否支持团队共享（v1.0 之后再评估）。
 
@@ -91,11 +91,12 @@ Tauri v2（Rust 后端）+ React 19 + Vite + TypeScript + Tailwind CSS v4。
 - **产品名称：** CloudLink（2026-10-27 确定）。
 - **UI 体系是硬约束：** 用户指定 shadcn/ui Nova、Lucide、Motion、react-resizable-panels、dnd-kit（只用于排序）、Zustand。已有依赖能正确表达的组件和行为，一律不得自行实现。
 - **视觉方向：** 已确认采用 `DESIGN.md` 的「钢与信号」，即 Mist 冷钢中性色、钢墨主按钮、唯一的 Signal Cyan 信号色，以及「钢制配电盘（Steel Breaker Panel）」的单列双闸刀回路行布局。
+- **应用图标：** 「交汇 · 浅色」（2026-11-05 确定），源文件 `docs/brand/cloudlink-icon.svg`，构成与用法见 `DESIGN.md` 的「App Icon」一节。图标只用于安装包、任务栏、开始菜单和窗口标题栏；界面内顶栏仍只用文字 `CloudLink`。
 - **界面语言：** 简体中文。
 
 ## Evidence on Hand
 
-现有资料只有原始 PRD（`docs/archive/prd-v1.md`）、评审报告和修订版 PRD。没有真实用户数据，没有应用自身 Logo，也没有界面截图。不得编造用户量、评价、基准数据或客户案例。
+现有资料有原始 PRD（`docs/archive/prd-v1.md`）、评审报告、修订版 PRD、应用图标源文件，以及 Mock 模式下的 Playwright 界面截图。没有真实用户数据。不得编造用户量、评价、基准数据或客户案例。
 
 ## Product Principles
 

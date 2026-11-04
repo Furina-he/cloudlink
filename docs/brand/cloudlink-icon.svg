@@ -1,0 +1,10 @@
+<svg role="img" xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>CloudLink</title>
+  <!-- 底板：白 + 发丝线描边 -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="#ffffff" stroke="#dfe5e7" stroke-width="8"/>
+  <!-- 方块：服务器与云平台；圆：Agent -->
+  <path fill="#161b1d" d="M596 384.56V304A84 84 0 0 0 512 220H304A84 84 0 0 0 220 304V512A84 84 0 0 0 304 596H384.56A228 228 0 0 1 596 384.56Z"/>
+  <path fill="#161b1d" d="M628 416.65A196 196 0 1 1 416.65 628H512A116 116 0 0 0 628 512Z"/>
+  <!-- 交集：信号青 -->
+  <path fill="#00a3cc" d="M596 416.65V512A84 84 0 0 1 512 596H416.65A196 196 0 0 1 596 416.65Z"/>
+</svg>

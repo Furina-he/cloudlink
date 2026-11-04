@@ -11,14 +11,14 @@ CloudLink 是一个面向 AI Agent 的全栈基础设施配电盘与安全护栏
 | [PRODUCT.md](PRODUCT.md) | 产品上下文：用户、定位、原则（impeccable 格式） |
 | [DESIGN.md](DESIGN.md) | 视觉系统「钢与信号 · 钢制配电盘」：设计令牌、双闸刀回路行、官方品牌 Logo 规范、动效 |
 | [docs/PRD.md](docs/PRD.md) | PRD v3.1：数据模型、功能需求、配电盘 UI/UX 规范、前端工程硬约束、Rust 方案、决策日志 |
-| [docs/EXECUTION-PLAN.md](docs/EXECUTION-PLAN.md) | 分阶段执行计划（P0 到 P6，含 P3.6 配电盘减负与云 CLI 改版），末尾附新对话的开场提示词 |
+| [docs/EXECUTION-PLAN.md](docs/EXECUTION-PLAN.md) | 分阶段执行计划（P0 到 P6，含 P3.6 配电盘减负与云 CLI 改版、P6 检测更新与发布），末尾附新对话的开场提示词 |
 | [docs/CC-SWITCH-EXPERIENCE.md](docs/CC-SWITCH-EXPERIENCE.md) | CC Switch VPS 模块开发实战经验与防坑清单（P4/P5 必读） |
 | [docs/PRD-review.md](docs/PRD-review.md) | 对 v1 草案的评审：32 条问题及核实来源 |
 | [docs/archive/prd-v1.md](docs/archive/prd-v1.md) | 原始 PRD（只读存档，原名 CloudSkill Hub） |
 
 ## 当前状态
 
-CloudLink v0.1 的前端和 Rust 核心已实现，当前进入 **P5 联调阶段**，验证真实 Tauri IPC、Windows/WSL SSH、云平台 CLI 与 Agent 使用闭环。阶段任务与验收标准见 [执行计划](docs/EXECUTION-PLAN.md)。
+CloudLink v0.1 的前端和 Rust 核心已实现，P5 联调的代码已完成（手工验收清单与 P6 一起验收），当前进入 **P6 打磨、更新与打包阶段**：无障碍与性能打磨、应用图标落地、检测更新（F-406）、签名的 Windows 安装包和首个 GitHub Release。阶段任务与验收标准见 [执行计划](docs/EXECUTION-PLAN.md)。
 
 仓库：[Furina-he/cloudlink](https://github.com/Furina-he/cloudlink)（公开，主分支 `main`）。开发环境见执行计划第 1 节；全新检出后，直接运行 Cargo 检查前先执行 `pnpm --dir cloudlink build:guard`，准备 Tauri 所需的护栏 sidecar。
 
@@ -39,10 +39,11 @@ CloudLink v0.1 的前端和 Rust 核心已实现，当前进入 **P5 联调阶�
 | 档位与护栏 | 档位（只读巡检 / 标准运维）在主列表行内直接切换，不设 30 分钟临时解锁；生产环境处于标准运维时琥珀色高亮提醒；Claude Code 上由 `PreToolUse` hook 拦截越界的 `ssh` 与云 CLI 命令（含拦截 `vercel env pull` 等凭据导出） |
 | Agent 笔记 | Agent 把学到的东西写进收件箱，你确认后并入资源信息 |
 | 视觉方向 | 「钢与信号 · 钢制配电盘」：Mist 冷钢中性色、钢墨主按钮、唯一的 Signal Cyan 信号色，大厂云平台与 Agent 一律使用官方品牌 Logo |
+| 应用图标 | 「交汇 · 浅色」：白底圆角方块上，钢墨方块（服务器与云平台）与圆（Agent）隔着护栏间隙相交，交集是信号青。源文件 [docs/brand/cloudlink-icon.svg](docs/brand/cloudlink-icon.svg)，只用于安装包、任务栏、开始菜单和标题栏 |
+| 更新 | 应用内检测更新（F-406）：默认开启，可在设置里关闭；只有发现新版本时顶栏才出现提醒。安装包经 minisign 签名，通过 GitHub Releases 分发 |
 
 ## 待决
 
 - CloudLink 的商标检索。Dell、Mitel、Genetec 等公司有同名产品，但不在 AI 或开发者工具领域。
-- 应用自身 Logo（Agent 与云平台已使用各自官方品牌 Logo）。
 - 是否支持团队共享（v1.0 之后再评估）。
 - 服务器监控（已搁置，见 `docs/PRD.md` 11.2 Q4）。

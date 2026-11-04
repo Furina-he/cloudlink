@@ -16,6 +16,8 @@
 > 5. 接入 Cloudflare（`wrangler`）、Vercel（`vercel`）、Oracle Cloud（`oci`）三类云平台 CLI 资源（按已启用 Agent 的环境精准检测、范围圈定 Scope、服务器关联、护栏扩展），所有云平台与 Agent 一律使用官方品牌 Logo（`ProviderMark`、`AgentMark`）。
 > 新增 **P3.6** 完成前端 v3.1 改版，P4–P5 同步跟进。
 >
+> **2026-11-05 并入 P6：** 应用图标定为「交汇 · 浅色」（`docs/brand/cloudlink-icon.svg`）。新增 F-406 检测更新：默认开启，可在设置中关闭；只有发现新版本时才在顶栏提醒。它连同安装包签名和 GitHub Releases 发布流程一起在 P6 实施（PRD 11.1）。
+>
 > **冲突时的优先级：** PRD 第七章的硬约束 > DESIGN.md 的令牌 > PRD 其余章节 > 本计划的实施建议。
 >
 > **开场方式：** 新对话直接粘贴第 7 节的开场提示词即可。
@@ -32,7 +34,7 @@
 - F-201 到 F-205；
 - F-207 的默认英文输出；
 - F-301 到 F-308；
-- F-401、F-402、F-403、F-405。
+- F-401、F-402、F-403、F-405、F-406（检测更新，2026-11-05 新增）。
 
 **策略：** 先做前端（基于 Mock IPC），再做 Rust 核心，最后联调。各阶段按本计划的验收标准检查；阶段推进与提交遵循当前会话中的用户授权，未完成的验收项如实汇报。
 
@@ -46,7 +48,7 @@
 | P3.6 | 前端改到 v3.1（配电盘减负 + 云 CLI） | 单列全宽双闸刀回路行（SSH + 云 CLI）；按需平推右侧面板（控制头 + 3 个平铺 Tab）；彻底移除 30 分钟临时解锁；SSH 一步到位自动转密钥；Cloudflare / Vercel / Oracle Cloud 环境向导与 Scope 圈定；`ProviderMark` 官方品牌 Logo | L | P3.5 |
 | P4 | Rust 核心 | db、env、ssh、cli、secret、compile、probe、deliver、guard、operations、notes、ipc 模块，护栏程序 `cloudlink-guard`（覆盖 `ssh` + `wrangler/vercel/oci`），以及测试 | L（拆成 P4a、P4b、P4c 三次会话） | P3.6 的契约 |
 | P5 | 联调与端到端验收 | 前端接入真实 IPC、WSL 测试靶机与云 CLI 检测验收、手工验收清单 | M | P3.6、P4 |
-| P6 | 打磨与打包 | 无障碍、性能、文案修订、Windows 安装包 | S | P5 |
+| P6 | 打磨、更新与打包 | 无障碍、性能、文案修订；应用图标落地；检测更新（F-406）；签名的 Windows 安装包与 GitHub Releases 发布流程 | M | P5 |
 
 **会话建议：**
 
@@ -499,17 +501,38 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
 
 **验收门槛：** 清单全部通过；在会话中列出遗留问题，并标注严重程度。
 
-### P6 打磨与打包（S）
+### P6 打磨、更新与打包（M）
+
+2026-11-05 起，应用图标和 F-406 检测更新也在本阶段实施（PRD 11.1）。
 
 1. **无障碍：** 完整走一遍键盘操作流程；检查焦点顺序和「减少动态效果」设置；确认 150% 缩放下布局正常。
 2. **性能：** 首屏 JS 压缩后不超过 600KB；预览按需加载；冷启动不超过 1.5 秒。
-3. **文案：** 按 PRD 6.11 的规范把 `copy.ts` 全部过一遍。
-4. **可选质检：**
+3. **文案：** 按 PRD 6.11 的规范把 `copy.ts` 全部过一遍，包括 F-406 新增的更新文案。
+4. **应用图标：**
+   - 以 `docs/brand/cloudlink-icon.svg`（「交汇 · 浅色」，规格见 DESIGN.md「App Icon」）为唯一源文件，运行 `pnpm --dir cloudlink exec tauri icon ../docs/brand/cloudlink-icon.svg` 重新生成 `src-tauri/icons/`。v0.1 只发 Windows，删掉生成出来的 `android/`、`ios/` 目录；`tauri.conf.json` 的 `bundle.icon` 列表不变。
+   - 删除 `docs/brand/` 下未选中的候选稿和预览图（`cloudlink-icon-junction.svg`、`cloudlink-icon-loop.svg`、`cloudlink-icon-nodes.svg`、`cloudlink-icon-preview.png` 和 `styles/` 目录），只保留源文件。
+   - 检查任务栏、开始菜单、窗口标题栏、安装程序和「应用和功能」列表里的图标：深色和浅色任务栏各看一次，16 到 48px 都清晰。
+   - 界面内的顶栏仍只显示文字 `CloudLink`，不放应用图标：图标含信号青，放进界面会违反 One Signal Rule。
+5. **检测更新（F-406）：** 按 PRD F-406、6.13、7.3、7.8、8.1、8.5 实现。
+   - Rust：新增 `update` 模块；`tauri-plugin-updater` 只在 Rust 侧初始化和调用，capability 不增加 `updater:*`；`Settings.autoCheckUpdates` 默认为 `true`，数据库迁移补上默认值；新增命令 `get_update_status`、`install_update`、`cancel_update` 和事件 `update://changed`，新增的 `IpcErrorId` 经 ts-rs 导出。
+   - 前端：接入 `ipc.ts`、`events.ts`；新增一个更新 store；实现顶栏提醒按钮、更新对话框、命令面板「安装更新」，以及「设置 → 通用」的开关和当前版本号；文案全部放进 `copy.ts`；`eslint.config.js` 按 PRD 7.4 禁止引入 `@tauri-apps/plugin-updater`。
+   - Mock 与测试：Mock 默认没有新版本，现有截图不变。Rust 单元测试用假的更新源，覆盖定时、开关、失败重试、忙碌判定和签名失败，不访问网络。Vitest 覆盖更新 store。Playwright 覆盖「默认隐藏 → 发现新版本 → 打开对话框 → 下载进度 → 取消 / 失败 / 等待任务」，并按 PRD 7.10 第 5 条补顶栏提醒和对话框的截图。
+6. **签名与发布：**
+   - 签名密钥只生成一次：`pnpm --dir cloudlink tauri signer generate -w ~/.tauri/cloudlink.key`。私钥和口令存进密码管理器并另行备份，绝不入库；公钥写入 `tauri.conf.json` 的 `plugins.updater.pubkey`。
+   - `tauri.conf.json`：`bundle.targets` 改为 `["nsis"]`（按当前用户安装，不需要管理员权限）；加上 `bundle.createUpdaterArtifacts: true`；`plugins.updater.endpoints` 填 PRD 8.5 的 GitHub 地址；`plugins.updater.windows.installMode` 为 `"passive"`。
+   - 版本号三处一致：`tauri.conf.json`、`src-tauri/Cargo.toml`、`package.json`。目前前两处是 0.1.0，`package.json` 还是 0.0.1。
+   - 构建：设置环境变量 `TAURI_SIGNING_PRIVATE_KEY`（私钥路径或内容）和 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`，运行 `pnpm --dir cloudlink tauri build`，得到 `CloudLink_<版本>_x64-setup.exe` 和对应的 `.sig`。
+   - 新增 `cloudlink/scripts/release-manifest.mjs`（只用 Node 标准库），从构建产物生成 `latest.json`：`version`、`notes`、`pub_date`，以及 `platforms["windows-x86_64"]` 的 `signature` 和 `url`。
+   - 发布：`gh release create v<版本> <安装包> <latest.json> --repo Furina-he/cloudlink`。预发布版本不会出现在 `releases/latest` 下，可以用来试发；正式发布前先征得用户授权。
+7. **可选质检：**
    - 用 impeccable 的 `audit` 和 `polish` 做一次 UI 质检。
    - 再运行 `/impeccable document`，用实际代码重新校准 `DESIGN.md`。
-5. **打包：** `pnpm tauri build` 生成 NSIS 或 MSI 安装包；如果有干净的 Windows 虚拟机，在上面安装运行一遍。
+8. **安装与更新实测：**
+   - 在干净的 Windows 上安装、运行、卸载一遍；有虚拟机时用虚拟机。
+   - 端到端更新：用测试配置构建 0.1.0 和 0.1.1，把端点指向本地 HTTP 服务（只有测试配置允许 http）。装好 0.1.0 后，从顶栏提醒走完下载、安装和自动重新打开。确认数据、凭据、托管 ssh 配置、护栏 hook 和已分发的副本都还在，`~/.cloudlink/bin/` 中护栏程序的哈希和新版一致。
+   - 篡改安装包或签名后，更新被拒绝，界面提示签名校验失败。关闭「自动检查更新」后不再发出请求，用本地 HTTP 服务的访问日志核对。
 
-**验收门槛：** 安装包能正常安装和运行；第 5 节的完成定义全部满足。
+**验收门槛：** 安装包能正常安装和运行；应用图标在各处显示正确；F-406 的 AC 全部通过，端到端更新和签名篡改实测通过；第 5 节的完成定义全部满足。
 
 ---
 
@@ -519,6 +542,7 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
 - PRD 7.10 的完成定义（DoD）全部满足。
 - P5 的手工验收清单全部通过。
 - `cargo test`、`pnpm test`、`pnpm e2e`、`pnpm build`、`pnpm tauri build` 全部通过。
+- 签名的安装包和 `latest.json` 能发布到 GitHub Releases，已安装的旧版本能在应用内更新到新版本（F-406）。
 
 ---
 
@@ -544,6 +568,10 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
 | 不同发行版的探测输出格式不同（Alpine/BusyBox） | 解析失败 | 按段容错；用录制的样例集测试 |
 | 依赖主版本漂移 | 执行时的最新版本与文档不一致 | 严格按文档锁定的主版本安装 |
 | Windows 上文件被占用 | 发布时交换目录失败 | 重试 3 次；仍然失败就保留旧产物并提示用户 |
+| 更新签名私钥丢失或泄漏 | 丢失：已安装的版本再也无法自动更新；泄漏：别人能签出会被接受的安装包 | 私钥和口令只放在本机与密码管理器，另行备份，绝不入库；泄漏或需要换钥时，先用旧私钥签一个内置新公钥的过渡版本 |
+| GitHub 在部分网络下访问不稳定 | 检查更新或下载安装包失败 | 检查失败不打扰用户，1 小时后重试；下载失败可以重试；以后可以在 `endpoints` 中按顺序追加镜像地址 |
+| 安装更新时有任务在跑 | Windows 上安装开始后应用直接退出，进行中的探测或发布被中断 | 有进行中的测试连接、探测、CLI 检测或发布时返回 `update-busy`，不开始安装；所有文件写入本就是原子的，SQLite 用 WAL |
+| 更新时护栏程序正在运行或被替换 | 正在执行的 hook 失败，或护栏停留在旧版本 | hook 调用的是 `~/.cloudlink/bin/` 中的副本，安装目录被替换不影响它；新版启动时按内容比对重新同步（`prepare_guard_binary`），失败只写日志，下次启动或重新安装护栏时再同步 |
 
 ---
 

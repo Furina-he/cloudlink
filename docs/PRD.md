@@ -16,7 +16,7 @@
 | 产品形态 | 桌面客户端（Tauri v2）。**v0.1 只支持 Windows 10/11（原生 + WSL2）**；macOS 在 v0.5 支持，Linux 在 v1.0 支持 |
 | 核心定位 | 在一个一目了然的「钢制配电盘」界面里管理 SSH 服务器与云平台 CLI（Cloudflare、Vercel、Oracle Cloud），编译成一个符合 Agent Skills 规范的总 Skill 分发给本机 Agent；在 Claude Code 上用护栏按档位拦下越界的 `ssh` 与云 CLI 命令，并记录 Agent 执行过什么 |
 | 兼容生态 | v0.1：Claude Code（`~/.claude/skills`），以及 Codex CLI 等读取 `~/.agents/skills` 的 Agent；其他 Agent 可以添加为自定义目录。护栏只支持 Claude Code |
-| 文档版本 | v3.1（2026-11-02 配电盘减负与云平台 CLI 扩展，见附录 C；v3.0 为 2026-10-31 版） |
+| 文档版本 | v3.1（2026-11-02 配电盘减负与云平台 CLI 扩展，见附录 C；v3.0 为 2026-10-31 版）；2026-11-05 补充 F-406 检测更新与应用图标，见 11.1 |
 | 覆盖范围 | v0.1（MVP）到 v1.0。优先级与版本一一对应：P0 = v0.1，P1 = v0.5，P2 = v1.0 |
 
 ---
@@ -101,7 +101,7 @@
    - ssh 配置：只写 CloudLink 自己的托管文件；在用户的 `~/.ssh/config` 中只加一行 `Include`，并且要先征得同意（F-107）。
    - `known_hosts`：只在用户核对主机指纹并确认后，由 ssh 自身通过 `StrictHostKeyChecking=accept-new` 写入。
    - Claude Code 的 `~/.claude/settings.json`：只增删 CloudLink 自己的那一条 hook，要先征得同意，修改前备份（F-306）。
-7. **本地优先，零遥测。** 默认不联网，只有 SSH 探测和用户主动开启的更新检查例外。
+7. **本地优先，零遥测。** 只在三种情况下联网：测试连接与 SSH 探测；云平台 CLI 检测（由本机 CLI 发起）；检查更新（F-406）。检查更新默认开启，可以在设置中关闭；它只向 GitHub Releases 请求版本清单 `latest.json`，不上传任何数据（2026-11-05 用户确认）。
 
 ---
 
@@ -420,10 +420,11 @@ interface AgentNote {                       // Agent 写进收件箱的一条笔
 | 编号 | 功能 | 优先级 | 需求与验收标准 |
 | :--- | :--- | :--- | :--- |
 | F-401 | 命令面板与快捷键 | P0 | 见 6.9 |
-| F-402 | 活动日志 | P0 | 位于设置的「活动」分区。记录测试连接、CLI 环境检测、探测（包括执行的命令清单、耗时、结果）、编译、分发和移除、修复、托管 ssh 配置的写入、护栏的安装与移除、档位切换、笔记的并入与忽略，本地保留 30 天。Agent 的操作记录（F-307）也在这里按资源查看。**AC：** 日志中不出现原始探测输出、密码，也不出现解析后的连接信息 |
+| F-402 | 活动日志 | P0 | 位于设置的「活动」分区。记录测试连接、CLI 环境检测、探测（包括执行的命令清单、耗时、结果）、编译、分发和移除、修复、托管 ssh 配置的写入、护栏的安装与移除、档位切换、笔记的并入与忽略、应用更新的安装（F-406），本地保留 30 天。Agent 的操作记录（F-307）也在这里按资源查看。**AC：** 日志中不出现原始探测输出、密码，也不出现解析后的连接信息 |
 | F-403 | 设置 | P0 | 见 6.7 |
 | F-404 | 数据导入导出 | P1 | 以 JSON 导入导出资源。分发与本机路径强相关、密码在凭据库中，二者都不导出。P2 支持加密备份包 |
 | F-405 | 首次启动空状态 | P0 | 见 6.8 |
+| F-406 | 检测更新 | P0 | 2026-11-05 新增，P6 实施。默认开启，可在「设置 → 通用」关闭。启动 10 秒后检查一次，之后每 24 小时检查一次；检查失败不打扰用户，只写日志，1 小时后重试。数据源是 GitHub Releases 上的 `latest.json`，由 Tauri updater 在 Rust 侧读取；只下载版本清单，不上传任何数据。**AC1（正常即隐身）：** 没有新版本时，界面上不出现任何与更新有关的元素。发现新版本后，顶栏最右侧出现「新版本 x.y.z」提醒按钮，命令面板「系统」组出现「安装更新」（6.13）。**AC2：** 点提醒按钮打开更新对话框，显示新版本号、发布日期和纯文本的更新说明。「稍后」只关闭对话框，提醒按钮保留。「下载并安装」显示下载进度，下载阶段可以取消。**AC3：** 安装包必须通过内置公钥的签名校验；校验失败直接丢弃，不安装，并提示原因。**AC4：** 有进行中的测试连接、探测、CLI 检测或发布时不开始安装，告诉用户在等哪项任务。**AC5：** Windows 上开始安装时 CloudLink 自动退出，NSIS 安装程序以 passive 模式装完后自动重新打开；退出前写一条活动记录。数据目录、凭据库、托管 ssh 配置、护栏 hook 和已分发的副本都不受影响。护栏程序副本在 `~/.cloudlink/bin/`，所以更新期间护栏照常工作；重新打开后按哈希同步为新版本（`prepare_guard_binary`）。**AC6：** 关闭开关后立即停止检查并隐藏提醒；重新打开开关时立即检查一次 |
 
 ### 4.5 Agent 目录表
 
@@ -619,6 +620,7 @@ If a command is missing on a server (no docker, no systemd), skip it and say so.
 - **顶部极简一体栏（48px 单行 Header）**：
   - 左侧：应用名 `CloudLink` + 三项分段视图切换器 **`( 资源 )  ( Agent )  ( 设置 )`**（完全取消左侧 240px `Sidebar` 与顶部 `Breadcrumb` 面包屑栏）。
   - 右侧：在「资源」主页时直接放置紧凑搜索框、`[+ 添加服务器]` 主按钮、`[+ 云平台 ▾]` 下拉菜单按钮（含 Cloudflare、Vercel、Oracle Cloud、从 ssh config 导入）及命令面板图标按钮 `[⌘]`。
+  - 最右侧：**只在发现新版本时**出现 `[⬆ 新版本 x.y.z]` 更新提醒按钮，三个视图都显示；没有新版本时不显示、也不占位（F-406，6.13）。
 
 | 顶部导航项 | 用途 | 计数徽章 |
 | :--- | :--- | :--- |
@@ -734,7 +736,7 @@ If a command is missing on a server (no docker, no systemd), skip it and say so.
 
 | 分区 | 内容 |
 | :--- | :--- |
-| 通用 | 主题（跟随系统 / 浅色 / 深色）；编译产物语言（v0.1 固定英文，P1 起可切换）；新建非生产资源的默认档位。v0.1 的界面只有简体中文 |
+| 通用 | 主题（跟随系统 / 浅色 / 深色）；编译产物语言（v0.1 固定英文，P1 起可切换）；新建非生产资源的默认档位；「自动检查更新」开关（默认开启，F-406）和当前版本号。v0.1 的界面只有简体中文 |
 | 运行环境 | 已检测到的环境列表，每项有启用开关；重新检测按钮 |
 | ssh 配置 | 每个运行环境一行：托管文件路径、是否已加入 Include（未加入时提供「加入 Include」按钮和手动添加的说明）、`known_hosts` 路径 |
 | 编译 | 正文行数上限（默认 100）；是否在 SKILL.md 中写入数据快照时间 |
@@ -763,7 +765,7 @@ If a command is missing on a server (no docker, no systemd), skip it and say so.
 命令面板分三组：
 - **跳转**：三个视图，以及按名称或标识搜索的资源。
 - **资源**：添加 SSH 服务器、添加云平台 CLI（Cloudflare / Vercel / Oracle Cloud）、从 ssh config 导入、切换当前资源档位（只读巡检 ↔ 标准运维）、测试连接 / 重新检测 CLI、探测当前服务器、把当前资源分发给某个 Agent 或停止分发。
-- **系统**：预览 Skill、检查全部分发、切换主题。
+- **系统**：预览 Skill、检查全部分发、切换主题；有新版本时多一项「安装更新」（F-406）。
 
 ### 6.10 状态全集（每个视图都必须实现）
 
@@ -784,6 +786,7 @@ If a command is missing on a server (no docker, no systemd), skip it and say so.
 | 护栏 | 已生效、未安装、未生效（带原因）、不可用（带原因） | Agent 页护栏分区 |
 | Agent 笔记 | 无、待处理、需编辑（命中密钥）、疑似注入 | 回路行徽章、详情「动态」Tab |
 | 操作记录 | 空（「还没有记录。只记录经过护栏的命令」）、有记录、有拦下 | 详情「动态」Tab |
+| 应用更新 | 没有新版本（不显示任何元素）、有新版本、下载中（百分比）、正在安装、更新失败（可重试）、等待任务结束 | 顶栏更新提醒按钮和更新对话框，见 6.13 |
 | 未保存修改 | 草稿 | 底部操作条，预览标为「草稿预览」 |
 | 长内容 | 溢出 | 名称、路径和命令用 `truncate` 加 `Tooltip`；表格横向滚动 |
 | 窗口缩窄 | 最小 760×520 | 顶栏不换行；回路行仍是单行，名称完整显示（档位闸刀在更窄的列表里只留图标，状态词在 Tooltip 和 aria-label 里） |
@@ -809,6 +812,7 @@ If a command is missing on a server (no docker, no systemd), skip it and say so.
 | 环境 | 生产、预发、开发 |
 | 档位 | 只读巡检、标准运维 |
 | Agent 目标 | 已启用、已停用、未检测到 |
+| 应用更新 | 有新版本、下载中、正在安装、更新失败 |
 
 ### 6.12 可访问性
 
@@ -822,6 +826,23 @@ If a command is missing on a server (no docker, no systemd), skip it and say so.
 - 在侧栏之前放一个「跳到主内容」链接，只有获得焦点时才显示。切换一级视图后，焦点移到新视图的标题上（标题设置 `tabIndex={-1}`）。视图标题用 `h1`，分区用 `h2`，层级不跳级。
 - 在 `tauri.conf.json` 的窗口配置里开启 `zoomHotkeysEnabled: true`，支持 Ctrl 加减号缩放。在 150% 缩放和默认窗口（900×640）下，布局不能被破坏。
 - 按钮沿用桌面原生的箭头光标，不改成手形（初始化时加 `--no-pointer`）。
+
+### 6.13 应用更新（F-406，2026-11-05 新增）
+
+更新提醒同样「正常即隐身」：没有新版本时，界面上看不到任何与更新有关的元素。
+
+- **顶栏提醒**：发现新版本后，顶栏最右侧（命令面板按钮之后）出现一个 `Button variant="outline" size="sm"`，内容是 `CircleArrowUpIcon` 加「新版本 0.2.0」，`aria-label` 为「有新版本 0.2.0，查看并更新」。按钮用中性色：有新版本不是状态告警，不用红、琥珀、绿，也不用 Signal Cyan。下载中时文字改为「下载中 42%」，关掉对话框也能看到进度。窗口宽度不够时只留图标，文字放进 `Tooltip`，保证顶栏不换行。
+- **更新对话框**（`Dialog`，`sm:max-w-md`）：
+  - 标题「新版本 0.2.0」，描述「当前版本 0.1.0 · 发布于 2026-11-20」。
+  - 更新说明放在 `ScrollArea` 里（最高约 240px），按纯文本展示并保留换行。说明来自远程的 `latest.json`，不在签名范围内，所以按不可信输入处理：不渲染 Markdown，也不提供可点击的链接。
+  - 提示一行：「安装时 CloudLink 会自动关闭并重新打开；护栏和已分发的 Skill 照常工作。」
+  - 按钮：「稍后」（`outline`，只关闭对话框）和「下载并安装」（主按钮）。
+  - 下载中：`Progress` 加「已下载 3.2 MB / 8.5 MB」（总大小未知时只显示已下载量），按钮变为「取消下载」。下载完成后进入「正在安装」，CloudLink 随即退出。
+  - 失败：对话框内显示 `Alert variant="destructive"`，写清原因和下一步，例如「安装包签名校验失败，已丢弃。请稍后重试，或到 GitHub Releases 手动下载。」按钮变为「重试」。
+  - 等待任务：有进行中的测试连接、探测、CLI 检测或发布时，「下载并安装」不可用，旁边说明在等什么，例如「正在探测 hk-edge，结束后再安装」。
+- **命令面板**：有新版本时，「系统」组出现「安装更新 0.2.0」，打开同一个对话框。
+- **设置 → 通用**：`Switch`「自动检查更新」，说明文字为「启动后和每 24 小时向 GitHub Releases 请求一次版本清单，只读取版本号和更新说明，不上传任何数据。」下方显示「当前版本 0.1.0」。设置里不放「立即检查」按钮；关闭后重新打开开关时会立即检查一次。
+- **无障碍**：提醒按钮出现时不抢焦点，也不弹 Toast，只通过 `sr-only` 的 `aria-live="polite"` 区域播报一次「有新版本 0.2.0」。对话框打开后焦点落在「下载并安装」上；下载完成、失败和等待任务的提示用 `aria-live="polite"` 播报。
 
 ---
 
@@ -853,7 +874,7 @@ If a command is missing on a server (no docker, no systemd), skip it and say so.
 | Markdown 渲染 | `streamdown`，样式用 shadcn typeset（一个 CSS 文件，不是 npm 包） | 2.7 |
 | 快捷键 | `react-hotkeys-hook` | 5.3 |
 | 等宽字体 | `@fontsource-variable/jetbrains-mono` | 5.x |
-| Tauri 前端 API | `@tauri-apps/api`、`@tauri-apps/plugin-dialog`、`@tauri-apps/plugin-opener` | 2.x |
+| Tauri 前端 API | `@tauri-apps/api`、`@tauri-apps/plugin-dialog`、`@tauri-apps/plugin-opener`（检测更新由 Rust 侧的 `tauri-plugin-updater` 完成，前端不引入 `@tauri-apps/plugin-updater`，见 7.3、8.1） | 2.x |
 | 测试 | `vitest`、`@playwright/test` | 5.x / 1.6x |
 
 为什么拖拽选经典版 dnd-kit（`@dnd-kit/core` 系列）：shadcn 的 base-nova 区块（例如 dashboard-01）用的就是这一套，API 稳定，资料多，一次性生成成功率高。新版 `@dnd-kit/react` 截至 2026-10 仍是 0.5.x，API 还在变动。代价是经典版自 2024-12 以来没有再发版，这一点我们接受；等新版到 1.0 时再评估迁移。**两代 API 禁止混用。**
@@ -957,6 +978,7 @@ pnpm dlx shadcn@4 mcp init --client claude
 | 类名合并 | 从 `@/lib/utils` 引入 `cn` | 直接用 clsx 或 tailwind-merge |
 | 全局状态 | zustand v5，使用 `useShallow`；只有 UI 偏好用 `persist` 持久化 | Redux、Jotai、用 React Context 管全局状态 |
 | 后端调用 | 只能通过 `src/lib/ipc.ts` 调用 `invoke`；后端事件只能由 `src/lib/events.ts` 订阅 | 在组件里直接调用 `invoke` 或 `listen` |
+| 应用更新（F-406，6.13） | 后端命令 `getUpdateStatus`、`installUpdate`、`cancelUpdate` 和事件 `update://changed`（照常只经 `ipc.ts`、`events.ts`）；顶栏提醒用 `Button variant="outline" size="sm"` 加 `CircleArrowUpIcon`，对话框用 `Dialog`，进度用 `Progress`，更新说明是 `ScrollArea` 里的纯文本，错误用 `Alert`，开关用 `Switch` | 前端引入 `@tauri-apps/plugin-updater`；用 streamdown 渲染远程的更新说明；自写弹窗、进度条或轮询定时器（检查周期由 Rust 负责） |
 
 ### 7.4 依赖黑名单与 ESLint 强制
 
@@ -978,6 +1000,7 @@ const banned = {
     { name: "@tanstack/react-query", message: "本地 IPC 数据统一放在 Zustand store" },
     { name: "@tauri-apps/api/core", importNames: ["invoke"], message: "只能在 src/lib/ipc.ts 中调用 invoke" },
     { name: "@tauri-apps/api/event", importNames: ["listen"], message: "只能在 src/lib/events.ts 中订阅事件" },
+    { name: "@tauri-apps/plugin-updater", message: "更新由 Rust 侧完成，前端只调用 src/lib/ipc.ts 中的后端命令（F-406）" },
   ],
   patterns: [
     { group: ["@radix-ui/*", "@base-ui/react", "@base-ui/react/*"], message: "业务代码只能从 @/components/ui 引入组件" },
@@ -1169,6 +1192,9 @@ export const ipc = {
   updateSettings: (patch: Partial<Settings>) => invoke<Settings>("update_settings", { patch }),
   getProbeScript: () => invoke<string>("get_probe_script"),
   resetData: () => invoke<void>("reset_data"),  // 所有权校验、完整受管数据清理和可重试的凭据清理；范围见 6.7
+  getUpdateStatus: () => invoke<UpdateStatus>("get_update_status"),  // F-406：当前版本和最近一次检查的结果
+  installUpdate: () => invoke<void>("install_update"),  // F-406：下载、校验签名并安装；进度经 update://changed；有进行中的任务时返回 update-busy；Windows 上开始安装后应用退出
+  cancelUpdate: () => invoke<void>("cancel_update"),  // 只能取消下载阶段，取消后回到 available
 };
 
 export interface CompilePreview {
@@ -1183,6 +1209,14 @@ export interface CompilePreview {
 export interface CompileStatus {
   envId: EnvId; agentKey: string; blocked: boolean; errors: number; warnings: number; compiledAt: string | null;
   lint: CompilePreview["lint"];             // 这一份最近一次编译的 Lint，每条带服务器 id；详情头部的受阻摘要和侧栏的受阻数据此计算（2026-10-31 补充）
+}
+
+export interface UpdateStatus {             // F-406（2026-11-05 补充）
+  state: "idle" | "available" | "downloading" | "installing";  // idle：没有新版本、尚未检查或已关闭检查，界面不显示任何更新元素
+  currentVersion: string;
+  version?: string; date?: string; notes?: string;              // 来自 latest.json；notes 按不可信纯文本展示
+  downloaded?: number; total?: number;                          // downloading 时的字节数；total 可能未知
+  error?: IpcError;                                             // 上次安装没有完成的原因（{ id, params }），此时 state 回到 available
 }
 ```
 
@@ -1201,6 +1235,12 @@ export interface CompileStatus {
 - `merge_notes` 的一批条目必须来自同一资源，与单个 `SaveResult` 返回值一致；整批校验后事务并入。疑似含密钥的笔记必须提交实际修改过的文本并通过重新扫描，不能仅传回未改内容。每项资源最多 100 条待处理，超出的输入保留待后续读取。
 - `reset_data` 完成 6.7 的受管分发、编译产物、托管 SSH 配置、护栏 hook/程序/策略、笔记与操作记录、密码及清理回执的清理。未知文件、其他 Skills、用户 SSH 配置及其 Include、用户私钥保留；清理后若收件箱因未知文件保留，其旧资源归属映射清空。OS 凭据调用不持有全局状态锁或数据库锁。
 
+**更新约定（F-406，2026-11-05 补充）：**
+
+- `Settings.autoCheckUpdates`（默认 `true`）控制定时检查，检查周期由 Rust 负责，前端不自建定时器。`update_settings` 把它从 `false` 改为 `true` 时立即检查一次；改为 `false` 时停止检查，状态回到 `idle`。
+- `update://changed` 的 `status` 是完整快照，前端据此替换缓存；启动时先用 `getUpdateStatus` 取一次。检查失败只写日志，不改变状态、不发错误事件。
+- `IpcErrorId` 新增 `update-busy`（`params.task` 说明在等哪项任务）、`update-download-failed`、`update-signature-invalid` 和 `update-install-failed`；Rust ts-rs 导出、前端契约和 `copy.ts` 映射保持同步。
+
 后端事件（只在 `src/lib/events.ts` 中订阅）：
 
 | 事件 | 载荷 |
@@ -1214,6 +1254,7 @@ export interface CompileStatus {
 | `operations://new` | `{ assetId, count, denied }` |
 | `notes://new` | `{ assetId, count }` |
 | `activity://new` | `{ item }` |
+| `update://changed` | `{ status }`（`UpdateStatus` 完整快照，F-406） |
 
 **Mock 模式**：运行 `pnpm dev:mock`（即 `vite --mode mock`，读取 `.env.mock` 中的 `VITE_MOCK=1`）后，前端在渲染之前调用 `@tauri-apps/api/mocks` 的 `mockIPC(handler, { shouldMockEvents: true })`，于是可以直接在普通浏览器里开发界面，也可以跑 Playwright。
 
@@ -1232,6 +1273,7 @@ Mock 夹具（`src/mocks/fixtures.ts`）必须覆盖下面这些状态：
 | 云平台 CLI | `cloudflare`：两个环境都已就绪（`me@example.com`），已选 2 个域名和 1 个 Worker，`example.com` 关联 `hk-edge`；`vercel`：Windows 已就绪（`my-team`），WSL 未登录；Oracle 未接入，本机 Windows 未安装 `oci`、WSL 已就绪，用于走添加向导。「打开终端」后 Mock 把该环境改为已就绪，切回窗口时自动刷新 |
 | ssh 配置 | Windows 已加入 Include；WSL 未加入（用于验证 F-107 的同意对话框） |
 | 探测 | 模拟 3 秒的进度事件；对 `hk-edge` 自动更新 3 处，另有 1 处疑似注入的待确认项 |
+| 应用更新 | 默认没有新版本，不影响现有截图；E2E 通过 Mock 开关模拟发现 `0.2.0`（带多行更新说明）、下载进度、取消下载、签名校验失败和 `update-busy` |
 
 ### 7.9 目录结构
 
@@ -1262,7 +1304,7 @@ src/
 2. `pnpm dev:mock` 下，三个视图都能用夹具完整渲染，控制台没有报错。
 3. 6.10 中列出的每个状态，都能通过夹具或交互复现出来。
 4. 只用键盘就能完成以下操作：在服务器卡片之间移动并打开详情，`Ctrl+N` 新建并填写表单、测试连接、保存，在卡片的 Agent 按钮之间用方向键移动、用空格切换，用空格切换 Agent 启用开关，`Ctrl+K`，`Ctrl+S`。
-5. Playwright 截图覆盖资源列表、服务器详情、云平台详情、添加 SSH 服务器、添加云平台、Agent、设置 7 个画面，浅色和深色各一套，窗口 900×640 和 760×520 各一套。截图中不出现文字溢出或遮挡，焦点环清晰可见。
+5. Playwright 截图覆盖资源列表、服务器详情、云平台详情、添加 SSH 服务器、添加云平台、Agent、设置 7 个画面，以及有新版本时的顶栏提醒和更新对话框（F-406），浅色和深色各一套，窗口 900×640 和 760×520 各一套。截图中不出现文字溢出或遮挡，焦点环清晰可见。
 6. 只修改了 7.6 列出的令牌（含 2026-11-01 用户同意新增的 `agent-claude`、`agent-openai`），没有新增任何颜色值（用 `grep -E "oklch\(|#[0-9a-f]{3,6}"` 检查 `src/` 下除 `index.css`、上游原样的 `typeset.css` 和官方品牌 Logo `src/assets/brands/*.svg` 以外的文件，见 7.2 已知的坑第 10 条）。
 
 ### 7.11 给 Coding Agent 的执行入口
@@ -1286,12 +1328,13 @@ src/
 | `deliver` | 受管复制：把各运行环境的编译产物写进已启用的目标（WSL 目标经 `\\wsl.localhost\<发行版>\` 路径写入）；所有权校验；冲突判定；列入计算；健康检查与修复 | `sha2`（副本内容哈希） |
 | `guard` | 写入护栏策略 `policy.json`；在各运行环境的 `~/.claude/settings.json` 中安装和移除 hook（WSL 经 `\\wsl.localhost\` 路径；同意、备份、原子写入、保留其余内容和键顺序）；把护栏程序复制到 `~/.cloudlink/bin/`；自检；同步资源档位与 Scope；读入护栏记录（F-307） | `serde_json`（`preserve_order`） |
 | `notes` | 读取笔记收件箱、扫描、并入与忽略（F-308） | 标准库 |
+| `update` | 检测更新（F-406）：按设置开关定时检查（启动 10 秒后一次，之后每 24 小时一次，失败后 1 小时重试）；下载、签名校验与安装；判断有没有进行中的测试连接、探测、CLI 检测或发布；安装前写活动记录；推送 `update://changed` 快照。更新源可注入，单元测试用假的更新源，`cfg!(test)` 下真实更新源直接报错、不访问网络 | `tauri-plugin-updater` |
 | `ipc` | Tauri 命令与事件；类型导出 | `ts-rs` |
 | `cloudlink-guard`（独立的小程序） | 护栏本体：从标准输入读 hook 的 JSON，按 8.6 判定，输出拦截结果并追加记录。和 `guard` 模块共用规则 crate `guard-rules`；不联网、不读数据库，Windows 上从启动到退出不超过 50ms | `serde_json` |
 
 Rust 依赖锁定的主版本（2026-10-27 核实）：`tauri` 2.12、`tauri-build` 2.7、`rusqlite` 0.41（features = bundled）、`minijinja` 3、`ssh2-config` 0.9、`keyring` 3、`ssh-key` 0.6（features = ed25519）、`ts-rs` 12、`serde` 1、`serde_json` 1（features = preserve_order）、`thiserror` 2、`tokio` 1、`ulid` 3、`regex` 1、`sha2` 0.11、`dirs` 7；开发依赖 `tempfile` 3。v3 去掉了 `tiktoken-rs`（不再估算 Token）和 `junction`（不再使用链接）。
 
-Tauri 插件：`tauri-plugin-dialog`、`tauri-plugin-opener`、`tauri-plugin-window-state`、`tauri-plugin-single-instance`、`tauri-plugin-log`。**不向前端暴露 shell 插件和 fs 插件**：所有系统操作都由具名的 Rust 命令完成，capability 按最小权限配置。护栏程序作为 sidecar 打包（`bundle.externalBin`，文件名带目标三元组后缀）。`pnpm --dir cloudlink build:guard` 构建并准备该文件；Tauri 的 `beforeDevCommand` / `beforeBuildCommand` 自动执行此步骤，全新检出后直接运行 Cargo 门禁前也须先准备 sidecar。主应用、`guard-rules` 和 `cloudlink-guard` 都是 workspace 的默认成员，全套 Cargo 门禁覆盖三者。
+Tauri 插件：`tauri-plugin-dialog`、`tauri-plugin-opener`、`tauri-plugin-window-state`、`tauri-plugin-single-instance`、`tauri-plugin-log`，以及 F-406 的 `tauri-plugin-updater` 2（2026-11-05 加入，只在 Rust 侧调用，capability 不给前端授予 `updater:*` 权限）。**不向前端暴露 shell 插件和 fs 插件**：所有系统操作都由具名的 Rust 命令完成，capability 按最小权限配置。护栏程序作为 sidecar 打包（`bundle.externalBin`，文件名带目标三元组后缀）。`pnpm --dir cloudlink build:guard` 构建并准备该文件；Tauri 的 `beforeDevCommand` / `beforeBuildCommand` 自动执行此步骤，全新检出后直接运行 Cargo 门禁前也须先准备 sidecar。主应用、`guard-rules` 和 `cloudlink-guard` 都是 workspace 的默认成员，全套 Cargo 门禁覆盖三者。
 
 ### 8.2 分发方式：一律受管复制
 
@@ -1390,6 +1433,11 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -- <alias
 - 修改 Claude Code 的 `settings.json` 时：先征得同意并备份；文件不是合法 JSON 时不做任何修改，只提示用户；只增删命令指向 `cloudlink-guard` 的那一条；原子写入。
 - 护栏策略 `policy.json` 含服务器地址，和 `data.db` 一样放在用户目录下的 `~/.cloudlink/`，不进入 Skill。
 - 笔记收件箱和护栏记录由 Agent 一侧写入，按不可信输入处理：长度上限、密钥扫描、疑似注入检查，界面上只以纯文本展示。
+- 应用更新（F-406）的配置：
+  - 端点固定为 HTTPS 的 `https://github.com/Furina-he/cloudlink/releases/latest/download/latest.json`；以后加镜像时，在 `endpoints` 中按顺序追加。
+  - 只安装通过内置公钥签名校验（minisign）的安装包。签名私钥和口令不入库，只保存在发布者本机或 CI Secret 中，并另行备份：丢失后，已安装的版本再也无法自动更新。
+  - `latest.json` 中的更新说明不在签名范围内，界面只以纯文本展示。
+  - 只有测试构建可以把端点改到本地 HTTP 服务，正式构建不开 `dangerousInsecureTransportProtocol`。
 
 ### 8.6 护栏（F-306）
 
@@ -1454,12 +1502,12 @@ WSL 中的 `command` 是同一个 Windows 程序的 `/mnt/c/...` 路径，参数
 | :--- | :--- |
 | 性能 | 冷启动不超过 1.5 秒（中端笔记本）；20 台服务器的总 Skill 编译 p95 不超过 200ms；同步全部副本 p95 不超过 1 秒；检查全部分发不超过 1 秒；测试连接（网络正常时）在 3 秒内返回；护栏判定 p95 在 Windows 原生环境不超过 50ms，经 WSL 互操作不超过 300ms；首屏 JS 压缩后不超过 600KB（实测全量冒烟页面约 487KB gzip），预览面板用 `React.lazy` 拆分，streamdown 和 Shiki 的语言包按需加载 |
 | 可靠性 | SQLite 使用 WAL 模式；所有文件写入都是原子的；进程崩溃不留下半个产物 |
-| 隐私 | 零遥测；除测试连接、SSH 探测和用户主动开启的更新检查外不联网；日志中不记录原始探测输出、密码和解析后的连接信息；操作记录和 Agent 笔记只存在本机，操作记录写入前脱敏，保留 30 天 |
+| 隐私 | 零遥测；除测试连接与 SSH 探测、云平台 CLI 检测（由本机 CLI 发起）和检查更新（默认开启、可关闭，只请求 GitHub Releases 上的版本清单）外不联网；日志中不记录原始探测输出、密码和解析后的连接信息；操作记录和 Agent 笔记只存在本机，操作记录写入前脱敏，保留 30 天 |
 | 兼容性 | v0.1：Windows 10 21H2+ 和 Windows 11（WebView2），以及 WSL2。v0.5：macOS 13+。v1.0：Ubuntu 22.04+（WebKitGTK 4.1） |
 | 国际化 | v0.1 界面只有简体中文，全部界面文案集中放在 `src/lib/copy.ts`，便于以后国际化。编译产物默认英文（F-207） |
 | 可访问性 | WCAG 2.2 AA，见 6.12 |
 | 可维护性 | 数据库带 `schema_version` 并支持迁移；模板版本号写入所有权标记，便于判断产物由哪个模板生成 |
-| 更新 | Tauri updater，安装包签名；更新检查需要用户主动开启 |
+| 更新 | Tauri updater，只在 Rust 侧调用（F-406）；安装包用发布者私钥签名，内置公钥校验不通过就拒绝安装；检查默认开启，可在设置中关闭。Windows 只发 NSIS 安装包，按当前用户安装、不需要管理员权限；更新以 passive 模式完成并自动重新打开应用 |
 
 ---
 
@@ -1467,7 +1515,7 @@ WSL 中的 `command` 是同一个 Windows 程序的 `/mnt/c/...` 路径，参数
 
 | 版本 | 里程碑 | 交付内容 | 平台 |
 | :--- | :--- | :--- | :--- |
-| v0.1（MVP） | 跑通「录入、测试连接、探测、编译、分发给 Agent」的闭环，并让 Agent 在护栏内干活 | F-101 到 108（含 F-104 云平台 CLI）；F-201 到 205；F-207（默认英文输出）；F-301 到 308；F-401、402、403、405 | Windows 10/11（原生 + WSL2） |
+| v0.1（MVP） | 跑通「录入、测试连接、探测、编译、分发给 Agent」的闭环，并让 Agent 在护栏内干活 | F-101 到 108（含 F-104 云平台 CLI）；F-201 到 205；F-207（默认英文输出）；F-301 到 308；F-401、402、403、405、406（检测更新） | Windows 10/11（原生 + WSL2） |
 | v0.5 | 多类资产与更多 Agent | F-104（Domain、Panel、Storage）；F-207 输出语言切换；F-404 JSON 导入导出；Cursor、Gemini CLI、GitHub Copilot、OpenCode 作为独立目标；护栏的只读白名单和危险命令可以自定义 | 增加 macOS |
 | v1.0 | 硬隔离辅助与生态扩展 | 加密备份；生成低权限 SSH 用户的辅助脚本；其他 Agent 提供同类 hook 时接入护栏；Cloudflare DNS 只读同步 | 增加 Linux |
 
@@ -1503,13 +1551,15 @@ WSL 中的 `command` 是同一个 Windows 程序的 `/mnt/c/...` 路径，参数
 | 2026-10-31 | P3.5 开工前补齐契约：`Environment.sshAgentKeys`、`deleteAsset` 的 `removeGeneratedKey`、`GuardStatus.planned` 与 `deniedToday`、`CompileStatus.lint`、新命令 `copyKeyToWsl`。「复制到 WSL」由 CloudLink 在用户确认后执行，原则 1 增加这一例外。未列入的服务器预览时按「已列入」计算并注明原因。别名由名称中的英文字母和数字生成，取不到时用地址 | 第二章原则 1、3.4、F-108、F-204、6.5、7.8 |
 | 2026-11-01 | 服务器卡片上直接点选分发给哪些 Agent（参考 CC Switch），按 Agent 计、不分运行环境；每个「运行环境 × Agent」编译一份总 Skill，只含选给这个 Agent 的服务器。契约：`AssetAgent.distribute` 改为 `agents`，Target、Inclusion、CompileStatus、CompilePreview、PreviewRequest 增加 `agentKey`，`setDistribute` 增加 `agentKey`。按钮用 Agent 的品牌 Logo（同 CC Switch），为此新增依赖 `@lobehub/icons-static-svg` 和 `agent-claude`、`agent-openai` 两个颜色令牌，作为 DESIGN.md「不用品牌 Logo、不新增颜色」的唯一例外 | 3.1、3.3、3.4、3.5、F-201、F-204、F-302、F-303、6.4、6.6、7.8 |
 | 2026-11-02 | **前端配电盘式彻底减负与云平台 CLI 扩展（v3.1）**：① 首屏改为单栏全宽「服务器 (SSH) + 云平台 (CLI)」回路列表，每行右侧直接放档位切换器与 Agent 开关，未选中时隐藏右侧面板；② 详情面板砍掉 8 层折叠手风琴，改为常驻控制头 + 3 个平铺 Tab（`画像与规则`、`连接配置`、`动态`），遵循「正常即隐身」；③ **取消「临时解锁 30 分钟」**（删除 `unlockedUntil`、`unlockServer`、`lockServer` 及倒计时徽章），生产环境处于「标准运维」时在回路行琥珀色高亮提醒；④ 新建 SSH 服务器支持密码自动转免密密钥并启用一步到位；⑤ 新增云平台 CLI 资源（Cloudflare `wrangler`、Vercel `vercel`、Oracle Cloud `oci`），按已启用 Agent 所在环境精准检测 CLI 路径与 `whoami` 登录态（切回窗口自动刷新）、圈定 Scope 范围、关联 SSH 服务器，护栏同步拦截云 CLI 写操作与凭据导出命令（如 `vercel env pull`）；⑥ 所有云平台与 Agent 一律使用官方品牌 SVG Logo（`ProviderMark`、`AgentMark`） | 全部文档 |
+| 2026-11-05 | **应用图标定为「交汇 · 浅色」**：白色圆角底板（发丝线描边）上，钢墨色的圆角方块（服务器与云平台）和圆（Agent）相叠，交集是信号青，交集四周留一圈缝代表护栏。源文件为 `docs/brand/cloudlink-icon.svg`，规格见 DESIGN.md「App Icon」；P6 生成整套应用图标 | DESIGN.md、PRODUCT.md、11.2 Q2、P6 |
+| 2026-11-05 | **新增 F-406 检测更新**：检查默认开启、可在设置中关闭，原则 7 和第九章隐私条款随之修改（取代「更新检查需要用户主动开启」）；只有发现新版本时才在顶栏出现提醒；Tauri updater 只在 Rust 侧调用，数据源是 GitHub Releases 的 `latest.json`，安装包签名；Windows 只发 NSIS 当前用户安装包。P6 实施 | 第二章原则 7、F-402、F-406、6.2、6.7、6.9 至 6.11、6.13、7.1、7.3、7.4、7.8、7.10、8.1、8.5、第九、十章 |
 
 ### 11.2 待决问题
 
 | 编号 | 问题 | 建议 |
 | :--- | :--- | :--- |
 | Q1 | CloudLink 的商标风险 | Dell（数据加密）、Mitel（通信）、Genetec（视频设备）、Texada（SaaS）都有叫 CloudLink 的产品，但都不在 AI 或开发者工具领域。正式发布前要做一次商标检索；npm 包名、域名、Tauri identifier 也要一并确认 |
-| Q2 | 应用自身 Logo | 需要你提供；在此之前，侧栏只显示文字名称（Agent 与云平台 CLI 已使用各自官方品牌 Logo） |
+| Q2 | 应用自身 Logo | **已决（2026-11-05）**：选定「交汇 · 浅色」，见 11.1 和 DESIGN.md「App Icon」。应用图标只用于安装包、任务栏、开始菜单和窗口标题栏，界面内的顶栏仍只显示文字 `CloudLink` |
 | Q3 | 是否需要团队共享 | 当前定位是个人工具，v1.0 之后再评估 |
 | Q4 | 服务器监控（类似探针，查看各服务器的使用情况） | 2026-10-30 讨论后搁置，不进 v0.1。v3 的巡检清单（5.6）让 Agent 按需检查服务器状况，覆盖了一部分需求 |
 
