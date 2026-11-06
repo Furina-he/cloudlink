@@ -5,11 +5,17 @@
 //! - WSL 发行版的文件系统 = `$CLOUDLINK_WSL_ROOT/<发行版>`，没设时为 `$CLOUDLINK_HOME/wsl/<发行版>`
 //!
 //! 没有设置 `CLOUDLINK_HOME` 时，才使用真实家目录下的 `~/.cloudlink`。
+//!
+//! 更新实测的测试构建（`scripts/build-update-test.mjs`）在编译时写入 `CLOUDLINK_TEST_BUILD_HOME`，作为
+//! `CLOUDLINK_HOME` 的默认值：安装程序经资源管理器重新打开应用，测试进程的环境变量传不过去，否则
+//! 新版本一启动就落到真实家目录。正式构建不设这个变量，`option_env!` 在编译时就是 `None`。
 
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 use crate::error::{AppError, Result};
+
+const TEST_BUILD_HOME: Option<&str> = option_env!("CLOUDLINK_TEST_BUILD_HOME");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paths {
@@ -54,6 +60,22 @@ pub fn resolve(get: impl Fn(&str) -> Option<OsString>, real_home: impl FnOnce() 
         wsl_root: PathBuf::from(r"\\wsl.localhost"),
         isolated: false,
     })
+}
+
+/// 环境变量优先；只有 `CLOUDLINK_HOME` 有编译进来的默认值
+fn with_build_home<'a>(
+    get: impl Fn(&str) -> Option<OsString> + 'a,
+    build_home: Option<&'a str>,
+) -> impl Fn(&str) -> Option<OsString> + 'a {
+    move |key| {
+        get(key).or_else(|| {
+            if key == "CLOUDLINK_HOME" {
+                build_home.map(OsString::from)
+            } else {
+                None
+            }
+        })
+    }
 }
 
 fn override_path(name: &str, value: OsString) -> Result<PathBuf> {
@@ -124,7 +146,10 @@ pub(crate) fn validate_file(path: &Path) -> Result<()> {
 
 impl Paths {
     pub fn from_env() -> Result<Self> {
-        resolve(|k| std::env::var_os(k), dirs::home_dir)
+        resolve(
+            with_build_home(|k| std::env::var_os(k), TEST_BUILD_HOME),
+            dirs::home_dir,
+        )
     }
 
     /// 测试用：全部落在一个临时目录里
@@ -180,6 +205,43 @@ mod tests {
     fn vars(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
         let map: HashMap<String, OsString> = pairs.iter().map(|(k, v)| (k.to_string(), OsString::from(v))).collect();
         move |k| map.get(k).cloned()
+    }
+
+    #[test]
+    fn a_compiled_test_home_isolates_a_launch_without_any_environment() {
+        let built = tempfile::tempdir().unwrap();
+        let built_str = built.path().to_str().unwrap();
+        let p = resolve(with_build_home(vars(&[]), Some(built_str)), || {
+            panic!("must not read the real home")
+        })
+        .unwrap();
+        assert!(p.isolated);
+        assert_eq!(p.data_dir, built.path());
+        assert_eq!(p.user_home, built.path().join("home"));
+        assert_eq!(p.wsl_root, built.path().join("wsl"));
+
+        // 环境变量仍然优先
+        let env = tempfile::tempdir().unwrap();
+        let env_str = env.path().to_str().unwrap();
+        let p = resolve(
+            with_build_home(vars(&[("CLOUDLINK_HOME", env_str)]), Some(built_str)),
+            || panic!("must not read the real home"),
+        )
+        .unwrap();
+        assert_eq!(p.data_dir, env.path());
+
+        // 只有 CLOUDLINK_HOME 有默认值；正式构建没有编译进来的目录，走真实家目录
+        let get = with_build_home(vars(&[]), Some(built_str));
+        assert_eq!(get("CLOUDLINK_USER_HOME"), None);
+        let home = tempfile::tempdir().unwrap();
+        let p = resolve(with_build_home(vars(&[]), None), || Some(home.path().to_path_buf())).unwrap();
+        assert!(!p.isolated);
+        assert_eq!(p.data_dir, home.path().join(".cloudlink"));
+    }
+
+    #[test]
+    fn ordinary_builds_have_no_compiled_test_home() {
+        assert_eq!(TEST_BUILD_HOME, None);
     }
 
     #[test]

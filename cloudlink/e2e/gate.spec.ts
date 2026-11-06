@@ -2,9 +2,9 @@ import { expect, test, type Page } from "@playwright/test"
 
 import { GATE, collectConsoleErrors, openServer, ready } from "./helpers"
 
-// P3.6 门槛截图：资源（配电盘、服务器详情、云平台详情）、添加 SSH 服务器、添加云平台、Agent、设置 × 浅色 / 深色 × 900×640 / 760×520，随提交
+// P3.6 门槛截图：资源（配电盘、服务器详情、云平台详情）、添加 SSH 服务器、添加云平台、Agent、设置，以及有新版本时的顶栏提醒和更新对话框 × 浅色 / 深色 × 900×640 / 760×520，随提交
 
-const VIEWS: { name: string; open: (page: Page) => Promise<void> }[] = [
+const VIEWS: { name: string; query?: string; open: (page: Page) => Promise<void> }[] = [
   { name: "servers-list", open: async () => {} },
   { name: "servers-detail", open: (page) => openServer(page, "hk-edge") },
   { name: "servers-cli", open: (page) => openServer(page, "vercel", "Vercel") },
@@ -42,6 +42,22 @@ const VIEWS: { name: string; open: (page: Page) => Promise<void> }[] = [
       await expect(page.getByText("编译产物语言")).toBeVisible()
     },
   },
+  // F-406：有新版本时的顶栏提醒和更新对话框（PRD 第十章验收第 5 条）
+  {
+    name: "update-reminder",
+    query: "?update=available",
+    open: async (page) => {
+      await expect(page.getByRole("banner").getByRole("button", { name: "有新版本 0.2.0，查看并更新" })).toBeVisible()
+    },
+  },
+  {
+    name: "update-dialog",
+    query: "?update=available",
+    open: async (page) => {
+      await page.getByRole("banner").getByRole("button", { name: "有新版本 0.2.0，查看并更新" }).click()
+      await expect(page.getByRole("dialog", { name: "新版本 0.2.0" })).toBeVisible()
+    },
+  },
 ]
 
 for (const scheme of ["light", "dark"] as const) {
@@ -52,7 +68,7 @@ for (const scheme of ["light", "dark"] as const) {
         const errors = collectConsoleErrors(page)
         await page.emulateMedia({ colorScheme: scheme })
         await page.setViewportSize({ width, height })
-        await ready(page)
+        await ready(page, v.query)
         await v.open(page)
         // 焦点环不进截图
         await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())

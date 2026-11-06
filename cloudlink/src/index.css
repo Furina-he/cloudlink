@@ -144,3 +144,36 @@
     @apply font-sans;
     }
 }
+
+/*
+ * 系统开启「减少动态效果」时（PRD 6.12）：motion/react 由 MotionConfig reducedMotion="user" 处理，
+ * shadcn 组件自带的 CSS 动效不看这个设置，在这里统一处理：去掉位移、缩放和展开过渡，只保留淡入淡出。
+ * 覆盖的是对话框和命令面板的缩放、Tooltip 和菜单的滑入（tw-animate-css）、Sheet 的滑入、Toast 的滑入滑出，以及折叠面板的高度过渡。
+ * 这段不放进 @layer：未分层的声明优先于 utilities 层，才压得住组件上的类名
+ */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    --tw-enter-scale: 1;
+    --tw-enter-translate-x: 0;
+    --tw-enter-translate-y: 0;
+    --tw-enter-rotate: 0;
+    --tw-exit-scale: 1;
+    --tw-exit-translate-x: 0;
+    --tw-exit-translate-y: 0;
+    --tw-exit-rotate: 0;
+  }
+  [data-slot="sheet-content"] {
+    translate: none;
+  }
+  [data-slot="toast"] {
+    transition-property: opacity, height;
+  }
+  [data-slot="toast"][data-starting-style],
+  [data-slot="toast"][data-ending-style] {
+    opacity: 0;
+  }
+  [data-slot="collapsible-content"],
+  [data-slot="trace-collapsible-content"] {
+    transition: none;
+  }
+}

@@ -51,7 +51,8 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "externalBin": ["binaries/cloudlink-guard"],
     "icon": [
       "icons/32x32.png",
@@ -62,6 +63,25 @@
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI1M0EwNEU5NzNGMDBDRjAKUldUd0RQQno2UVE2dFhFTXNyY1FUUjlVWHQ0NjNoRXdHVnhxa1MwRXcwL2c4aFRacGtqMTRleDIK",
+      "endpoints": [
+        "https://github.com/Furina-he/cloudlink/releases/latest/download/latest.json"
+      ],
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

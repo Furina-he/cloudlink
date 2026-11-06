@@ -5,6 +5,9 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
+// F-406：检测更新只在 Rust 侧完成，前端任何文件（包括 ipc.ts 和 Mock）都不引入更新插件
+const updaterBan = { name: '@tauri-apps/plugin-updater', message: '更新由 Rust 侧完成，前端只调用 src/lib/ipc.ts 中的后端命令（F-406）' }
+
 // PRD 7.4：依赖黑名单。业务代码只能用 7.3 映射表指定的实现
 const banned = {
   paths: [
@@ -20,6 +23,7 @@ const banned = {
     { name: '@tanstack/react-query', message: '本地 IPC 数据统一放在 Zustand store' },
     { name: '@tauri-apps/api/core', importNames: ['invoke'], message: '只能在 src/lib/ipc.ts 中调用 invoke' },
     { name: '@tauri-apps/api/event', importNames: ['listen'], message: '只能在 src/lib/events.ts 中订阅事件' },
+    updaterBan,
   ],
   patterns: [
     { group: ['@radix-ui/*', '@base-ui/react', '@base-ui/react/*'], message: '业务代码只能从 @/components/ui 引入组件' },
@@ -57,6 +61,10 @@ export default defineConfig([
     files: ['src/**/*.{ts,tsx}'],
     ignores: ['src/components/ui/**', 'src/lib/ipc.ts', 'src/lib/events.ts', 'src/mocks/**'],
     rules: { 'no-restricted-imports': ['error', banned] },
+  },
+  {
+    files: ['src/components/ui/**', 'src/lib/ipc.ts', 'src/lib/events.ts', 'src/mocks/**'],
+    rules: { 'no-restricted-imports': ['error', { paths: [updaterBan] }] },
   },
   // 唯一可以引入品牌 Logo 的两个文件：Agent 标识和云平台标识（2026-11-01、11-02 用户选定官方品牌 Logo）
   {

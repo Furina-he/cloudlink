@@ -4,6 +4,7 @@ const fake = vi.hoisted(() => ({
   listen: vi.fn(),
   connection: vi.fn(),
   guard: vi.fn(),
+  update: vi.fn(),
 }))
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: fake.listen }))
@@ -33,6 +34,9 @@ vi.mock("@/stores/probe", () => ({
 vi.mock("@/stores/skills", () => ({
   useSkillStore: { getState: () => ({ _onCompiled: vi.fn() }) },
 }))
+vi.mock("@/stores/update", () => ({
+  useUpdateStore: { getState: () => ({ _onChanged: fake.update }) },
+}))
 
 import { subscribeBackendEvents } from "./events"
 
@@ -52,7 +56,7 @@ describe("后端事件订阅", () => {
   it("部分订阅失败时，等待仍在注册的监听并清理全部已成功订阅", async () => {
     const late = deferred<() => void>()
     const error = { id: "internal", params: { detail: "listener unavailable" } }
-    const offs = Array.from({ length: 8 }, () => vi.fn())
+    const offs = Array.from({ length: 9 }, () => vi.fn())
     let index = 0
     fake.listen.mockImplementation((event: string) => {
       if (event === "guard://changed") return Promise.reject(error)
@@ -62,13 +66,13 @@ describe("后端事件订阅", () => {
     const result = subscribeBackendEvents().catch((failure: unknown) => failure)
     await Promise.resolve()
     expect(offs.every((off) => off.mock.calls.length === 0)).toBe(true)
-    late.resolve(offs[7])
+    late.resolve(offs[8])
     await expect(result).resolves.toBe(error)
     for (const off of offs) expect(off).toHaveBeenCalledTimes(1)
   })
 
   it("失败后可重新订阅，事件仍传给 store，关闭时释放这一轮所有监听", async () => {
-    const failedOffs = Array.from({ length: 8 }, () => vi.fn())
+    const failedOffs = Array.from({ length: 9 }, () => vi.fn())
     let index = 0
     fake.listen.mockImplementation((event: string) =>
       event === "guard://changed"
@@ -93,10 +97,13 @@ describe("后端事件订阅", () => {
     const connection = { testId: "fixture", status: "ok" }
     const statuses = [{ envId: "windows", state: "active" }]
     handlers.get("connection://tested")!({ payload: connection })
+    const status = { state: "available", currentVersion: "0.1.0", version: "0.2.0" }
     handlers.get("guard://changed")!({ payload: { statuses } })
+    handlers.get("update://changed")!({ payload: { status } })
     expect(fake.connection).toHaveBeenCalledExactlyOnceWith(connection)
     expect(fake.guard).toHaveBeenCalledExactlyOnceWith(statuses)
-    expect(activeOffs).toHaveLength(9)
+    expect(fake.update).toHaveBeenCalledExactlyOnceWith(status)
+    expect(activeOffs).toHaveLength(10)
     unsubscribe()
     for (const off of [...failedOffs, ...activeOffs])
       expect(off).toHaveBeenCalledTimes(1)

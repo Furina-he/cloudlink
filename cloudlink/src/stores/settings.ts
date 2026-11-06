@@ -43,3 +43,11 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     }
   },
 }))
+
+/**
+ * 设置读到之前，不知道哪些运行环境被停用了：Agent 开关先不画，免得闪一下停用环境里的 Agent。
+ * 冷启动时后端做完启动检测才返回设置；重新读取期间沿用上一次的值；读取失败时顶部的加载错误已经说明原因
+ */
+export function selectSettingsKnown(s: Pick<SettingsState, "settings">): boolean {
+  return s.settings !== null
+}

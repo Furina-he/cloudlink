@@ -10,6 +10,7 @@ import type {
   Inclusion,
   ProbeFinishedEvent,
   ProbeProgressEvent,
+  UpdateStatus,
 } from "@/bindings"
 import { useActivityStore } from "@/stores/activity"
 import { useConnectionStore } from "@/stores/connection"
@@ -19,6 +20,7 @@ import { useNotesStore } from "@/stores/notes"
 import { useOperationStore } from "@/stores/operations"
 import { useProbeStore } from "@/stores/probe"
 import { useSkillStore } from "@/stores/skills"
+import { useUpdateStore } from "@/stores/update"
 
 export async function subscribeBackendEvents(): Promise<UnlistenFn> {
   const subscriptions = await Promise.allSettled([
@@ -50,6 +52,9 @@ export async function subscribeBackendEvents(): Promise<UnlistenFn> {
     ),
     listen<{ item: ActivityItem }>("activity://new", (e) =>
       useActivityStore.getState()._onNew(e.payload.item)
+    ),
+    listen<{ status: UpdateStatus }>("update://changed", (e) =>
+      useUpdateStore.getState()._onChanged(e.payload.status)
     ),
   ])
   const offs = subscriptions.flatMap((subscription) =>

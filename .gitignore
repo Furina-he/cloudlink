@@ -17,6 +17,9 @@ playwright-report/
 coverage/
 *.log
 
+# Updater signing private keys (tauri signer generate) never enter the repository
+*.key
+
 # Local agent / editor settings
 .claude/settings.local.json
 .impeccable/config.local.json

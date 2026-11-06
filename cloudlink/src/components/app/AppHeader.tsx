@@ -2,6 +2,7 @@ import { CommandIcon } from "lucide-react"
 import { useMemo } from "react"
 
 import { Keys } from "@/components/app/Keys"
+import { UpdateReminder } from "@/components/app/UpdateReminder"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { copy, type ViewId } from "@/lib/copy"
@@ -33,7 +34,7 @@ function useNavCounts(): Partial<Record<ViewId, { n: number; danger: boolean; la
 }
 
 /**
- * 顶部 48px 一体栏（PRD 6.2、DESIGN.md Layout）：左侧应用名和三项视图切换，右侧是当前视图的操作和命令面板。
+ * 顶部 48px 一体栏（PRD 6.2、DESIGN.md Layout）：左侧应用名和三项视图切换，右侧是当前视图的操作、命令面板和更新提醒。
  * 整个应用只有这一条导航，没有侧栏和面包屑
  */
 export function AppHeader() {
@@ -80,6 +81,8 @@ export function AppHeader() {
           {copy.shell.openCommand} <Keys keys={KEY_HINT.command} />
         </TooltipContent>
       </Tooltip>
+      {/* 最右侧：只在发现新版本时出现，不占位（F-406） */}
+      <UpdateReminder />
     </header>
   )
 }

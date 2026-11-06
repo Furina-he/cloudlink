@@ -1,8 +1,9 @@
-// Mock 命令：Agent 笔记、操作记录、活动、设置、清空数据、Tauri 插件（F-307、F-308、F-402、F-403）
+// Mock 命令：Agent 笔记、操作记录、活动、设置、清空数据、Tauri 插件（F-307、F-308、F-402、F-403）；检测更新的开关转给 handlers-update
 import { emit } from "@tauri-apps/api/event"
 
 import type { ActivityItem, ActivityQuery, Operation, OperationQuery, Settings } from "@/bindings"
 import * as fx from "./fixtures"
+import { setAutoCheck } from "./handlers-update"
 import { secretRule } from "./lint"
 import { aliasOf, assetById, db, fail, logActivity, now, recompile } from "./state"
 
@@ -78,7 +79,10 @@ function resetData() {
     g.state = "not-installed"
     g.deniedToday = 0
   })
+  const autoCheck = db.settings.autoCheckUpdates
   db.settings = structuredClone(fx.settings)
+  // 恢复默认设置后检查更新重新打开（与后端 finish_reset 一致）
+  if (!autoCheck) setAutoCheck(true)
   db.sshHosts.hosts.forEach((h) => (h.imported = false))
   db.skillConfig = { relationships: "", conventions: [] }
   recompile({ silent: true })
@@ -95,8 +99,10 @@ export const miscHandlers: Record<string, (a: Args) => unknown> = {
   list_activity: (a) => listActivity(a.q as ActivityQuery),
   get_settings: () => db.settings,
   update_settings: (a) => {
+    const before = db.settings.autoCheckUpdates
     db.settings = { ...db.settings, ...(a.patch as Partial<Settings>) }
     if ("bodyLineLimit" in (a.patch as object) || "writeSnapshotTime" in (a.patch as object)) recompile()
+    if (db.settings.autoCheckUpdates !== before) setAutoCheck(db.settings.autoCheckUpdates)
     return db.settings
   },
   reset_data: () => resetData(),

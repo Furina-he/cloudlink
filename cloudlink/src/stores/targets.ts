@@ -126,6 +126,14 @@ export const useTargetStore = create<TargetState>()((set, get) => ({
 }))
 
 /** 可用的运行环境（设置里停用的不算） */
+/**
+ * 第一次检测完成之前，还不知道有没有启用的 Agent：这时不写「没有启用的 Agent」，冷启动时才不会闪一下错误的状态。
+ * 重新检测时保留上一次的结果（Windows 环境总会被检测到）
+ */
+export function selectTargetsKnown(s: Pick<TargetState, "status" | "environments">): boolean {
+  return s.status === "ready" || s.environments.length > 0
+}
+
 export function selectAvailableEnvs(environments: Environment[], enabled?: { id: EnvId; enabled: boolean }[]): Environment[] {
   return environments.filter((e) => e.available && (enabled?.find((x) => x.id === e.id)?.enabled ?? true))
 }

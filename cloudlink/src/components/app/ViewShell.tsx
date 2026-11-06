@@ -66,8 +66,9 @@ export function ViewShell({
   useViewTitleFocus(titleRef, focusTitle)
 
   return (
-    <ScrollArea ref={rootRef} className="min-h-0 flex-1">
-      <div className="flex min-h-full flex-col gap-4 p-3">
+    // 内容容器是 flex 列并且至少一屏高，首次启动的空状态（Empty 是 flex-1）才能铺满可视高度
+    <ScrollArea ref={rootRef} className="min-h-0 flex-1" contentClassName="flex min-h-full flex-col">
+      <div className="flex flex-1 flex-col gap-4 p-3">
         <h1
           id="view-title"
           ref={titleRef}

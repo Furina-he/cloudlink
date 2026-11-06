@@ -259,11 +259,18 @@ export async function startSshTarget({ root, distro = "Ubuntu-24.04" }) {
     await run(keygenExe, ["-q", "-t", "ed25519", "-N", "", "-C", `cloudlink-test-${runId}`, "-f", identityFile])
     const publicKey = (await readFile(`${identityFile}.pub`, "utf8")).trim()
     await docker(["version", "--format", "{{.Server.Version}}"])
-    await docker([
-      "build", "--label", `${fixtureKey}=${fixtureName}`, "--tag", imageTag,
-      "--iidfile", `${wslDirectory}/image-id`, `${wslDirectory}/context`,
-    ], { timeout: 240_000 })
-    const imageId = (await readFile(join(directory, "image-id"), "utf8")).trim()
+    // The tag is a content hash of the build context. Reuse a labelled image from
+    // an earlier run: resolving the base image needs the registry even when cached.
+    const cached = await docker(["image", "inspect", imageTag], { allowFailure: true })
+    const cachedImage = cached.code === 0 && !cached.failure ? JSON.parse(cached.stdout)[0] : undefined
+    let imageId = cachedImage?.Config?.Labels?.[fixtureKey] === fixtureName ? cachedImage.Id : undefined
+    if (!imageId) {
+      await docker([
+        "build", "--label", `${fixtureKey}=${fixtureName}`, "--tag", imageTag,
+        "--iidfile", `${wslDirectory}/image-id`, `${wslDirectory}/context`,
+      ], { timeout: 240_000 })
+      imageId = (await readFile(join(directory, "image-id"), "utf8")).trim()
+    }
     if (!/^sha256:[0-9a-f]{64}$/u.test(imageId)) throw new Error("Docker returned an invalid image ID")
     const created = await docker([
       "container", "create", "--name", containerName,

@@ -53,4 +53,5 @@ pub struct SettingsPatch {
     pub data_dir: Option<String>,
     pub log_dir: Option<String>,
     pub ssh_include_asked: Option<Vec<EnvId>>,
+    pub auto_check_updates: Option<bool>,
 }

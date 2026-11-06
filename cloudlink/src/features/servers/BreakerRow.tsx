@@ -55,7 +55,7 @@ function NotesBadge({ assetId }: { assetId: string }) {
  * 打开按钮铺满左侧，文字叠在它上面但不拦截点击，状态旁边的修复按钮因此不会嵌套在按钮里
  */
 function RowShell({ asset, current, fresh, stateWords, children, menu }: { asset: Asset; current: boolean; fresh: boolean; stateWords: string; children: ReactNode; menu: ReactNode }) {
-  const { agents } = useAgentOptions()
+  const { known, agents } = useAgentOptions()
   const handle = handleOf(asset)
   return (
     <motion.div role="listitem" initial={fresh ? { opacity: 0, y: 4 } : false} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}>
@@ -84,7 +84,7 @@ function RowShell({ asset, current, fresh, stateWords, children, menu }: { asset
           </div>
           <div className="flex shrink-0 items-center gap-3">
             <ModeBreaker asset={asset} />
-            {agents.length > 0 ? <AgentPicker asset={asset} agents={agents} compact /> : <span className="text-xs text-muted-foreground">{copy.servers.noAgents}</span>}
+            {agents.length > 0 ? <AgentPicker asset={asset} agents={agents} compact /> : known ? <span className="text-xs text-muted-foreground">{copy.servers.noAgents}</span> : null}
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="w-auto min-w-44">{menu}</ContextMenuContent>

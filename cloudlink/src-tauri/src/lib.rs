@@ -19,6 +19,7 @@ pub mod proc;
 pub mod secret;
 pub mod ssh;
 pub mod time;
+pub mod update;
 
 #[cfg(test)]
 pub mod testkit;
@@ -50,6 +51,8 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // F-406：只在 Rust 侧调用，capability 不给前端授予 updater:* 权限
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_log::Builder::default()
                 .targets([
@@ -68,7 +71,13 @@ pub fn run() {
         )
         .setup(move |app| {
             let events = Arc::new(ipc::TauriEvents(app.handle().clone()));
-            app.manage(ipc::Backend::open(paths, events)?);
+            let isolated = paths.isolated;
+            let backend = ipc::Backend::open(paths, events)?;
+            backend.start_updates(
+                &app.package_info().version.to_string(),
+                Arc::new(update::PluginSource::new(app.handle().clone(), isolated)),
+            );
+            app.manage(backend);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -122,6 +131,9 @@ pub fn run() {
             ipc::commands::update_settings,
             ipc::commands::get_probe_script,
             ipc::commands::reset_data,
+            ipc::commands::get_update_status,
+            ipc::commands::install_update,
+            ipc::commands::cancel_update,
         ])
         .build(context)
         .expect("error while running CloudLink");

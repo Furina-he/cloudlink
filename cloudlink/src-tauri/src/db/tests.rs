@@ -172,3 +172,30 @@ fn activity_is_paged_filtered_and_pruned() {
     assert_eq!(conn.len(), 1);
     assert_eq!(db.prune_before("2026-10-21T12:00:00Z").unwrap(), 2);
 }
+
+#[test]
+fn migration_v4_turns_update_checks_on_for_older_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("data.db");
+    let db = Db::open(&path).unwrap();
+    let mut older = serde_json::to_value(Settings::defaults("D:/data".into(), "D:/data/logs".into())).unwrap();
+    older.as_object_mut().unwrap().remove("autoCheckUpdates");
+    db.put_kv(KEY_SETTINGS, &older).unwrap();
+    db.conn.execute("UPDATE schema_version SET version = 3", []).unwrap();
+    drop(db);
+
+    let db = Db::open(&path).unwrap();
+    assert_eq!(db.schema_version().unwrap(), SCHEMA_VERSION);
+    let stored: serde_json::Value = db.get_kv(KEY_SETTINGS).unwrap().unwrap();
+    assert_eq!(stored["autoCheckUpdates"], serde_json::Value::Bool(true));
+    assert!(db.get_settings().unwrap().unwrap().auto_check_updates);
+
+    // 用户关掉的开关在迁移后保持关闭
+    let mut off = db.get_settings().unwrap().unwrap();
+    off.auto_check_updates = false;
+    db.put_settings(&off).unwrap();
+    db.conn.execute("UPDATE schema_version SET version = 3", []).unwrap();
+    drop(db);
+    let db = Db::open(&path).unwrap();
+    assert!(!db.get_settings().unwrap().unwrap().auto_check_updates);
+}

@@ -4,9 +4,9 @@ import { useMemo } from "react"
 import type { AgentId, EnvId, Target } from "@/bindings"
 import { copy } from "@/lib/copy"
 import { sortEnvs } from "@/features/servers/serverForm"
-import { useSettingsStore } from "@/stores/settings"
+import { selectSettingsKnown, useSettingsStore } from "@/stores/settings"
 import { compileKey } from "@/stores/skills"
-import { selectAvailableEnvs, useTargetStore } from "@/stores/targets"
+import { selectAvailableEnvs, selectTargetsKnown, useTargetStore } from "@/stores/targets"
 
 /** 内置目标在前（Claude Code、Codex），自定义目录在后 */
 export const AGENT_ORDER: Record<AgentId, number> = { "claude-code": 0, universal: 1, custom: 2 }
@@ -73,8 +73,11 @@ export function useAgentOptions() {
   const targets = useTargetStore((s) => s.targets)
   const environments = useTargetStore((s) => s.environments)
   const enabled = useSettingsStore((s) => s.settings?.environments)
+  const targetsKnown = useTargetStore(selectTargetsKnown)
+  const settingsKnown = useSettingsStore(selectSettingsKnown)
+  const known = targetsKnown && settingsKnown
   return useMemo(() => {
     const envIds = selectAvailableEnvs(environments, enabled).map((e) => e.id)
-    return { agents: selectAgents(targets, envIds), compileTargets: selectCompileTargets(targets, envIds) }
-  }, [targets, environments, enabled])
+    return { known, agents: selectAgents(targets, envIds), compileTargets: selectCompileTargets(targets, envIds) }
+  }, [known, targets, environments, enabled])
 }

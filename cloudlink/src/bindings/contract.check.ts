@@ -101,4 +101,6 @@ export type ContractCheck = [
   Assert<Same<H.SshHost, GEnv.SshHost>>,
   Assert<Same<H.SshHostList, GEnv.SshHostList>>,
   Assert<Same<H.Target, GDelivery.Target>>,
+  Assert<Same<H.UpdateState, GMisc.UpdateState>>,
+  Assert<Same<H.UpdateStatus, GMisc.UpdateStatus>>,
 ]

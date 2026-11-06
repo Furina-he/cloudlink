@@ -1,5 +1,5 @@
 import { CircleXIcon, FileInputIcon } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 
 import type { EnvId, IpcError } from "@/bindings"
@@ -42,6 +42,7 @@ const DASH = <span className="text-muted-foreground">—</span>
 
 /** 从 ssh config 导入（PRD 6.8、F-102）。挂在 App 上，命令面板在任何视图都能打开 */
 export function ImportDialog() {
+  const popupRef = useRef<HTMLDivElement>(null)
   const open = useUIStore((s) => s.importOpen)
   const { list, status, error } = useTargetStore(
     useShallow((s) => ({ list: s.sshHosts, status: s.sshHostsStatus, error: s.sshHostsError }))
@@ -194,7 +195,13 @@ export function ImportDialog() {
         else close()
       }}
     >
-      <DialogContent className="grid-cols-[minmax(0,1fr)] sm:max-w-3xl" closeLabel={copy.common.close}>
+      <DialogContent
+        ref={popupRef}
+        // 主机列表是打开后才扫描出来的：列表已在时焦点落在「全选」上，还在扫描时先落在弹窗本身，不落到底部的开关上
+        initialFocus={() => popupRef.current?.querySelector<HTMLElement>("[data-slot=checkbox]") ?? popupRef.current}
+        className="grid-cols-[minmax(0,1fr)] sm:max-w-3xl"
+        closeLabel={copy.common.close}
+      >
         <DialogHeader>
           <DialogTitle>{copy.importDialog.title}</DialogTitle>
           <DialogDescription className="flex flex-wrap gap-x-4 gap-y-1">

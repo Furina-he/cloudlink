@@ -89,6 +89,11 @@ const MIGRATIONS: &[&str] = &[
     p4b::MIGRATION,
     // v3: recoverable inbox/log claims and bounded note ingestion.
     p4c::MIGRATION,
+    // v4: F-406 update checks default to on for settings saved before they existed.
+    r#"
+    UPDATE settings SET json = json_set(json, '$.autoCheckUpdates', json('true'))
+    WHERE key = 'settings' AND json_type(json, '$.autoCheckUpdates') IS NULL;
+    "#,
 ];
 
 pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;

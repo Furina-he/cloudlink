@@ -6,15 +6,23 @@ import { useNotesStore } from "./notes"
 import { useSettingsStore } from "./settings"
 import { useSkillStore } from "./skills"
 import { useTargetStore } from "./targets"
+import { useUpdateStore } from "./update"
 
 export function loadAll() {
-  void useTargetStore.getState().detect()
+  // 资源列表先读，首屏不等后端的启动检测（冷启动）。检测要等后端启动时的第一次对账做完才返回，
+  // 对账会更新导入的服务器在哪些运行环境的 ssh config 里，所以之后再静默刷新一次资源
+  void useTargetStore
+    .getState()
+    .detect()
+    .then(() => useAssetStore.getState().refresh())
   void useAssetStore.getState().load()
   void useSkillStore.getState().load()
   void useDeliveryStore.getState().load()
   void useGuardStore.getState().load()
   void useNotesStore.getState().load()
   void useSettingsStore.getState().load()
+  // 检查更新失败不打扰用户（F-406），不计入下面的加载错误
+  void useUpdateStore.getState().load()
 }
 
 /** 加载失败的数据源里排第一个的错误（PRD 6.10），App 顶部的 Alert 用它 */

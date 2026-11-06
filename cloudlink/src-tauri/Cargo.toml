@@ -48,3 +48,4 @@ dirs = "7"
 # docs/CC-SWITCH-EXPERIENCE.md 3.1、3.2：密码内存零化；子进程输出重定向到匿名临时文件
 zeroize = "1"
 tempfile = "3"
+tauri-plugin-updater = "2"

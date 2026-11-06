@@ -16,18 +16,42 @@ use crate::model::connection::ConnectionTestRequest;
 use crate::model::delivery::{AddCustomTargetRequest, Delivery, Inclusion, Target};
 use crate::model::env::{EnvId, Environment, SshConfigStatus, SshHostList};
 use crate::model::guard::{GuardRules, GuardStatus, Operation, OperationQuery};
-use crate::model::misc::{ActivityItem, ActivityQuery, DeleteResult, SaveResult, Settings};
+use crate::model::misc::{ActivityItem, ActivityQuery, DeleteResult, SaveResult, Settings, UpdateStatus};
 use crate::model::notes::AgentNote;
 
+/// 冷启动时先等后台的启动工作做完（`startup.rs`）：环境检测、Agent 目标、第一次对账和修改锁都在它后面。
+/// 等待发生在阻塞线程池里，不占 async 运行时的工作线程
 async fn blocking<T, F>(state: State<'_, Arc<Backend>>, work: F) -> Result<T>
 where
     T: Send + 'static,
     F: FnOnce(&Arc<Backend>) -> Result<T> + Send + 'static,
 {
+    run(state, true, work).await
+}
+
+/// 首屏要用、只读数据库或静态内容的命令不等启动工作；它们不碰运行环境，也不拿修改锁
+async fn early<T, F>(state: State<'_, Arc<Backend>>, work: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&Arc<Backend>) -> Result<T> + Send + 'static,
+{
+    run(state, false, work).await
+}
+
+async fn run<T, F>(state: State<'_, Arc<Backend>>, wait: bool, work: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&Arc<Backend>) -> Result<T> + Send + 'static,
+{
     let backend = Arc::clone(state.inner());
-    tokio::task::spawn_blocking(move || work(&backend))
-        .await
-        .map_err(|_| AppError::internal("IPC background task unavailable"))?
+    tokio::task::spawn_blocking(move || {
+        if wait {
+            backend.wait_for_startup();
+        }
+        work(&backend)
+    })
+    .await
+    .map_err(|_| AppError::internal("IPC background task unavailable"))?
 }
 
 #[derive(Serialize)]
@@ -59,7 +83,7 @@ pub async fn list_ssh_hosts(state: State<'_, Arc<Backend>>, env_id: Option<EnvId
 
 #[tauri::command]
 pub async fn list_assets(state: State<'_, Arc<Backend>>) -> Result<Vec<Asset>> {
-    blocking(state, |backend| backend.list_assets()).await
+    early(state, |backend| backend.list_assets()).await
 }
 
 #[tauri::command]
@@ -209,7 +233,7 @@ pub async fn undo_probe(state: State<'_, Arc<Backend>>, run_id: String) -> Resul
 
 #[tauri::command]
 pub async fn get_skill_config(state: State<'_, Arc<Backend>>) -> Result<SkillConfig> {
-    blocking(state, |backend| backend.get_skill_config()).await
+    early(state, |backend| backend.get_skill_config()).await
 }
 
 #[tauri::command]
@@ -289,7 +313,7 @@ pub async fn update_settings(state: State<'_, Arc<Backend>>, patch: SettingsPatc
 
 #[tauri::command]
 pub async fn get_probe_script(state: State<'_, Arc<Backend>>) -> Result<&'static str> {
-    blocking(state, |_| Ok(crate::probe::SCRIPT)).await
+    early(state, |_| Ok(crate::probe::SCRIPT)).await
 }
 
 #[tauri::command]
@@ -309,7 +333,7 @@ pub async fn remove_guard(state: State<'_, Arc<Backend>>, env_id: EnvId) -> Resu
 
 #[tauri::command]
 pub async fn get_guard_rules(state: State<'_, Arc<Backend>>) -> Result<GuardRules> {
-    blocking(state, |_| Ok(serde_json::from_value(guard_rules::rules())?)).await
+    early(state, |_| Ok(serde_json::from_value(guard_rules::rules())?)).await
 }
 
 #[tauri::command]
@@ -335,4 +359,23 @@ pub async fn dismiss_notes(state: State<'_, Arc<Backend>>, ids: Vec<String>) -> 
 #[tauri::command]
 pub async fn reset_data(state: State<'_, Arc<Backend>>) -> Result<()> {
     blocking(state, |backend| backend.reset_data()).await
+}
+
+#[tauri::command]
+pub async fn get_update_status(state: State<'_, Arc<Backend>>) -> Result<UpdateStatus> {
+    early(state, |backend| Ok(backend.update_status())).await
+}
+
+#[tauri::command]
+pub async fn install_update(state: State<'_, Arc<Backend>>) -> Result<()> {
+    blocking(state, |backend| backend.install_update()).await
+}
+
+#[tauri::command]
+pub async fn cancel_update(state: State<'_, Arc<Backend>>) -> Result<()> {
+    early(state, |backend| {
+        backend.cancel_update();
+        Ok(())
+    })
+    .await
 }

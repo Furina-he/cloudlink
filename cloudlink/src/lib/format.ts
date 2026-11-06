@@ -64,6 +64,26 @@ export function formatNumber(n: number): string {
   return integer.format(n)
 }
 
+/** 发布日期：「2026-11-20」（本地时区）；无法解析时为 null */
+export function formatDate(iso: string): string | null {
+  return Number.isNaN(new Date(iso).getTime()) ? null : dayKey(iso)
+}
+
+const oneDecimal = new Intl.NumberFormat(LOCALE, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+const BYTE_UNITS = ["KB", "MB", "GB"]
+
+/** 下载量：「512 B」「3.2 MB」，按 1024 进位，与 Windows 资源管理器一致 */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${integer.format(bytes)} B`
+  let value = bytes / 1024
+  let unit = 0
+  while (value >= 1024 && unit < BYTE_UNITS.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${oneDecimal.format(value)} ${BYTE_UNITS[unit]}`
+}
+
 /** 耗时：「0.8s」「120ms」 */
 export function formatDuration(ms: number): string {
   return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`

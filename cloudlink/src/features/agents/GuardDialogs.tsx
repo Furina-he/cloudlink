@@ -1,5 +1,5 @@
 import { ShieldCheckIcon, ShieldOffIcon } from "lucide-react"
-import { lazy, Suspense, useState } from "react"
+import { lazy, Suspense, useRef, useState } from "react"
 import { create } from "zustand"
 
 import type { EnvId } from "@/bindings"
@@ -60,6 +60,7 @@ export function GuardDialogs() {
   const shown = pending ?? last
   const status = useGuardStore((s) => (shown ? s.statusByEnv[shown.envId] : undefined))
   const [busy, setBusy] = useState(false)
+  const cancelRef = useRef<HTMLButtonElement>(null)
   const close = () => useGuardDialog.getState().set(null)
   const install = shown?.kind === "install"
   const env = shown ? copy.env.long(shown.envId) : ""
@@ -81,7 +82,11 @@ export function GuardDialogs() {
 
   return (
     <AlertDialog open={!!pending} onOpenChange={(open) => !open && !busy && close()}>
-      <AlertDialogContent className={cn(install && "data-[size=default]:sm:max-w-lg")}>
+      {/*
+        初始焦点放在「取消」，和其他确认对话框一致。默认会落在第一个可聚焦的 JSON 代码块上，
+        而高亮版本懒加载完成时会替换掉它，焦点就掉到了页面上
+      */}
+      <AlertDialogContent initialFocus={cancelRef} className={cn(install && "data-[size=default]:sm:max-w-lg")}>
         <AlertDialogHeader>
           <AlertDialogMedia>{install ? <ShieldCheckIcon /> : <ShieldOffIcon className="text-destructive" />}</AlertDialogMedia>
           <AlertDialogTitle>{install ? copy.guard.installTitle(env) : copy.guard.removeTitle(env)}</AlertDialogTitle>
@@ -102,7 +107,9 @@ export function GuardDialogs() {
           </div>
         )}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={busy}>{copy.common.cancel}</AlertDialogCancel>
+          <AlertDialogCancel ref={cancelRef} disabled={busy}>
+            {copy.common.cancel}
+          </AlertDialogCancel>
           <AlertDialogAction variant={install ? "default" : "destructive"} disabled={busy} onClick={() => void confirm()}>
             {busy && <Spinner data-icon="inline-start" aria-hidden />}
             {install ? copy.guard.installConfirm : copy.guard.removeConfirm}

@@ -3,15 +3,18 @@ import { useTheme } from "@/components/theme-provider"
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet, FieldTitle } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { Switch } from "@/components/ui/switch"
 import { copy } from "@/lib/copy"
+import { useUpdateStore } from "@/stores/update"
 import { Section, update } from "./Section"
 
 const THEMES = ["system", "light", "dark"] as const
 const MODES: Mode[] = ["read-only", "standard"]
 
-/** 通用（PRD 6.7）：主题、编译产物语言、新建非生产服务器的默认档位 */
+/** 通用（PRD 6.7）：主题、编译产物语言、新建非生产服务器的默认档位、自动检查更新和当前版本（F-406） */
 export function GeneralSection({ settings }: { settings: Settings }) {
   const { theme, setTheme } = useTheme()
+  const version = useUpdateStore((s) => s.status?.currentVersion ?? null)
   return (
     <Section id="general" title={copy.settings.section.general}>
       <FieldGroup className="gap-6">
@@ -72,6 +75,17 @@ export function GeneralSection({ settings }: { settings: Settings }) {
             ))}
           </RadioGroup>
         </FieldSet>
+        {/* 不放「立即检查」：关闭后重新打开开关时，后端立即检查一次（PRD 6.13） */}
+        <div className="flex flex-col gap-2">
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldLabel htmlFor="auto-check-updates">{copy.settings.autoCheckUpdates}</FieldLabel>
+              <FieldDescription>{copy.settings.autoCheckUpdatesHint}</FieldDescription>
+            </FieldContent>
+            <Switch id="auto-check-updates" checked={settings.autoCheckUpdates} onCheckedChange={(on) => update({ autoCheckUpdates: on })} />
+          </Field>
+          {version && <p className="text-sm text-muted-foreground tabular-nums">{copy.settings.currentVersion(version)}</p>}
+        </div>
       </FieldGroup>
     </Section>
   )

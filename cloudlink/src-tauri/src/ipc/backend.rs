@@ -11,6 +11,7 @@ use tauri::Emitter;
 
 use super::jobs::{ConnectionJobs, ProbeJobs};
 use super::requests::{CliRequest, SettingsPatch};
+use super::startup::{Start, StartupEnvironments, StartupGate};
 use crate::cli;
 use crate::compile::{self, CompileInput};
 use crate::db::Db;
@@ -60,9 +61,45 @@ pub struct Backend {
     pub(super) credential_writes: AtomicUsize,
     /// Serializes only vault writes/cleanup; the UI mutation and database locks are released for OS calls.
     pub(super) vault_writes: Mutex<()>,
+    /// F-406：检测更新与安装
+    pub(super) updates: Arc<crate::update::Updates>,
+    /// 进行中的 CLI 检测与范围拉取（F-406 AC4 的忙碌判定）
+    pub(super) cli_runs: Mutex<Vec<CliProvider>>,
+    /// 冷启动：启动工作做完之前 IPC 命令在这里等（见 `startup.rs`）
+    pub(super) startup: StartupGate,
+    pub(super) startup_environments: Mutex<Option<StartupEnvironments>>,
+}
+
+/// 登记一次进行中的 CLI 检测，结束（含出错返回）时自动注销
+pub(super) struct CliRun<'a> {
+    runs: &'a Mutex<Vec<CliProvider>>,
+    provider: CliProvider,
 }
 
 impl Backend {
+    pub(super) fn cli_run(&self, provider: CliProvider) -> CliRun<'_> {
+        if let Ok(mut runs) = self.cli_runs.lock() {
+            runs.push(provider);
+        }
+        CliRun {
+            runs: &self.cli_runs,
+            provider,
+        }
+    }
+}
+
+impl Drop for CliRun<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut runs) = self.runs.lock()
+            && let Some(index) = runs.iter().position(|p| *p == self.provider)
+        {
+            runs.remove(index);
+        }
+    }
+}
+
+impl Backend {
+    /// 桌面应用的 setup 调用：打开数据库就返回，其余启动工作在后台线程里做（见 `startup.rs`）
     pub fn open(paths: Paths, events: Arc<dyn EventSink>) -> Result<Arc<Self>> {
         let isolated = paths.isolated || cfg!(test);
         let system: Arc<dyn System> = if isolated {
@@ -89,7 +126,7 @@ impl Backend {
         } else {
             Arc::new(crate::guard::ProcessSelfTest)
         };
-        let backend = Self::with_guard_services(
+        let backend = Self::assemble(
             paths,
             system,
             credentials,
@@ -97,8 +134,11 @@ impl Backend {
             events,
             guard_test,
         )?;
-        if !cfg!(test) && !backend.database()?.reset_pending()? && backend.prepare_guard_binary().is_err() {
-            log::warn!("CloudLink guard binary is unavailable; guard health will report it");
+        if cfg!(test) {
+            // Unit tests never copy the packaged guard helper and finish starting before they continue.
+            backend.start(Start::Inline)?;
+        } else {
+            backend.start_in_background();
         }
         Ok(backend)
     }
@@ -118,7 +158,22 @@ impl Backend {
         Self::with_guard_services(paths, system, credentials, cli, events, guard_test)
     }
 
+    /// 构造后同步做完启动工作再返回（单元测试用）
     pub fn with_guard_services(
+        paths: Paths,
+        system: Arc<dyn System>,
+        credentials: Arc<dyn CredentialStore>,
+        cli: cli::Service,
+        events: Arc<dyn EventSink>,
+        guard_test: Arc<dyn crate::guard::SelfTest>,
+    ) -> Result<Arc<Self>> {
+        let backend = Self::assemble(paths, system, credentials, cli, events, guard_test)?;
+        backend.start(Start::Inline)?;
+        Ok(backend)
+    }
+
+    /// 打开数据库、建好状态；闸门关着，启动工作由调用方接着做
+    pub(super) fn assemble(
         paths: Paths,
         system: Arc<dyn System>,
         credentials: Arc<dyn CredentialStore>,
@@ -147,6 +202,13 @@ impl Backend {
                 paths.log_dir().to_string_lossy().into_owned(),
             ))?;
         }
+        let auto_check_updates = db.get_settings()?.is_some_and(|settings| settings.auto_check_updates);
+        let updates = Arc::new(crate::update::Updates::new(
+            env!("CARGO_PKG_VERSION"),
+            Arc::clone(&events),
+            auto_check_updates,
+            std::time::Instant::now(),
+        ));
         let backend = Arc::new(Self {
             paths,
             db: Mutex::new(db),
@@ -163,21 +225,11 @@ impl Backend {
             reset_epoch: AtomicU64::new(0),
             credential_writes: AtomicUsize::new(0),
             vault_writes: Mutex::new(()),
+            updates,
+            cli_runs: Mutex::new(Vec::new()),
+            startup: StartupGate::closed(),
+            startup_environments: Mutex::new(None),
         });
-        if backend.database()?.reset_pending()? {
-            // A previous reset failed or was interrupted. Do not recreate copies or policy from old data.
-            *backend
-                .envs
-                .lock()
-                .map_err(|_| AppError::internal("environment state unavailable"))? =
-                env::detect(&backend.paths, backend.system.as_ref());
-        } else {
-            backend.detect_environments()?;
-            backend.retry_credential_cleanup();
-            if backend.refresh_feedback().is_err() {
-                log::warn!("CloudLink feedback import remains pending");
-            }
-        }
         Ok(backend)
     }
 
@@ -326,6 +378,15 @@ impl Backend {
 
     pub fn detect_environments(&self) -> Result<Vec<Environment>> {
         let _edit = self.edit()?;
+        // 前端加载时的第一次检测：启动线程刚做完一遍，直接用它的结果
+        if let Some(environments) = self.take_startup_environments() {
+            return Ok(environments);
+        }
+        self.detect_environments_locked()
+    }
+
+    /// Caller holds the mutation mutex.
+    pub(super) fn detect_environments_locked(&self) -> Result<Vec<Environment>> {
         let detected = env::detect(&self.paths, self.system.as_ref());
         let mut settings = self.get_settings()?;
         for env in &detected {
@@ -421,6 +482,7 @@ impl Backend {
 
     pub fn add_ssh_include(&self, env_id: &EnvId) -> Result<SshConfigStatus> {
         let _edit = self.edit()?;
+        self.forget_startup_environments();
         let env = self.context(env_id)?;
         let config = env.host_in_home(&[".ssh", "config"]);
         check_ancestors(&config)?;
@@ -709,6 +771,10 @@ impl Backend {
         if let Some(v) = patch.ssh_include_asked {
             settings.ssh_include_asked = v;
         }
+        let auto_check_updates = patch.auto_check_updates;
+        if let Some(v) = auto_check_updates {
+            settings.auto_check_updates = v;
+        }
         if let Some(v) = patch.environments {
             let envs = self.contexts(false)?;
             if v.iter().any(|s| !envs.iter().any(|e| e.id == s.id))
@@ -727,6 +793,10 @@ impl Backend {
             settings.environments = v;
         }
         self.database()?.put_settings(&settings)?;
+        if let Some(v) = auto_check_updates {
+            // F-406 AC6：打开时立即检查一次，关闭时立即停止并隐藏提醒
+            self.updates.set_enabled(v, std::time::Instant::now());
+        }
         self.publish_locked()?;
         Ok(settings)
     }
@@ -746,6 +816,7 @@ impl Backend {
     }
 
     pub fn detect_cli_environment(&self, req: CliRequest) -> Result<BTreeMap<EnvId, CliEnvState>> {
+        let _run = self.cli_run(req.provider);
         let epoch = self.reset_epoch.load(Ordering::SeqCst);
         drop(self.edit_at(epoch)?);
         let saved = req
@@ -783,6 +854,7 @@ impl Backend {
     }
 
     pub fn refresh_cli_scope(&self, req: CliRequest) -> Result<Vec<CliScopeItem>> {
+        let _run = self.cli_run(req.provider);
         let epoch = self.reset_epoch.load(Ordering::SeqCst);
         drop(self.edit_at(epoch)?);
         let saved = req

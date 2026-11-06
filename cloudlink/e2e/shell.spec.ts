@@ -108,4 +108,112 @@ test.describe("应用外壳", () => {
     expect(clipped).toEqual([])
     await shot(page, "shell-03-760")
   })
+
+  test("减少动态效果：弹层不缩放、不滑动，只淡入；没开时照常", async ({ browser }) => {
+    // 取弹层上 tw-animate-css 用的缩放变量和 Sheet 的位移；动画进行中读也一样，变量在元素上而不是关键帧里
+    const motionOf = async (reducedMotion: "reduce" | "no-preference") => {
+      const context = await browser.newContext({ reducedMotion, viewport: { width: 900, height: 640 } })
+      const page = await context.newPage()
+      await ready(page)
+      await page.keyboard.press("Control+n")
+      const dialog = page.locator("[data-slot=dialog-content]")
+      await expect(dialog).toBeVisible()
+      const dialogScale = await dialog.evaluate((el) => getComputedStyle(el).getPropertyValue("--tw-enter-scale").trim())
+      await page.keyboard.press("Escape")
+      await expect(dialog).toHaveCount(0)
+      await page.keyboard.press("Control+Backslash")
+      const sheet = page.locator("[data-slot=sheet-content]")
+      await expect(sheet).toBeVisible()
+      // 开着的 Sheet 本来就没有位移，要看的是进场时的样式：关掉过渡、加上进场标记再读，读到的就是目标值
+      const sheetShift = await sheet.evaluate((el) => {
+        el.style.transition = "none"
+        el.setAttribute("data-starting-style", "")
+        const shift = getComputedStyle(el).translate
+        el.removeAttribute("data-starting-style")
+        el.style.transition = ""
+        return shift
+      })
+      await context.close()
+      return { dialogScale, sheetShift }
+    }
+    expect(await motionOf("reduce")).toEqual({ dialogScale: "1", sheetShift: "none" })
+    const normal = await motionOf("no-preference")
+    expect(normal.dialogScale).not.toBe("1")
+    expect(normal.sheetShift).not.toBe("none")
+  })
+})
+
+test.describe("键盘焦点（P6 无障碍复查）", () => {
+  test("Ctrl+N 打开添加弹窗时焦点在第一张类型卡片上，不经过带 Tooltip 的关闭按钮，按一次 Esc 就关闭", async ({ page }) => {
+    await ready(page)
+    await page.keyboard.press("Control+n")
+    const dialog = page.getByRole("dialog", { name: "添加资源" })
+    await expect(dialog.getByRole("button", { name: /^SSH 服务器/ })).toBeFocused()
+    await expect(page.locator("[data-slot=tooltip-content]")).toHaveCount(0)
+    await page.keyboard.press("Escape")
+    await expect(dialog).toHaveCount(0)
+  })
+
+  test("从「添加服务器」按钮打开时焦点直接在地址上，关闭后回到按钮", async ({ page }) => {
+    await ready(page)
+    const add = page.getByRole("button", { name: "添加服务器" })
+    await add.focus()
+    await page.keyboard.press("Enter")
+    await expect(page.getByRole("dialog").getByLabel("地址")).toBeFocused()
+    await expect(page.locator("[data-slot=tooltip-content]")).toHaveCount(0)
+    await page.keyboard.press("Escape")
+    await expect(page.getByRole("dialog")).toHaveCount(0)
+    await expect(add).toBeFocused()
+  })
+
+  test("详情的 Tab 面板本身不是 Tab 停靠点：焦点不会落在看不见焦点环的面板上", async ({ page }) => {
+    await ready(page)
+    await row(page, "hk-edge").focus()
+    await page.keyboard.press("Enter")
+    await expect(detailTitle(page)).toHaveText("hk-edge")
+    await page.getByRole("tab", { name: "画像与规则" }).focus()
+    // 内容能滚动，先经过带焦点环的滚动区域，再到第一个字段
+    await page.keyboard.press("Tab")
+    await expect(page.locator(":focus")).toHaveAttribute("data-slot", "scroll-area-viewport")
+    await page.keyboard.press("Tab")
+    await expect(page.getByRole("textbox", { name: "用途", exact: true })).toBeFocused()
+  })
+
+  test("护栏规则加载完才变长，仍然能用键盘滚动：滚动区域进入 Tab 序列，PageDown 能翻页", async ({ page }) => {
+    await ready(page)
+    await page.keyboard.press("Control+2")
+    await page.getByRole("button", { name: "查看规则" }).click()
+    const sheet = page.getByRole("dialog", { name: "护栏规则" })
+    await expect(sheet.getByText("只读巡检：只放行这些命令")).toBeVisible()
+    const viewport = sheet.locator("[data-slot=scroll-area-viewport]")
+    await expect(viewport).toHaveAttribute("tabindex", "0")
+    await page.keyboard.press("Tab")
+    await expect(viewport).toBeFocused()
+    await page.keyboard.press("PageDown")
+    await expect.poll(() => viewport.evaluate((el) => el.scrollTop)).toBeGreaterThan(100)
+  })
+
+  test("安装护栏的确认框焦点停在「取消」上，代码块的高亮版本加载完也不会把焦点弄丢", async ({ page }) => {
+    await ready(page)
+    await page.keyboard.press("Control+2")
+    await page.getByRole("button", { name: /^安装：/ }).first().focus()
+    await page.keyboard.press("Enter")
+    const confirm = page.getByRole("alertdialog")
+    await expect(confirm.getByRole("button", { name: "取消" })).toBeFocused()
+    // 等高亮版本替换掉纯文本版本以后，焦点仍在对话框里
+    await expect(confirm.locator("[data-slot=code-block-content] span[style]").first()).toBeAttached()
+    await expect(confirm.getByRole("button", { name: "取消" })).toBeFocused()
+  })
+
+  test("导入对话框打开时焦点不落在底部的开关上；Tab 先到「全选」", async ({ page }) => {
+    await ready(page)
+    await page.keyboard.press("Control+k")
+    await page.keyboard.type("从 ssh config 导入")
+    await page.keyboard.press("Enter")
+    const dialog = page.getByRole("dialog", { name: "从 ssh config 导入主机" })
+    await expect(dialog.getByRole("checkbox", { name: "全选" })).toBeVisible()
+    await expect(dialog.getByRole("switch")).not.toBeFocused()
+    await page.keyboard.press("Tab")
+    await expect(dialog.getByRole("checkbox", { name: "全选" })).toBeFocused()
+  })
 })

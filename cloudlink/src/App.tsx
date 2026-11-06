@@ -4,6 +4,7 @@ import { useHotkeys } from "react-hotkeys-hook"
 
 import { AppHeader } from "@/components/app/AppHeader"
 import { CommandMenu } from "@/components/app/CommandMenu"
+import { UpdateDialog } from "@/components/app/UpdateDialog"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { AgentsView } from "@/features/agents/AgentsView"
@@ -142,6 +143,7 @@ export function App() {
       <HostKeyDialog />
       <ServerActionDialogs />
       <GuardDialogs />
+      <UpdateDialog />
     </div>
   )
 }

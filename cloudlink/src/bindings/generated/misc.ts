@@ -5,9 +5,9 @@ import type { EnvId } from "./env";
 
 export type ActivityItem = { id: string, kind: ActivityKind, at: string, assetId?: string, messageId: ActivityMessageId, params?: Record<string, string | number>, durationMs?: number, detail?: string, ok: boolean, };
 
-export type ActivityKind = "connection" | "probe" | "compile" | "deliver" | "remove" | "repair" | "ssh-config" | "guard" | "mode" | "cli" | "note" | "agent-op";
+export type ActivityKind = "connection" | "probe" | "compile" | "deliver" | "remove" | "repair" | "ssh-config" | "guard" | "mode" | "cli" | "note" | "agent-op" | "update";
 
-export type ActivityMessageId = "test-ok" | "test-failed" | "probe-updated" | "probe-held" | "probe-no-changes" | "probe-failed" | "probe-undone" | "compile-ok" | "compile-blocked" | "deliver-ok" | "remove-ok" | "repair-ok" | "ssh-config-written" | "ssh-include-added" | "guard-installed" | "guard-removed" | "mode-changed" | "cli-detected" | "cli-scope-updated" | "notes-merged" | "notes-dismissed" | "agent-op-allowed" | "agent-op-denied";
+export type ActivityMessageId = "test-ok" | "test-failed" | "probe-updated" | "probe-held" | "probe-no-changes" | "probe-failed" | "probe-undone" | "compile-ok" | "compile-blocked" | "deliver-ok" | "remove-ok" | "repair-ok" | "ssh-config-written" | "ssh-include-added" | "guard-installed" | "guard-removed" | "mode-changed" | "cli-detected" | "cli-scope-updated" | "notes-merged" | "notes-dismissed" | "agent-op-allowed" | "agent-op-denied" | "update-installing";
 
 export type ActivityQuery = { before?: string, limit: number, kinds?: Array<ActivityKind>, assetId?: string, };
 
@@ -24,7 +24,7 @@ export type EnvSetting = { id: EnvId, enabled: boolean, };
 
 export type IpcError = { id: IpcErrorId, params?: Record<string, string | number>, };
 
-export type IpcErrorId = "not-found" | "alias-taken" | "alias-conflict" | "cannot-distribute" | "password-missing" | "password-target-changed" | "connection-failed" | "settings-invalid" | "interop-disabled" | "target-exists" | "source-missing" | "compile-blocked" | "cli-account-unavailable" | "cli-scope-permission" | "cli-scope-failed" | "cli-command-unsupported" | "terminal-command-invalid" | "note-has-secret" | "reset-incomplete" | "internal";
+export type IpcErrorId = "not-found" | "alias-taken" | "alias-conflict" | "cannot-distribute" | "password-missing" | "password-target-changed" | "connection-failed" | "settings-invalid" | "interop-disabled" | "target-exists" | "source-missing" | "compile-blocked" | "cli-account-unavailable" | "cli-scope-permission" | "cli-scope-failed" | "cli-command-unsupported" | "terminal-command-invalid" | "note-has-secret" | "reset-incomplete" | "update-busy" | "update-download-failed" | "update-signature-invalid" | "update-install-failed" | "internal";
 
 export type OutputLanguage = "en";
 
@@ -35,6 +35,28 @@ export type ParamValue = string | number;
 
 export type SaveResult = { asset: Asset, statuses: Array<CompileStatus>, };
 
-export type Settings = { theme: Theme, outputLanguage: OutputLanguage, environments: Array<EnvSetting>, bodyLineLimit: number, writeSnapshotTime: boolean, defaultMode: Mode, probeTimeoutSec: number, windowsSshPath: string, dataDir: string, logDir: string, sshIncludeAsked: Array<EnvId>, };
+export type Settings = { theme: Theme, outputLanguage: OutputLanguage, environments: Array<EnvSetting>, bodyLineLimit: number, writeSnapshotTime: boolean, defaultMode: Mode, probeTimeoutSec: number, windowsSshPath: string, dataDir: string, logDir: string, sshIncludeAsked: Array<EnvId>, 
+/**
+ * F-406：定时检查更新，默认开启（旧数据由迁移 v4 补上）
+ */
+autoCheckUpdates: boolean, };
 
 export type Theme = "system" | "light" | "dark";
+
+/**
+ * F-406：idle 时界面不显示任何更新元素（没有新版本、尚未检查或已关闭检查）
+ */
+export type UpdateState = "idle" | "available" | "downloading" | "installing";
+
+/**
+ * `update://changed` 推送的完整快照（PRD 7.8）
+ */
+export type UpdateStatus = { state: UpdateState, currentVersion: string, version?: string, date?: string, 
+/**
+ * 来自 latest.json，不在签名范围内：界面按不可信纯文本展示
+ */
+notes?: string, downloaded?: number, total?: number, 
+/**
+ * 上次安装没有完成的原因，此时 state 回到 available
+ */
+error?: IpcError, };

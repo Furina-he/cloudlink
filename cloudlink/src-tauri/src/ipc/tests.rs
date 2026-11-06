@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use super::backend::{Backend, EventSink};
 use super::requests::{CliRequest, SettingsPatch};
+use super::startup::Start;
 use crate::cli::{self, Query, QueryOutput, Runner};
 use crate::compile::publish::{self, MARKER_FILE, SKILL_DIR};
 use crate::env::{self, EnvContext, FakeSystem};
@@ -137,6 +138,15 @@ impl Fixture {
     }
 
     fn with_runner(runner: Arc<dyn Runner>, wsl: bool) -> Self {
+        Self::build(runner, wsl, true)
+    }
+
+    /// 和桌面应用一样只打开数据库：启动工作留给测试自己调用 `start`
+    fn unstarted() -> Self {
+        Self::build(Arc::new(cli::EmptyRunner), false, false)
+    }
+
+    fn build(runner: Arc<dyn Runner>, wsl: bool, started: bool) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let paths = Paths::isolated_in(temp.path());
         fs::create_dir_all(&paths.data_dir).unwrap();
@@ -166,13 +176,24 @@ impl Fixture {
         }
         let credentials = Arc::new(MemoryCredentialStore::default());
         let events = Arc::new(RecordingEvents::default());
-        let backend = Backend::with_services(
-            paths.clone(),
-            system,
-            credentials.clone(),
-            cli::Service::new(runner),
-            events.clone(),
-        )
+        let backend = if started {
+            Backend::with_services(
+                paths.clone(),
+                system,
+                credentials.clone(),
+                cli::Service::new(runner),
+                events.clone(),
+            )
+        } else {
+            Backend::assemble(
+                paths.clone(),
+                system,
+                credentials.clone(),
+                cli::Service::new(runner),
+                events.clone(),
+                Arc::new(super::feedback::NoProcessSelfTest),
+            )
+        }
         .unwrap();
         Self {
             backend,
@@ -1755,4 +1776,80 @@ fn completed_save_and_delete_return_fresh_results_despite_credential_cleanup_fai
     fixture.backend.retry_credential_cleanup();
     assert!(fixture.pending().is_empty());
     assert!(fixture.value(&delete_key).is_none());
+}
+
+// ---- 冷启动（P6）：setup 只打开数据库，启动工作在后台线程里做，命令在闸门前等它 ----
+
+#[test]
+fn commands_wait_until_the_startup_work_has_detected_environments() {
+    let fixture = Fixture::unstarted();
+    let backend = Arc::clone(&fixture.backend);
+    // 首屏读的是数据库：不用等
+    assert!(backend.list_assets().unwrap().is_empty());
+    assert!(backend.list_targets().unwrap().is_empty());
+    let waiting = {
+        let backend = Arc::clone(&backend);
+        std::thread::spawn(move || {
+            backend.wait_for_startup();
+            (
+                backend.contexts(false).unwrap().len(),
+                backend.list_targets().unwrap().len(),
+            )
+        })
+    };
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    assert!(
+        !waiting.is_finished(),
+        "a gated command must not run before the startup work"
+    );
+    backend.start(Start::Inline).unwrap();
+    // Windows 一个环境；Claude Code 和 Codex 两个目标（夹具里有 .claude 和 .codex）
+    assert_eq!(waiting.join().unwrap(), (1, 2));
+}
+
+#[test]
+fn a_failed_startup_still_opens_the_gate() {
+    let fixture = Fixture::unstarted();
+    let backend = Arc::clone(&fixture.backend);
+    // 让启动工作拿修改锁时出错
+    let poison = Arc::clone(&backend);
+    let _ = std::thread::spawn(move || {
+        let _held = poison.mutation.lock().unwrap();
+        panic!("poison the mutation lock for this test");
+    })
+    .join();
+    assert!(backend.start(Start::Inline).is_err());
+    let waiting = {
+        let backend = Arc::clone(&backend);
+        std::thread::spawn(move || backend.wait_for_startup())
+    };
+    waiting.join().unwrap();
+}
+
+#[test]
+fn the_first_detection_after_a_desktop_start_reuses_the_startup_result() {
+    let fixture = Fixture::unstarted();
+    fixture.backend.start(Start::Desktop).unwrap();
+    fixture.events.clear();
+    let first = fixture.backend.detect_environments().unwrap();
+    assert!(
+        !fixture.events.contains("deliveries://changed"),
+        "the frontend's first detection must not repeat the startup reconcile"
+    );
+    let second = fixture.backend.detect_environments().unwrap();
+    assert!(
+        fixture.events.contains("deliveries://changed"),
+        "later detections check again"
+    );
+    assert_eq!(first, second);
+}
+
+#[test]
+fn adding_an_include_drops_the_startup_result() {
+    let fixture = Fixture::unstarted();
+    fixture.backend.start(Start::Desktop).unwrap();
+    fixture.backend.add_ssh_include(&EnvId::windows()).unwrap();
+    fixture.events.clear();
+    fixture.backend.detect_environments().unwrap();
+    assert!(fixture.events.contains("deliveries://changed"));
 }

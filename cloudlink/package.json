@@ -1,7 +1,7 @@
 {
   "name": "cloudlink",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,12 +9,14 @@
     "build": "tsc -b && vite build",
     "build:guard": "node scripts/build-guard.mjs",
     "build:desktop-test": "tauri build --debug --no-bundle --config e2e-desktop/tauri.conf.json -- --locked --jobs 1",
+    "build:update-test": "node scripts/build-update-test.mjs",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "e2e": "playwright test",
     "e2e:desktop": "node scripts/check-desktop.mjs",
+    "e2e:update": "node scripts/check-update.mjs",
     "tauri": "tauri",
     "preview": "vite preview"
   },

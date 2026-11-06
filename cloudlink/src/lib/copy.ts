@@ -31,6 +31,7 @@ import type { PanelTemplateId } from "@/lib/panelTemplates"
 import type { ValidationKey } from "@/lib/schemas"
 import type { CliEnvStatus, ConnState } from "@/stores/assets"
 import type { DetailTab, SettingsSection } from "@/stores/ui"
+import type { UpdateTask } from "@/stores/update"
 
 type Params = Record<string, string | number> | undefined
 type Msg = (p: Params) => string
@@ -130,6 +131,8 @@ const SSH_ERROR: Record<SshErrorId, { title: Msg; hint: Msg }> = {
 /** 活动和 IPC 错误里带着 ssh 错误 id（params.error） */
 const sshTitle = (p: Params) =>
   SSH_ERROR[(p?.error as SshErrorId) ?? "unknown"]?.title(p) ?? v(p, "error")
+const sshHint = (p: Params) =>
+  (SSH_ERROR[(p?.error as SshErrorId) ?? "unknown"] ?? SSH_ERROR.unknown).hint(p)
 
 /** 未列入的原因（F-303 AC2），参数里带 env */
 const INCLUSION_REASON: Record<InclusionReasonId, Msg> = {
@@ -400,7 +403,7 @@ export const copy = {
       "凭据库里没有这台服务器的密码，先填写密码并测试连接。",
     "password-target-changed": () =>
       "地址、端口、用户或认证方式改过了，已保存的密码不会发往新的目标。请重新填写密码再测试。",
-    "connection-failed": (p) => `${sshTitle(p)}。认证方式没有切换。`,
+    "connection-failed": (p) => `${sshTitle(p)}。认证方式没有切换。${sshHint(p)}`,
     "settings-invalid": (p) =>
       p?.path
         ? `${v(p, "path")} 不是合法的 JSON，CloudLink 没有修改它。修好后再试。`
@@ -409,12 +412,12 @@ export const copy = {
       `${envOf(p)} 的 WSL 互操作已关闭，请启用后重试。`,
     "target-exists": (p) =>
       p?.path
-        ? `${v(p, "path")} 与已有目标冲突，或无法确认归属。`
+        ? `${v(p, "path")} 与已有目标冲突，或无法确认归属。请换一个目录，或检查后重试。`
         : "目标目录存在冲突，或无法确认归属。请检查后重试。",
     "source-missing": (p) =>
       p?.path
-        ? `找不到 ${v(p, "path")}。`
-        : "找不到可用的源文件或最新编译产物。",
+        ? `找不到 ${v(p, "path")}。请检查路径后重试。`
+        : "找不到可用的源文件或最新编译产物。到 Agent 页点「检查全部」重新生成后再试；仍然失败请重新安装 CloudLink。",
     "compile-blocked": () =>
       "编译受阻，暂时无法创建或修复副本。请先处理检查结果中的错误。",
     "cli-account-unavailable": () =>
@@ -429,6 +432,14 @@ export const copy = {
       "这条命令不在支持的安装或登录指引中，请重新打开指引。",
     "note-has-secret": () => "这条笔记仍然疑似包含密钥。删掉密钥后再并入。",
     "reset-incomplete": () => "数据清理尚未完成，已暂停资源变更与分发。请在「设置 → 危险操作」中再次清空数据，重试剩余清理。",
+    "update-busy": (p) =>
+      `${updateWaitText(v(p, "task") as UpdateTask, v(p, "name"))}。`,
+    "update-download-failed": () =>
+      "下载安装包失败。请检查网络后重试，或到 GitHub Releases 手动下载。",
+    "update-signature-invalid": () =>
+      "安装包签名校验失败，已丢弃。请稍后重试，或到 GitHub Releases 手动下载。",
+    "update-install-failed": () =>
+      "无法启动安装程序。请重试，或到 GitHub Releases 手动下载。",
     internal: (p) =>
       p?.message
         ? `内部错误：${v(p, "message")}。打开日志目录查看详情。`
@@ -1310,7 +1321,7 @@ export const copy = {
       danger: "危险操作",
     } satisfies Record<SettingsSection, string>,
     sectionHint: {
-      general: "主题、产物语言、默认档位",
+      general: "主题、默认档位、检查更新",
       environments: "Windows 与 WSL 发行版",
       ssh: "托管配置与 Include",
       compile: "正文上限、快照时间",
@@ -1329,6 +1340,10 @@ export const copy = {
       "v0.1 固定输出英文：模板文字是英文，你填写的用途、红线、关系、约定和笔记原样输出。界面只有简体中文。",
     defaultMode: "新建非生产资源的默认档位",
     defaultModeHint: "生产资源新建时固定为只读巡检。",
+    autoCheckUpdates: "自动检查更新",
+    autoCheckUpdatesHint:
+      "启动后和每 24 小时向 GitHub Releases 请求一次版本清单，只读取版本号和更新说明，不上传任何数据。",
+    currentVersion: (version: string) => `当前版本 ${version}`,
     envList: "已检测到的运行环境",
     envEnabled: (label: string) => `启用 ${label}`,
     envHome: "主目录",
@@ -1395,6 +1410,7 @@ export const copy = {
     cli: "云平台 CLI",
     note: "笔记",
     "agent-op": "Agent 操作",
+    update: "应用更新",
   } satisfies Record<ActivityKind, string>,
 
   /** 活动标题写成完整的句子（6.7）。反引号里的命令按等宽渲染 */
@@ -1436,6 +1452,8 @@ export const copy = {
       `Agent 在 ${v(p, "alias")} 上执行了 \`${v(p, "command")}\``,
     "agent-op-denied": (p) =>
       `Agent 在 ${v(p, "alias")} 上执行的 \`${v(p, "command")}\` 被护栏拦下`,
+    "update-installing": (p) =>
+      `开始把 CloudLink 从 ${v(p, "from")} 更新到 ${v(p, "to")}`,
   } satisfies Record<ActivityMessageId, Msg>,
 
   activityView: {
@@ -1457,10 +1475,52 @@ export const copy = {
       "日志在本地保留 30 天，不含原始探测输出、密码和解析后的连接信息。Agent 操作只记录经过护栏的命令（Claude Code）。",
   },
 
+  /** 检测更新（F-406，PRD 6.13）。有新版本才出现，提醒用中性色 */
+  update: {
+    reminder: (version: string) => `新版本 ${version}`,
+    reminderLabel: (version: string) => `有新版本 ${version}，查看并更新`,
+    /** 下载中和正在安装时按钮的读屏名称，包含按钮上可见的文字 */
+    progressLabel: (text: string) => `${text}，查看更新`,
+    downloading: (percent: number | null) =>
+      percent === null ? "下载中" : `下载中 ${percent}%`,
+    installing: "正在安装",
+    announce: (version: string) => `有新版本 ${version}`,
+    command: (version: string) => `安装更新 ${version}`,
+    title: (version: string) => `新版本 ${version}`,
+    description: (current: string, date: string | null) =>
+      date ? `当前版本 ${current} · 发布于 ${date}` : `当前版本 ${current}`,
+    noNotes: "这个版本没有附带更新说明。",
+    restartHint:
+      "安装时 CloudLink 会自动关闭并重新打开；护栏和已分发的 Skill 照常工作。",
+    later: "稍后",
+    install: "下载并安装",
+    cancel: "取消下载",
+    retry: "重试",
+    progress: (downloaded: string, total: string | null) =>
+      total ? `已下载 ${downloaded} / ${total}` : `已下载 ${downloaded}`,
+    installingHint: "下载完成，正在安装。CloudLink 即将关闭并重新打开。",
+    failed: "更新失败",
+    wait: {
+      connection: (name: string) => `正在测试 ${name} 的连接，结束后再安装`,
+      probe: (name: string) => `正在探测 ${name}，结束后再安装`,
+      cli: (name: string) => `正在检测 ${name} CLI，结束后再安装`,
+      publish: () => "正在发布 Skill，结束后再安装",
+    } satisfies Record<UpdateTask, (name: string) => string>,
+  },
+
   toast: { undo: "撤销" },
 }
 
 /** 把 ipc 错误映射成一句可读的中文 */
 export function ipcErrorText(id: IpcErrorId, params?: Params): string {
   return copy.ipcError[id](params)
+}
+
+/** 安装更新要等的任务（F-406 AC4）：界面自己判断的和后端 update-busy 返回的用同一句。CLI 的 name 是 provider */
+export function updateWaitText(task: UpdateTask, name?: string): string {
+  const shown =
+    task === "cli"
+      ? (copy.cli.name[name as CliProvider] ?? name ?? "…")
+      : (name ?? "…")
+  return (copy.update.wait[task] ?? copy.update.wait.publish)(shown)
 }

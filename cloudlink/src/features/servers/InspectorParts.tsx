@@ -41,7 +41,7 @@ export function BackButton() {
 
 /** 控制头的档位和授权（PRD 6.4）：立即生效，不经过保存。more 是右侧的「⋯」菜单；宽度够时并排一行 */
 export function ControlRows({ asset, more }: { asset: Asset; more: ReactNode }) {
-  const { agents } = useAgentOptions()
+  const { known, agents } = useAgentOptions()
   return (
     <div className="mt-2.5 flex flex-wrap items-center gap-x-5 gap-y-2">
       <div className="flex items-center gap-2">
@@ -56,14 +56,14 @@ export function ControlRows({ asset, more }: { asset: Asset; more: ReactNode }) 
         </span>
         {agents.length > 0 ? (
           <AgentPicker asset={asset} agents={agents} labelledBy="detail-agents-label" className="min-w-0" />
-        ) : (
+        ) : known ? (
           <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {copy.agentSection.noTargets}
             <Button variant="link" size="xs" className="h-auto p-0" onClick={() => useUIStore.getState().setView("agents")}>
               {copy.agentSection.goAgents}
             </Button>
           </span>
-        )}
+        ) : null}
         <span className="ml-auto shrink-0">{more}</span>
       </div>
     </div>

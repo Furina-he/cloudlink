@@ -8,6 +8,8 @@ mod jobs;
 mod publication;
 pub mod requests;
 mod reset;
+mod startup;
+mod update;
 
 pub use backend::{Backend, EventSink, TauriEvents};
 
@@ -15,3 +17,5 @@ pub use backend::{Backend, EventSink, TauriEvents};
 mod p4c_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod update_tests;

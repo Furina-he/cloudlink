@@ -64,12 +64,19 @@ pub struct Scanner {
     global_stopwords: Vec<String>,
 }
 
+/// gitleaks 的规则是按 Go RE2 写的：`\w`、`\d`、`\s`、`\b` 只认 ASCII。regex crate 默认按 Unicode 理解它们，
+/// `[\w.=-]{10,150}` 这类计数重复会展开成很大的自动机，全部规则要编译将近 3 秒（冷启动时第一次编译就卡在这里）。
+/// 所以先关掉 Unicode 编译，语义和 gitleaks 一致，全部规则不到 0.1 秒；含 `.`、`[^…]` 的规则在 ASCII 模式下
+/// 可能匹配半个 UTF-8 字符，regex crate 不让编译，这些退回 Unicode 模式，和以前一样
 fn build(pattern: &str) -> Option<Regex> {
-    RegexBuilder::new(pattern)
-        .size_limit(64 << 20)
-        .dfa_size_limit(64 << 20)
-        .build()
-        .ok()
+    let compile = |unicode: bool| {
+        RegexBuilder::new(pattern)
+            .unicode(unicode)
+            .size_limit(64 << 20)
+            .dfa_size_limit(64 << 20)
+            .build()
+    };
+    compile(false).or_else(|_| compile(true)).ok()
 }
 
 /// CloudLink 自己的规则：gitleaks 不覆盖、但 PRD 5.4 点名要拦的

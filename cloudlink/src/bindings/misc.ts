@@ -17,6 +17,8 @@ export type ActivityKind =
   | "cli"
   | "note"
   | "agent-op"
+  /** 应用更新的安装（F-406） */
+  | "update"
 
 export type ActivityMessageId =
   | "test-ok"
@@ -42,6 +44,8 @@ export type ActivityMessageId =
   | "notes-dismissed"
   | "agent-op-allowed"
   | "agent-op-denied"
+  /** 开始安装更新、CloudLink 即将退出（F-406 AC5）；params：from、to */
+  | "update-installing"
 
 export interface ActivityItem {
   id: string
@@ -82,6 +86,8 @@ export interface Settings {
   logDir: string
   /** 已经问过「加入 Include」的运行环境：拒绝后不再弹窗，改在设置里给出手动说明（F-107 AC1） */
   sshIncludeAsked: EnvId[]
+  /** 定时检查更新，默认开启（F-406） */
+  autoCheckUpdates: boolean
 }
 
 export interface SaveResult {
@@ -127,10 +133,34 @@ export type IpcErrorId =
   /** 并入的笔记仍然命中密钥（F-308 AC2） */
   | "note-has-secret"
   | "reset-incomplete"
+  /** 有进行中的任务，暂不安装更新；params.task 为 connection、probe、cli 或 publish，params.name 说明是哪一项（F-406 AC4） */
+  | "update-busy"
+  | "update-download-failed"
+  /** 安装包没有通过内置公钥的签名校验，已丢弃（F-406 AC3） */
+  | "update-signature-invalid"
+  | "update-install-failed"
   | "internal"
 
 /** IPC 失败时 invoke 抛出的对象。文案由 copy.ts 按 id 映射 */
 export interface IpcError {
   id: IpcErrorId
   params?: Record<string, string | number>
+}
+
+/** idle：没有新版本、尚未检查或已关闭检查，界面不显示任何更新元素（F-406） */
+export type UpdateState = "idle" | "available" | "downloading" | "installing"
+
+/** 检测更新的完整快照：getUpdateStatus 的返回值和 update://changed 的载荷（PRD 7.8） */
+export interface UpdateStatus {
+  state: UpdateState
+  currentVersion: string
+  /** 以下来自 latest.json；notes 不在签名范围内，按不可信纯文本展示 */
+  version?: string
+  date?: string
+  notes?: string
+  /** downloading 时的字节数；total 可能未知 */
+  downloaded?: number
+  total?: number
+  /** 上次安装没有完成的原因，此时 state 回到 available */
+  error?: IpcError
 }

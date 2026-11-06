@@ -83,3 +83,15 @@ fn entropy_is_shannon() {
     assert_eq!(entropy("aaaa"), 0.0);
     assert!((entropy("ab") - 1.0).abs() < 1e-9);
 }
+
+#[test]
+fn perl_classes_are_ascii_like_gitleaks() {
+    // gitleaks 的规则按 Go RE2 写：`\w`、`\b` 只认 ASCII，这样编译也快得多
+    let word = build(r"^\w+$").unwrap();
+    assert!(word.is_match("abc_123"));
+    assert!(!word.is_match("pässwort"));
+    assert!(build(r"\bsk-ant-").unwrap().is_match("ésk-ant-"));
+    // `.` 和取反字符类只能按 Unicode 编译，照样按整个字符匹配
+    assert!(build(r"^[^x]$").unwrap().is_match("é"));
+    assert!(build(r"^.$").unwrap().is_match("密"));
+}

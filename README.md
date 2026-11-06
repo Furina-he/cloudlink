@@ -18,7 +18,7 @@ CloudLink 是一个面向 AI Agent 的全栈基础设施配电盘与安全护栏
 
 ## 当前状态
 
-CloudLink v0.1 的前端和 Rust 核心已实现，P5 联调的代码已完成（手工验收清单与 P6 一起验收），当前进入 **P6 打磨、更新与打包阶段**：无障碍与性能打磨、应用图标落地、检测更新（F-406）、签名的 Windows 安装包和首个 GitHub Release。阶段任务与验收标准见 [执行计划](docs/EXECUTION-PLAN.md)。
+CloudLink v0.1 已完成全部开发阶段（P0 到 P6）：前端和 Rust 核心、真实 IPC 联调、无障碍与性能打磨、应用图标、检测更新（F-406）和安装包配置。首个版本 v0.1.0 通过 [GitHub Releases](https://github.com/Furina-he/cloudlink/releases) 分发，安装包经 minisign 签名，应用内会检测更新。P5 手工验收清单和图标在系统各处的目测仍待维护者完成。阶段任务与验收标准见 [执行计划](docs/EXECUTION-PLAN.md)。
 
 仓库：[Furina-he/cloudlink](https://github.com/Furina-he/cloudlink)（公开，主分支 `main`）。开发环境见执行计划第 1 节；全新检出后，直接运行 Cargo 检查前先执行 `pnpm --dir cloudlink build:guard`，准备 Tauri 所需的护栏 sidecar。
 

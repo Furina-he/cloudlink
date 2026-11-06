@@ -1,4 +1,5 @@
 import {
+  CircleArrowUpIcon,
   FileCogIcon,
   FolderMinusIcon,
   FolderSyncIcon,
@@ -39,10 +40,11 @@ const KIND_ICON: Record<ActivityKind, LucideIcon> = {
   cli: SquareTerminalIcon,
   note: NotebookPenIcon,
   "agent-op": TerminalIcon,
+  update: CircleArrowUpIcon,
 }
 
 /** CloudLink 自己的操作；「Agent 操作」单独一项（PRD 6.7） */
-const OWN_KINDS: ActivityKind[] = ["connection", "probe", "compile", "deliver", "remove", "repair", "ssh-config", "guard", "mode", "cli", "note"]
+const OWN_KINDS: ActivityKind[] = ["connection", "probe", "compile", "deliver", "remove", "repair", "ssh-config", "guard", "mode", "cli", "note", "update"]
 const AGENT_KIND: ActivityKind = "agent-op"
 
 /** 一条记录是一行 TraceLine；有详情的用 TraceCollapsible 展开，里面是命令清单、差异摘要或完整命令 */

@@ -65,8 +65,9 @@ export function DetailTabs({ assetId, children }: { assetId: string; children: R
         ))}
       </TabsList>
       <ScrollArea className="min-h-0 flex-1">
+        {/* 面板本身不进 Tab 序列：它没有焦点样式，键盘用户会以为焦点丢了；内容能滚动时外层的滚动区域已经是一个带焦点环的停靠点 */}
         {(["profile", "connection", "activity"] as const).map((t) => (
-          <TabsContent key={t} value={t} className="flex flex-col gap-6 p-4 pb-8">
+          <TabsContent key={t} value={t} tabIndex={-1} className="flex flex-col gap-6 p-4 pb-8">
             {children[t]}
           </TabsContent>
         ))}

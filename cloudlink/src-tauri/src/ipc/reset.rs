@@ -179,6 +179,8 @@ impl Backend {
                 self.paths.data_dir.to_string_lossy().into_owned(),
                 self.paths.log_dir().to_string_lossy().into_owned(),
             ))?;
+            // 设置回到默认值，其中「自动检查更新」是开启的
+            self.updates.set_enabled(true, std::time::Instant::now());
             self.emit("compile://finished", &serde_json::json!({ "statuses": [] }));
             self.emit(
                 "deliveries://changed",

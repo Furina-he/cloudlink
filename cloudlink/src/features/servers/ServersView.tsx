@@ -62,10 +62,10 @@ function FirstLaunch({ focusTitle }: { focusTitle: boolean }) {
 }
 
 /** 一个资源类型选择项（DESIGN.md：添加面板里的类型选择用 Card）。整张卡片是一个按钮 */
-/** added：这家已接入的账号数；可以继续接入其他账号 */
-function TypeCard({ icon, title, meta, blurb, added = 0, onPick }: { icon: React.ReactNode; title: string; meta?: string; blurb: string; added?: number; onPick: () => void }) {
+/** added：这家已接入的账号数；可以继续接入其他账号。first：弹窗打开时焦点落在这张卡片上 */
+function TypeCard({ icon, title, meta, blurb, added = 0, first = false, onPick }: { icon: React.ReactNode; title: string; meta?: string; blurb: string; added?: number; first?: boolean; onPick: () => void }) {
   return (
-    <button type="button" onClick={onPick} className="group/type rounded-xl text-left outline-none">
+    <button type="button" onClick={onPick} data-autofocus={first || undefined} className="group/type rounded-xl text-left outline-none">
       <Card size="sm" className="transition-colors group-focus-visible/type:ring-2 group-focus-visible/type:ring-ring group-hover/type:bg-muted/50">
         <CardHeader className="grid-cols-[auto_minmax(0,1fr)] gap-x-3">
           <span aria-hidden className="row-span-2 flex size-8 items-center justify-center rounded-md bg-muted">
@@ -94,7 +94,7 @@ function TypePicker() {
         <div className="flex flex-col gap-5 p-3 pb-6">
           <div className="flex flex-col gap-2">
             <h3 className="text-sm font-semibold">{copy.create.directGroup}</h3>
-            <TypeCard icon={<ServerIcon className="size-4" />} title={copy.create.ssh} blurb={copy.create.sshBlurb} onPick={() => ui().startCreate("ssh")} />
+            <TypeCard icon={<ServerIcon className="size-4" />} title={copy.create.ssh} blurb={copy.create.sshBlurb} first onPick={() => ui().startCreate("ssh")} />
           </div>
           <div className="flex flex-col gap-2">
             <h3 className="text-sm font-semibold">{copy.create.cliGroup}</h3>
@@ -136,9 +136,14 @@ function CreateDialog() {
   const [last, setLast] = useState(creating)
   if (creating && creating !== last) setLast(creating)
   const shown = creating ?? last
+  const popupRef = useRef<HTMLDivElement>(null)
   return (
     <Dialog open={!!creating} onOpenChange={(open) => !open && useUIStore.getState().closeInspector()}>
       <DialogContent
+        ref={popupRef}
+        // 打开时焦点不经过标题栏的图标按钮：落在那里会弹出它的 Tooltip，第一下 Esc 只能关掉 Tooltip。
+        // 选类型时落在第一张卡片上；SSH 表单自己把焦点放到地址（有预填时放到用户），其余先落在弹窗本身
+        initialFocus={() => popupRef.current?.querySelector<HTMLElement>("[data-autofocus]") ?? popupRef.current}
         showCloseButton={false}
         className="flex h-[min(600px,calc(100svh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg"
       >

@@ -1,5 +1,6 @@
 import {
   BotIcon,
+  CircleArrowUpIcon,
   EyeIcon,
   FileInputIcon,
   FolderMinusIcon,
@@ -28,6 +29,7 @@ import { KEY_HINT } from "@/lib/hotkeys"
 import { handleOf, useAssetStore } from "@/stores/assets"
 import { isProbing, useProbeStore } from "@/stores/probe"
 import { openPreviewHere, useUIStore, VIEWS } from "@/stores/ui"
+import { hasUpdate, useUpdateStore } from "@/stores/update"
 import type { CommandPage } from "./CommandMenu"
 import { ProviderMark } from "./ProviderMark"
 
@@ -52,6 +54,7 @@ export function RootPage({ close, goPage }: { close: () => void; goPage: (p: Com
   const probing = useProbeStore((s) => (current ? isProbing(s, current.id) : false))
   const nextMode = current?.agent.mode === "standard" ? "read-only" : "standard"
   const { agents } = useAgentOptions()
+  const update = useUpdateStore((s) => (hasUpdate(s.status) ? s.status.version : null))
   const ui = useUIStore.getState
   const run = (fn: () => void) => () => {
     fn()
@@ -153,6 +156,13 @@ export function RootPage({ close, goPage }: { close: () => void; goPage: (p: Com
           <SunMoonIcon />
           {copy.command.actions.theme}
         </CommandItem>
+        {/* 有新版本时才出现，打开同一个更新对话框（F-406） */}
+        {update && (
+          <CommandItem value={copy.update.command(update)} onSelect={run(() => useUpdateStore.getState().setDialogOpen(true))}>
+            <CircleArrowUpIcon />
+            {copy.update.command(update)}
+          </CommandItem>
+        )}
       </CommandGroup>
     </>
   )

@@ -292,6 +292,7 @@ export const settings: Settings = {
   bodyLineLimit: 100,
   writeSnapshotTime: true,
   defaultMode: "read-only",
+  autoCheckUpdates: true,
   probeTimeoutSec: 30,
   windowsSshPath: "C:\\Windows\\System32\\OpenSSH\\ssh.exe",
   dataDir: "C:\\Users\\me\\.cloudlink",

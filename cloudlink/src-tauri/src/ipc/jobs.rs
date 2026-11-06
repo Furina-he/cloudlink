@@ -163,6 +163,22 @@ impl ConnectionJobs {
             cancel,
         })
     }
+
+    /// 还没有结果的测试连接，或进行中的改用密钥登录（F-406 AC4）：(服务器 id, 别名)
+    pub(super) fn running(&self) -> Option<(Option<String>, String)> {
+        let now = Instant::now();
+        if let Ok(jobs) = self.jobs.lock()
+            && let Some(job) = jobs
+                .values()
+                .find(|j| j.outcome.is_none() && !j.cancel.load(Ordering::SeqCst) && j.expires > now)
+        {
+            return Some((job.asset_id.clone(), job.connection.ssh_alias().into()));
+        }
+        let jobs = self.conversions.lock().ok()?;
+        jobs.values()
+            .find(|j| !j.cancel.load(Ordering::SeqCst))
+            .map(|j| (Some(j.asset_id.clone()), String::new()))
+    }
 }
 
 struct ProbeJob {
@@ -176,6 +192,35 @@ struct ProbeJob {
 #[derive(Default)]
 pub(super) struct ProbeJobs {
     jobs: Mutex<HashMap<String, ProbeJob>>,
+}
+
+impl ProbeJobs {
+    /// 进行中的探测（F-406 AC4）：服务器 id
+    pub(super) fn running(&self) -> Option<String> {
+        let now = Instant::now();
+        let jobs = self.jobs.lock().ok()?;
+        jobs.values()
+            .find(|j| j.active && !j.cancel.load(Ordering::SeqCst) && j.expires > now)
+            .map(|j| j.asset_id.clone())
+    }
+
+    /// 测试用：登记一次进行中的探测，返回它的取消标记
+    #[cfg(test)]
+    pub(super) fn hold_for_test(&self, asset_id: &str) -> Arc<AtomicBool> {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let started = Instant::now();
+        self.jobs.lock().unwrap().insert(
+            crate::new_id("prb"),
+            ProbeJob {
+                asset_id: asset_id.into(),
+                cancel: cancel.clone(),
+                active: true,
+                expires: started + Duration::from_secs(30),
+                started,
+            },
+        );
+        cancel
+    }
 }
 
 impl Backend {

@@ -10,6 +10,8 @@ const STEP_MS = 500
 
 type Snapshot = Pick<ServerAsset, "facts" | "services" | "listeningPorts" | "probe">
 const runs = new Map<string, { assetId: string; timers: number[] }>()
+/** 进行中的探测：安装更新要等它结束（F-406 AC4） */
+export const runningProbe = (): string | null => runs.values().next().value?.assetId ?? null
 /** 每台服务器最近一次探测的快照，只能撤销最近一次（F-103 AC4） */
 const snapshots = new Map<string, { runId: string; snapshot: Snapshot; held: ProbeChange[] }>()
 

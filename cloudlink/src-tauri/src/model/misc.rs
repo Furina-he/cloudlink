@@ -24,6 +24,7 @@ pub enum ActivityKind {
     Cli,
     Note,
     AgentOp,
+    Update,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -53,6 +54,8 @@ pub enum ActivityMessageId {
     NotesDismissed,
     AgentOpAllowed,
     AgentOpDenied,
+    /// F-406 AC5：开始安装更新、CloudLink 即将退出前写入
+    UpdateInstalling,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -134,6 +137,13 @@ pub struct Settings {
     pub data_dir: String,
     pub log_dir: String,
     pub ssh_include_asked: Vec<EnvId>,
+    /// F-406：定时检查更新，默认开启（旧数据由迁移 v4 补上）
+    #[serde(default = "enabled_by_default")]
+    pub auto_check_updates: bool,
+}
+
+fn enabled_by_default() -> bool {
+    true
 }
 
 /// Windows 自带 OpenSSH 的绝对路径（PRD 8.3 规则 1）
@@ -154,6 +164,7 @@ impl Settings {
             data_dir,
             log_dir,
             ssh_include_asked: Vec::new(),
+            auto_check_updates: true,
         }
     }
 }
@@ -207,6 +218,11 @@ pub enum IpcErrorId {
     TerminalCommandInvalid,
     NoteHasSecret,
     ResetIncomplete,
+    /// F-406 AC4：有进行中的任务，`params.task` 为 connection、probe、cli 或 publish，`params.name` 说明是哪一项
+    UpdateBusy,
+    UpdateDownloadFailed,
+    UpdateSignatureInvalid,
+    UpdateInstallFailed,
     Internal,
 }
 
@@ -218,4 +234,59 @@ pub struct IpcError {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "Record<string, string | number>")]
     pub params: Option<Params>,
+}
+
+/// F-406：idle 时界面不显示任何更新元素（没有新版本、尚未检查或已关闭检查）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "misc.ts")]
+pub enum UpdateState {
+    Idle,
+    Available,
+    Downloading,
+    Installing,
+}
+
+/// `update://changed` 推送的完整快照（PRD 7.8）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "misc.ts")]
+pub struct UpdateStatus {
+    pub state: UpdateState,
+    pub current_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub date: Option<String>,
+    /// 来自 latest.json，不在签名范围内：界面按不可信纯文本展示
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub downloaded: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub total: Option<u64>,
+    /// 上次安装没有完成的原因，此时 state 回到 available
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub error: Option<IpcError>,
+}
+
+impl UpdateStatus {
+    pub fn idle(current_version: &str) -> Self {
+        UpdateStatus {
+            state: UpdateState::Idle,
+            current_version: current_version.into(),
+            version: None,
+            date: None,
+            notes: None,
+            downloaded: None,
+            total: None,
+            error: None,
+        }
+    }
 }

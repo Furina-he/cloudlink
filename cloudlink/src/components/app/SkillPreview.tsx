@@ -153,7 +153,8 @@ export default function SkillPreview({
             <>
               <BudgetBars budget={preview.budget} />
               <LintList lint={preview.lint} onLocate={locate} focusRequest={focus.lint ? focus.seq : 0} />
-              <TabsContent value={current.path}>
+              {/* 面板本身不进 Tab 序列：它没有焦点样式；能滚动的是外层滚动区域和代码块，它们各自有焦点环 */}
+              <TabsContent value={current.path} tabIndex={-1}>
                 {view === "source" ? (
                   <SourceView content={current.content} focusLine={located?.file === current.path ? located.line : null} />
                 ) : (
