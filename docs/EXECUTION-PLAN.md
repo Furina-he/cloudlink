@@ -524,6 +524,7 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
    - 构建：设置环境变量 `TAURI_SIGNING_PRIVATE_KEY`（私钥路径或内容）和 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`，运行 `pnpm --dir cloudlink tauri build`，得到 `CloudLink_<版本>_x64-setup.exe` 和对应的 `.sig`。
    - 新增 `cloudlink/scripts/release-manifest.mjs`（只用 Node 标准库），从构建产物生成 `latest.json`：`version`、`notes`、`pub_date`，以及 `platforms["windows-x86_64"]` 的 `signature` 和 `url`。
    - 发布：`gh release create v<版本> <安装包> <latest.json> --repo Furina-he/cloudlink`。预发布版本不会出现在 `releases/latest` 下，可以用来试发；正式发布前先征得用户授权。
+   - v0.1.0 之后改在 GitHub Actions 上构建和签名：推送 `v<版本>` 标签后，`.github/workflows/release.yml` 校验签名、生成 `latest.json` 并创建草稿 Release，维护者检查后发布。私钥和口令另存一份在仓库的 Actions Secrets。流程见 `docs/releases/README.md`。
 7. **可选质检：**
    - 用 impeccable 的 `audit` 和 `polish` 做一次 UI 质检。
    - 再运行 `/impeccable document`，用实际代码重新校准 `DESIGN.md`。
@@ -568,7 +569,7 @@ CloudSkill Hub/                 仓库根目录（文件夹名可以以后再改
 | 不同发行版的探测输出格式不同（Alpine/BusyBox） | 解析失败 | 按段容错；用录制的样例集测试 |
 | 依赖主版本漂移 | 执行时的最新版本与文档不一致 | 严格按文档锁定的主版本安装 |
 | Windows 上文件被占用 | 发布时交换目录失败 | 重试 3 次；仍然失败就保留旧产物并提示用户 |
-| 更新签名私钥丢失或泄漏 | 丢失：已安装的版本再也无法自动更新；泄漏：别人能签出会被接受的安装包 | 私钥和口令只放在本机与密码管理器，另行备份，绝不入库；泄漏或需要换钥时，先用旧私钥签一个内置新公钥的过渡版本 |
+| 更新签名私钥丢失或泄漏 | 丢失：已安装的版本再也无法自动更新；泄漏：别人能签出会被接受的安装包 | 私钥和口令只放在本机、密码管理器（另行备份）和仓库的 Actions Secrets（只有签名构建的那一步引用），绝不入库；泄漏或需要换钥时，先用旧私钥签一个内置新公钥的过渡版本 |
 | GitHub 在部分网络下访问不稳定 | 检查更新或下载安装包失败 | 检查失败不打扰用户，1 小时后重试；下载失败可以重试；以后可以在 `endpoints` 中按顺序追加镜像地址 |
 | 安装更新时有任务在跑 | Windows 上安装开始后应用直接退出，进行中的探测或发布被中断 | 有进行中的测试连接、探测、CLI 检测或发布时返回 `update-busy`，不开始安装；所有文件写入本就是原子的，SQLite 用 WAL |
 | 更新时护栏程序正在运行或被替换 | 正在执行的 hook 失败，或护栏停留在旧版本 | hook 调用的是 `~/.cloudlink/bin/` 中的副本，安装目录被替换不影响它；新版启动时按内容比对重新同步（`prepare_guard_binary`），失败只写日志，下次启动或重新安装护栏时再同步 |

@@ -1,0 +1,122 @@
+# 推送 v* 标签：CI 和签名构建并行，两者都通过后创建草稿 Release（安装包 + latest.json），维护者检查后在 GitHub 上发布。
+# 手动运行（workflow_dispatch）是试运行：同样构建、签名并校验，只把产物留在运行页面的 Artifacts 里，不创建 Release。
+# 流程见 docs/releases/README.md。
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+    working-directory: cloudlink
+
+jobs:
+  check:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  # 拿得到签名私钥的只有这个 job，它没有写仓库的权限，也不用缓存：依赖全部按锁文件重新获取
+  build:
+    name: 构建并签名
+    runs-on: windows-latest
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: 核对版本号
+        id: version
+        run: |
+          VERSION=$(node -p 'require("./src-tauri/tauri.conf.json").version')
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            if [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+              echo "::error::标签 $GITHUB_REF_NAME 和 tauri.conf.json 的版本 $VERSION 对不上"
+              exit 1
+            fi
+            if [ ! -s "../docs/releases/v$VERSION.md" ]; then
+              echo "::error::缺少更新说明 docs/releases/v$VERSION.md"
+              exit 1
+            fi
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: 启用 pnpm 10.12.3
+        run: |
+          corepack enable pnpm
+          corepack install -g pnpm@10.12.3
+      - run: pnpm install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: 构建安装包并签名
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build --ci -- --locked
+      # 按已安装的 CloudLink 的方式校验签名（公钥、内容、版本号），通过后才写 latest.json
+      - name: 校验签名并生成 latest.json
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          NOTES="../docs/releases/v$VERSION.md"
+          if [ -s "$NOTES" ]; then
+            node scripts/release-manifest.mjs --notes-file "$NOTES"
+          else
+            node scripts/release-manifest.mjs --notes "试运行构建，不发布。"
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cloudlink-${{ steps.version.outputs.version }}
+          path: |
+            cloudlink/src-tauri/target/release/bundle/nsis/CloudLink_${{ steps.version.outputs.version }}_x64-setup.exe
+            cloudlink/src-tauri/target/release/bundle/nsis/CloudLink_${{ steps.version.outputs.version }}_x64-setup.exe.sig
+            cloudlink/src-tauri/target/release/bundle/nsis/latest.json
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: 草稿 Release
+    needs: [check, build]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: docs/releases
+      - uses: actions/download-artifact@v8
+        with:
+          name: cloudlink-${{ needs.build.outputs.version }}
+          path: bundle
+      - name: 创建草稿 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          files=("bundle/CloudLink_${VERSION}_x64-setup.exe" bundle/latest.json)
+          # 重新运行时草稿已经存在，只替换附件；已经发布的版本不会被改动（create 会报错）
+          if [ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null)" = true ]; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" --draft --verify-tag \
+              --title "CloudLink $VERSION" --notes-file "docs/releases/v$VERSION.md"
+          fi

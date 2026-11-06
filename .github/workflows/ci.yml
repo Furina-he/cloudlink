@@ -1,0 +1,84 @@
+# 推送到 main 和每个 PR 都跑一遍和本机相同的检查（CLAUDE.md 的 Commands）。
+# Release 工作流也调用它：检查不通过就不会创建 Release。
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["*.md", "docs/**"]
+  pull_request:
+    paths-ignore: ["*.md", "docs/**"]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # 被 Release 调用时 github.workflow 是 Release，和推送触发的 CI 不在同一组
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+    working-directory: cloudlink
+
+jobs:
+  frontend:
+    name: 前端
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: 启用 pnpm 10.12.3
+        run: |
+          corepack enable pnpm
+          corepack install -g pnpm@10.12.3
+          echo "PNPM_STORE=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.PNPM_STORE }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('cloudlink/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm exec playwright install chromium
+      - run: pnpm e2e
+      - run: pnpm build
+
+  rust:
+    name: Rust
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cloudlink/src-tauri -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # tauri-build 要求 externalBin 已经存在，所以先编译护栏 sidecar
+      - run: node scripts/build-guard.mjs
+      - run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
+      - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml -- --test-threads=1
+      - name: ts-rs 生成的类型已提交
+        run: |
+          if [ -n "$(git status --porcelain -- src/bindings)" ]; then
+            git status --short -- src/bindings
+            git diff -- src/bindings
+            echo "::error::cargo test 重新生成的 src/bindings/generated 和提交的不一致：在本机跑一遍 cargo test，再提交生成的文件"
+            exit 1
+          fi
