@@ -2,10 +2,11 @@ import { expect, test, type Page } from "@playwright/test"
 
 import { collectConsoleErrors, ready, row, toastText } from "./helpers"
 
+// 填表时标题是「添加 SSH 服务器」，点连接后同一个区域切到「连接 <别名>」的连接过程
 const sshForm = (page: Page) =>
-  page.getByRole("region", { name: "添加 SSH 服务器" })
+  page.getByRole("region", { name: /^(添加 SSH 服务器|连接 )/ })
 const connectEnable = (page: Page) =>
-  sshForm(page).getByRole("button", { name: /连接并启用/ })
+  sshForm(page).getByRole("button", { name: /^(连接并启用|重新连接)/ })
 const includeDialog = (page: Page) =>
   page.getByRole("alertdialog", { name: "把托管配置加入 ~/.ssh/config？" })
 

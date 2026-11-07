@@ -339,7 +339,7 @@ pub fn render_skill(input: &RenderInput) -> Rendered {
             "snapshot": input.snapshot,
             "servers": servers,
             "clis": clis,
-            "relationships": input.config.relationships.trim(),
+            "relationships": super::relations::lines(input.assets, input.config),
             "rules": rules,
             "inbox": input.inbox,
             "example_name": example_name,}),

@@ -72,7 +72,7 @@ export function AgentPicker({
             <TooltipTrigger render={<ToggleGroupItem {...props} className={tile} />}>
               <AgentMark agent={a.agent} label={a.label} lit={on} />
             </TooltipTrigger>
-            <TooltipContent>{a.label}</TooltipContent>
+            <TooltipContent>{a.readers.length > 0 ? copy.agents.readersTooltip(a.label, a.readers.map((b) => copy.brand[b]).join("、")) : a.label}</TooltipContent>
           </Tooltip>
         )
       })}

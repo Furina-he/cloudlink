@@ -16,7 +16,7 @@ Connect only through the SSH aliases below: `ssh <alias> '<command>'`. Authentic
 | `dev-box` | Development machine | development | standard | `references/dev-box.md` |
 
 ## How they fit together
-hk-edge reverse-proxies api.example.com to the API containers on hk-edge; those containers use the PostgreSQL database on sg-db over the private network.
+- hk-edge reverse-proxies api.example.com to the API containers on hk-edge; those containers use the PostgreSQL database on sg-db over the private network.
 
 ## Modes
 - **read-only**: inspection commands only, e.g. `docker ps`, `docker logs --tail 200 <container>`, `df -h`, `free -m`, `uptime`, `ss -tln`, `journalctl -u <service> -n 200`. If a change is needed, describe the plan to the user and stop; the user can switch the server to standard mode in CloudLink.

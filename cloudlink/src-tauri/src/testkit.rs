@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use crate::model::asset::*;
-use crate::model::compile::{Convention, SkillConfig};
+use crate::model::compile::{Convention, RelationNote, SkillConfig};
 use crate::model::env::EnvId;
 
 pub const NOW: &str = "2026-10-31T09:00:00Z";
@@ -368,10 +368,15 @@ pub fn cloudflare() -> CliAsset {
 /// PRD 3.3 的全局内容
 pub fn skill_config() -> SkillConfig {
     SkillConfig {
-        relationships: "hk-edge reverse-proxies api.example.com to the API containers on hk-edge; those containers use the PostgreSQL database on sg-db over the private network.".into(),
+        relation_notes: vec![RelationNote {
+            id: "r1".into(),
+            text: "hk-edge reverse-proxies api.example.com to the API containers on hk-edge; those containers use the PostgreSQL database on sg-db over the private network.".into(),
+            replaces: None,
+        }],
         conventions: vec![
             Convention { id: "c1".into(), text: "Deploy with docker compose in /opt/apps/<name>; never edit containers by hand".into() },
             Convention { id: "c2".into(), text: "Tell the user before restarting anything on a production server".into() },
         ],
+        ..Default::default()
     }
 }

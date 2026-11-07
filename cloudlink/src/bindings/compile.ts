@@ -61,10 +61,34 @@ export interface Convention {
   text: string
 }
 
-/** 总 Skill 的全局内容（F-201 AC1），不属于任何一台服务器 */
+/** 用户补充或改写的一条关系，原文写进「How they fit together」 */
+export interface RelationNote {
+  id: string
+  text: string
+  /** 改写自哪一条自动关系；那一条同时记在 hiddenRelations 里 */
+  replaces?: string
+}
+
+/** 总 Skill 的全局内容（F-201 AC1），不属于任何一台服务器。资源关系由 CloudLink 推出，这里只存用户的补充和隐藏（2026-11-07） */
 export interface SkillConfig {
-  relationships: string
+  relationNotes: RelationNote[]
+  hiddenRelations: string[]
   conventions: Convention[]
+}
+
+export type RelationKind = "proxy-jump" | "same-host" | "dns" | "instance" | "site"
+
+/** CloudLink 从资源数据推出的一条关系（list_relations）。界面文案由 copy.ts 按 kind 和 params 生成 */
+export interface Relation {
+  /** 由资源 id 组成，资源不变时保持不变 */
+  id: string
+  kind: RelationKind
+  assetIds: string[]
+  params: Record<string, string | number>
+  /** 写进 SKILL.md 的一句英文 */
+  text: string
+  /** 用户隐藏了这一条 */
+  hidden: boolean
 }
 
 /** preview_skill 的请求：带草稿时预览草稿。带 asset 时，这台服务器按「已列入」计算（2026-10-31 用户确认） */

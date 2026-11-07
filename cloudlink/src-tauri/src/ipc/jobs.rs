@@ -745,6 +745,38 @@ impl Backend {
         Ok(current)
     }
 
+    /// 私钥预检（F-108）：只读，不改任何文件
+    pub fn check_key(&self, req: &KeyCheckRequest) -> Result<KeyCheck> {
+        if req.path.len() > 4096 || req.path.contains('\0') {
+            return Err(AppError::ipc(IpcErrorId::SettingsInvalid));
+        }
+        let env = self.context(&req.env_id)?;
+        Ok(ssh::keycheck::check(&self.tools()?, &env, &req.path))
+    }
+
+    /// 「复制到 ~/.ssh」：Windows 上复制一份只有当前用户能读的副本；WSL 与「复制到 WSL」相同（600 权限）。
+    /// 副本登记为 CloudLink 创建的文件，删除服务器时可以一并删除；原文件不动
+    pub fn copy_key_to_ssh_dir(&self, source: &str, env_id: &EnvId) -> Result<String> {
+        let epoch = self.reset_epoch.load(Ordering::SeqCst);
+        if !env_id.is_windows() {
+            return self.copy_key_to_wsl_at(source, env_id, epoch, None);
+        }
+        let _edit = self.edit_at(epoch)?;
+        if self.connections.stopping.load(Ordering::SeqCst) {
+            return Err(AppError::ipc(IpcErrorId::NotFound));
+        }
+        let env = self.context(env_id)?;
+        if !Path::new(source).is_absolute() {
+            return Err(AppError::ipc(IpcErrorId::SettingsInvalid));
+        }
+        check_ancestors(Path::new(source))?;
+        check_ancestors(&env.host_in_home(&[".ssh"]))?;
+        self.check_data_ownership()?;
+        let native = ssh::keyconv::copy_key_to_windows_ssh(Path::new(source), &env)?;
+        self.record_pending_key_files(&env, &native)?;
+        Ok(native)
+    }
+
     pub fn copy_key_to_wsl(&self, source: &str, env_id: &EnvId) -> Result<String> {
         let epoch = self.reset_epoch.load(Ordering::SeqCst);
         self.copy_key_to_wsl_at(source, env_id, epoch, None)

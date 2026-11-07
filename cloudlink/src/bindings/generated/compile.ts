@@ -20,4 +20,44 @@ export type LintLevel = "error" | "warning" | "info";
 
 export type PreviewRequest = { envId: EnvId, agentKey: string, asset?: AssetInput, config?: SkillConfig, };
 
-export type SkillConfig = { relationships: string, conventions: Array<Convention>, };
+/**
+ * CloudLink 从资源数据推出的一条关系
+ */
+export type Relation = { 
+/**
+ * 由资源 id 组成，资源不变时保持不变
+ */
+id: string, kind: RelationKind, assetIds: Array<string>, 
+/**
+ * 界面文案用的参数（别名、域名、实例名等）
+ */
+params: Record<string, string | number>, 
+/**
+ * 写进 SKILL.md 的一句英文
+ */
+text: string, 
+/**
+ * 用户隐藏了这一条
+ */
+hidden: boolean, };
+
+export type RelationKind = "proxy-jump" | "same-host" | "dns" | "instance" | "site";
+
+/**
+ * 用户补充或改写的一条关系（一句英文，写进「How they fit together」）
+ */
+export type RelationNote = { id: string, text: string, 
+/**
+ * 改写自哪一条自动关系；那一条同时记在 `hidden_relations` 里
+ */
+replaces?: string, };
+
+export type SkillConfig = { 
+/**
+ * 用户补充或改写的关系
+ */
+relationNotes: Array<RelationNote>, 
+/**
+ * 用户隐藏的自动关系 id
+ */
+hiddenRelations: Array<string>, conventions: Array<Convention>, };

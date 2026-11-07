@@ -84,7 +84,7 @@ function resetData() {
   // 恢复默认设置后检查更新重新打开（与后端 finish_reset 一致）
   if (!autoCheck) setAutoCheck(true)
   db.sshHosts.hosts.forEach((h) => (h.imported = false))
-  db.skillConfig = { relationships: "", conventions: [] }
+  db.skillConfig = { relationNotes: [], hiddenRelations: [], conventions: [] }
   recompile({ silent: true })
   void emit("guard://changed", { statuses: db.guard })
 }

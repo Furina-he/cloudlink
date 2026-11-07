@@ -324,7 +324,10 @@ impl Db {
         self.put_kv(KEY_SETTINGS, s)
     }
     pub fn get_skill_config(&self) -> Result<SkillConfig> {
-        Ok(self.get_kv(KEY_SKILL_CONFIG)?.unwrap_or_default())
+        Ok(self
+            .get_kv::<SkillConfig>(KEY_SKILL_CONFIG)?
+            .unwrap_or_default()
+            .migrated())
     }
     pub fn put_skill_config(&self, c: &SkillConfig) -> Result<()> {
         self.put_kv(KEY_SKILL_CONFIG, c)

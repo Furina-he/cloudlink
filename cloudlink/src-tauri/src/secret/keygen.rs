@@ -83,14 +83,20 @@ pub fn write_new(path: &Path, content: &[u8]) -> io::Result<()> {
     f.sync_all()
 }
 
+/// 新建只有当前用户能读写的私钥文件（Windows 收紧 ACL，其他系统 600），已存在就失败
+pub fn write_private(path: &Path, content: &[u8]) -> Result<()> {
+    let mut private = create_new(path)?;
+    #[cfg(windows)]
+    crate::fsx::restrict_file_to_current_user(path)?;
+    private.write_all(content)?;
+    private.sync_all()?;
+    Ok(())
+}
+
 /// 把生成的密钥写到 `dir/cloudlink_<alias>`（重名加后缀），返回私钥路径
 pub fn save(dir: &Path, alias: &str, key: &GeneratedKey) -> Result<PathBuf> {
     let path = unique_key_path(dir, &format!("cloudlink_{alias}"));
-    let mut private = create_new(&path)?;
-    #[cfg(windows)]
-    crate::fsx::restrict_file_to_current_user(&path)?;
-    private.write_all(key.private_openssh.as_bytes())?;
-    private.sync_all()?;
+    write_private(&path, key.private_openssh.as_bytes())?;
     write_new(&pub_path(&path), format!("{}\n", key.public_openssh).as_bytes())?;
     Ok(path)
 }

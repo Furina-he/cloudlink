@@ -21,19 +21,22 @@ const toOptions = (values: string[]) => values.map((v) => ({ value: v, label: v 
 const OPTIONAL = <span className="font-normal text-muted-foreground">{copy.common.optional}</span>
 
 /** 名称（两类资源共用）。onChange 在新建时让别名跟随名称 */
-export function NameField({ onChange }: { onChange?: (name: string) => void }) {
+/** `fallback`：添加服务器时名称可以不填，保存时用地址（与 Termius 的标签一致） */
+export function NameField({ onChange, fallback }: { onChange?: (name: string) => void; fallback?: string }) {
   const {
     register,
     formState: { errors },
   } = useFormContext<ProfileFormValues>()
+  const optional = fallback !== undefined
   return (
     <Field data-invalid={!!errors.name || undefined}>
       <FieldLabel htmlFor="server-name">
-        {copy.basic.name} <Required />
+        {copy.basic.name} {!optional && <Required />}
       </FieldLabel>
       <Input
         id="server-name"
-        aria-required
+        aria-required={!optional}
+        placeholder={optional ? copy.basic.nameFallback(fallback) : undefined}
         aria-invalid={!!errors.name || undefined}
         {...register("name", { onChange: (e: { target: { value: string } }) => onChange?.(e.target.value) })}
       />

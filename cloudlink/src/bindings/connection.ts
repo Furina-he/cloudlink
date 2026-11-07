@@ -1,4 +1,4 @@
-// 手写契约（PRD F-106、F-108、7.8）：测试连接与主机指纹
+// 手写契约（PRD F-106、F-108、7.8）：测试连接、主机指纹与私钥预检
 import type { ConnectionInput } from "./asset"
 import type { EnvId } from "./env"
 import type { SshError } from "./probe"
@@ -18,6 +18,19 @@ export interface ConnectionTestRequest {
 
 export type ConnectionTestStatus = "ok" | "failed" | "cancelled" | "host-key"
 
+/**
+ * new：第一次见到，等用户核对；changed：与已保存的记录不符，阻断（F-106 AC2）；
+ * trusted：用户刚核对并信任，已写入 known_hosts；adopted：known_hosts 里这个地址已有同一把公钥，直接沿用
+ */
+export type HostKeyKnown = "new" | "changed" | "trusted" | "adopted"
+
+export interface HostKeyInfo {
+  fingerprint: string
+  known: HostKeyKnown
+  /** adopted：known_hosts 里记录这把公钥的名字，例如 `203.0.113.10` 或 `[203.0.113.10]:2222` */
+  knownAs?: string
+}
+
 /** connection://tested 的载荷 */
 export interface ConnectionTestedEvent {
   testId: string
@@ -26,6 +39,31 @@ export interface ConnectionTestedEvent {
   /** 远端系统，例如 "Ubuntu 24.04 LTS" */
   remoteOs?: string
   error?: SshError
-  /** 首次连接（new）要用户核对后信任；指纹与已知记录不符（changed）时阻断（F-106 AC2） */
-  hostKey?: { fingerprint: string; known: "new" | "changed" }
+  /** host-key 状态时等待核对（new）或已阻断（changed）；成功或认证失败时说明指纹已信任（trusted）或沿用（adopted） */
+  hostKey?: HostKeyInfo
+}
+
+/** 私钥文件预检的结论（F-108「检测常见问题」）；unchecked 表示没能检查，不下结论 */
+export type KeyCheckStatus =
+  | "ok"
+  | "missing"
+  | "permissions"
+  | "passphrase"
+  | "putty"
+  | "public-key"
+  | "invalid"
+  | "unchecked"
+
+export interface KeyCheck {
+  status: KeyCheckStatus
+  /** 例如 `ED25519` */
+  keyType?: string
+  /** 公钥的 SHA256 指纹 */
+  fingerprint?: string
+}
+
+export interface KeyCheckRequest {
+  envId: EnvId
+  /** 该运行环境里的写法 */
+  path: string
 }

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use super::*;
 use crate::model::asset::{Asset, FieldSource, Mode, Service, ServiceKind};
-use crate::model::compile::LintId;
+use crate::model::compile::{LintId, RelationNote};
 use crate::testkit;
 use crate::time;
 
@@ -155,8 +155,12 @@ fn secret_in_notes_blocks_publishing_and_names_the_server() {
 
     // 全局内容里的密钥没有服务器 id
     let config = SkillConfig {
-        relationships: format!("{}=hunter2-xyz", "password"),
-        conventions: vec![],
+        relation_notes: vec![RelationNote {
+            id: "r1".into(),
+            text: format!("{}=hunter2-xyz", "password"),
+            replaces: None,
+        }],
+        ..Default::default()
     };
     let p = compile_with(&[Asset::Vps(testkit::dev_box())], &config);
     let l = p.lint.iter().find(|l| l.id == LintId::SecretDetected).unwrap();
@@ -208,8 +212,12 @@ fn loopback_health_check_is_static_but_user_address_exports_still_block() {
 
     local.notes.clear();
     let config = SkillConfig {
-        relationships: "The server address is 127.0.0.1".into(),
-        conventions: vec![],
+        relation_notes: vec![RelationNote {
+            id: "r1".into(),
+            text: "The server address is 127.0.0.1".into(),
+            replaces: None,
+        }],
+        ..Default::default()
     };
     let preview = compile_with(&[Asset::Vps(local)], &config);
     assert!(preview.blocked);

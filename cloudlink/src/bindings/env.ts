@@ -1,4 +1,6 @@
 // 手写契约（PRD 3.4、7.8）。P4 起由 ts-rs 从 Rust 结构体生成，届时以生成结果为准
+import type { DetectedAgent } from "./delivery"
+
 export type EnvId = "windows" | "macos" | "linux" | `wsl:${string}`
 
 export interface Environment {
@@ -13,6 +15,8 @@ export interface Environment {
   managedSshConfig: { path: string; included: boolean }
   /** ssh-agent 中已加载的密钥数（ssh-add -l）；agent 不可用时为 null（2026-10-31 补充） */
   sshAgentKeys: number | null
+  /** 这个环境里检测到的 Agent（2026-11-07） */
+  agents: DetectedAgent[]
 }
 
 /** ssh config 中的一个 Host（list_ssh_hosts）。通配 Host 和 CloudLink 托管文件里的 Host 不在其中（F-102 AC1、AC4） */

@@ -4,8 +4,9 @@ import { back, collectConsoleErrors, detailTitle, inspector, openServer, ready, 
 
 // 资源视图（PRD 6.4、6.5、6.10）：单行双闸刀配电盘、全宽详情（← 返回）、添加弹窗、SSH 一步到位、云平台 CLI 向导
 
-const sshForm = (page: Page) => page.getByRole("region", { name: "添加 SSH 服务器" })
-const connectEnable = (page: Page) => sshForm(page).getByRole("button", { name: /连接并启用/ })
+// 填表时标题是「添加 SSH 服务器」，点连接后同一个区域切到「连接 <别名>」的连接过程
+const sshForm = (page: Page) => page.getByRole("region", { name: /^(添加 SSH 服务器|连接 )/ })
+const connectEnable = (page: Page) => sshForm(page).getByRole("button", { name: /^(连接并启用|重新连接)/ })
 
 /** 添加 SSH 服务器：填地址、用户和名称；认证方式默认选 ssh-agent，不用选私钥文件 */
 async function fillNew(page: Page, name: string, host: string, user = "root", method = "ssh-agent") {
@@ -28,15 +29,24 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     await expect(row(page, "hk-edge")).toBeVisible({ timeout: 10_000 })
   })
 
-  test("列表为空：Empty 直接给出添加 SSH 服务器、连接云平台 CLI、导入三个入口", async ({ page }) => {
+  test("列表为空：服务器、云平台两组入口，导入那一行报出 ssh config 里可导入的主机数", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await page.goto("/?mock=empty")
-    await expect(page.getByText("还没有资源")).toBeVisible()
-    for (const name of ["添加 SSH 服务器", "连接云平台 CLI（Cloudflare / Vercel / Oracle）", "从 ssh config 导入"]) {
-      await expect(page.getByRole("button", { name })).toBeVisible()
+    await expect(page.getByRole("heading", { name: "接入第一个资源" })).toBeVisible()
+    const servers = page.getByRole("list", { name: "服务器" })
+    await expect(servers.getByRole("button", { name: /^添加 SSH 服务器/ })).toBeVisible()
+    await expect(servers.getByRole("button", { name: /^从 ssh config 导入/ })).toContainText("有 3 台主机可以导入")
+    const clis = page.getByRole("list", { name: "云平台" })
+    for (const name of ["连接 Cloudflare", "连接 Vercel", "连接 Oracle Cloud"]) {
+      await expect(clis.getByRole("button", { name: new RegExp(`^${name}`) })).toBeVisible()
     }
-    await expect(page.getByRole("list", { name: "开始使用" })).toHaveCount(0)
+    // 方向键在两组入口之间移动，Enter 打开对应的添加弹窗
+    await servers.getByRole("button", { name: /^从 ssh config 导入/ }).focus()
+    await page.keyboard.press("ArrowDown")
+    await expect(clis.getByRole("button", { name: /^连接 Cloudflare/ })).toBeFocused()
     await shot(page, "state-02-empty")
+    await page.keyboard.press("Enter")
+    await expect(page.getByRole("dialog")).toBeVisible()
     expect(errors).toEqual([])
   })
 
@@ -182,20 +192,20 @@ test.describe("回路行右侧的双闸刀（PRD 6.4）", () => {
     const errors = collectConsoleErrors(page)
     await ready(page)
     const list = page.locator("#server-list")
-    const universal = list.getByRole("button", { name: "将 hk-edge 分发给 Codex" })
+    const universal = list.getByRole("button", { name: "将 hk-edge 分发给 通用目录" })
     await expect(list.getByRole("button", { name: "将 hk-edge 分发给 Claude Code" })).toHaveAttribute("aria-pressed", "true")
     await expect(universal).toHaveAttribute("aria-pressed", "false")
     await universal.click()
     await expect(universal).toHaveAttribute("aria-pressed", "true")
-    await expect(toastText(page, "已把 hk-edge 分发给 Codex")).toBeVisible()
+    await expect(toastText(page, "已把 hk-edge 分发给 通用目录")).toBeVisible()
     await expect(page.locator("#detail-title")).toHaveCount(0)
 
     // dev-box 只用密码：没点亮的按钮不可用
     await expect(list.getByRole("button", { name: "将 dev-box 分发给 Claude Code" })).toBeDisabled()
 
-    // Codex 只在 WSL 启用；hk-edge 在 WSL 没有私钥，提示里列出两份总 Skill
+    // 通用目录只在 WSL 启用；hk-edge 在 WSL 没有私钥，提示里列出两份总 Skill
     await openServer(page, "hk-edge")
-    await expect(inspector(page).getByText(/Codex（WSL Ubuntu-24.04）/)).toBeVisible()
+    await expect(inspector(page).getByText(/通用（WSL Ubuntu-24.04）/)).toBeVisible()
     await shot(page, "breaker-03-agent")
     expect(errors).toEqual([])
   })
@@ -247,11 +257,14 @@ test.describe("添加 SSH 服务器：连接并启用（PRD 6.5、F-106、F-108�
     await expect(form.getByText("连接后自动配置免密密钥供 Agent 使用，不保留明文密码。")).toBeVisible()
     await form.getByLabel(/^密码/).fill("secret-pass")
     await connectEnable(page).click()
-    await expect(sshForm(page).getByRole("button", { name: "正在验证连接…" })).toBeVisible()
-    const dialog = page.getByRole("alertdialog", { name: "首次连接，请核对主机指纹" })
-    await expect(dialog).toContainText("SHA256:")
+    // 指纹在连接过程的「核对主机指纹」一步里就地核对，不再叠一层对话框
+    const steps = sshForm(page).getByRole("list", { name: "连接 tokyo-relay" })
+    await expect(steps.locator("[data-step=hostKey]")).toHaveAttribute("data-state", "attention")
+    const fingerprint = sshForm(page).getByTestId("connect-fingerprint")
+    await expect(fingerprint).toContainText("SHA256:")
+    await expect(page.getByRole("alertdialog", { name: "首次连接，请核对主机指纹" })).toHaveCount(0)
     await shot(page, "ssh-05-host-key")
-    await dialog.getByRole("button", { name: "信任并继续" }).click()
+    await fingerprint.getByRole("button", { name: "信任并继续" }).click()
     await page.getByRole("alertdialog", { name: "把托管配置加入 ~/.ssh/config？" }).getByRole("button", { name: "加入 Include" }).click()
     await expect(sshForm(page).getByRole("button", { name: "正在生成并安装免密密钥…" })).toBeVisible()
     await shot(page, "ssh-06-converting")
@@ -425,7 +438,7 @@ test.describe("纯键盘流程", () => {
 
     const list = page.locator("#server-list")
     const claude = list.getByRole("button", { name: "将 hk-edge 分发给 Claude Code" })
-    const universal = list.getByRole("button", { name: "将 hk-edge 分发给 Codex" })
+    const universal = list.getByRole("button", { name: "将 hk-edge 分发给 通用目录" })
     await claude.focus()
     await page.keyboard.press("ArrowRight")
     await expect(universal).toBeFocused()

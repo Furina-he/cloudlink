@@ -2,6 +2,7 @@
 import type {
   ActivityKind,
   ActivityMessageId,
+  AgentBrand,
   AgentId,
   AgentNoteFlag,
   AuthMethod,
@@ -25,6 +26,7 @@ import type {
   ProbeState,
   ProbeStep,
   ProbeStepStatus,
+  RelationKind,
   SshErrorId,
 } from "@/bindings"
 import type { PanelTemplateId } from "@/lib/panelTemplates"
@@ -45,14 +47,55 @@ const MODE_LABEL: Record<Mode, string> = {
 }
 const AGENT_LABEL: Record<AgentId, string> = {
   "claude-code": "Claude Code",
-  universal: "Codex",
+  universal: "通用目录",
+  trae: "Trae",
+  "trae-cn": "Trae CN",
+  kiro: "Kiro",
+  continue: "Continue",
   custom: "自定义目录",
 }
 /** 回路行上 Agent 按钮的短名称；自定义目录用用户填的名称 */
 const AGENT_SHORT: Record<Exclude<AgentId, "custom">, string> = {
   "claude-code": "Claude Code",
-  universal: "Codex",
+  universal: "通用",
+  trae: "Trae",
+  "trae-cn": "Trae CN",
+  kiro: "Kiro",
+  continue: "Continue",
 }
+/** 检测到的 Agent 品牌（产品名，不翻译） */
+const BRAND_NAME: Record<AgentBrand, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  cursor: "Cursor",
+  windsurf: "Windsurf",
+  "gemini-cli": "Gemini CLI",
+  copilot: "GitHub Copilot",
+  opencode: "OpenCode",
+  cline: "Cline",
+  "roo-code": "Roo Code",
+  "kilo-code": "Kilo Code",
+  goose: "Goose",
+  amp: "Amp",
+  "qwen-code": "Qwen Code",
+  droid: "Factory Droid",
+  augment: "Augment",
+  crush: "Crush",
+  junie: "Junie",
+  warp: "Warp",
+  trae: "Trae",
+  "trae-cn": "Trae CN",
+  kiro: "Kiro",
+  continue: "Continue",
+}
+/** 关系句子里的一组名称：每个都是等宽片段（`名称`），用顿号分隔 */
+const codeList = (p: Params, key: string) =>
+  v(p, key)
+    .split("、")
+    .filter(Boolean)
+    .map((x) => `\`${x}\``)
+    .join("、")
+const codeOf = (p: Params, key: string) => `\`${v(p, key)}\``
 const envShort = (id: EnvId) =>
   id === "windows"
     ? "Windows"
@@ -67,9 +110,9 @@ const envOf = (p: Params) => envLong(v(p, "env") as EnvId)
 /** 「Claude Code（Windows）」：一份总 Skill 属于哪个 Agent、哪个运行环境；没有 target 参数时只写运行环境 */
 const targetOf = (p: Params) =>
   p?.target ? `${v(p, "target")}（${envOf(p)}）` : `${envOf(p)} `
-/** Lint 的主语：服务器的问题写别名，全局内容（关系、约定）的问题写「交给 Agent 的内容」 */
+/** Lint 的主语：服务器的问题写别名，全局内容（关系、约定）的问题写「写进 Skill 的内容」 */
 const subject = (p: Params) =>
-  p?.alias ? `${p.alias} 的信息` : "交给 Agent 的内容"
+  p?.alias ? `${p.alias} 的信息` : "资源关系或运维约定"
 
 /** ssh 错误分类（PRD 8.3）：标题 + 下一步。探测和测试连接共用 */
 const SSH_ERROR: Record<SshErrorId, { title: Msg; hint: Msg }> = {
@@ -86,7 +129,7 @@ const SSH_ERROR: Record<SshErrorId, { title: Msg; hint: Msg }> = {
   "host-key-unknown": {
     title: (p) => `本机还不认识 ${v(p, "alias")} 的主机密钥`,
     hint: () =>
-      "点「测试连接」，核对指纹后信任。CloudLink 不会自动信任主机密钥。",
+      "点「测试连接」，核对指纹后信任。CloudLink 只沿用你在 known_hosts 里确认过的同一把公钥，不会自动信任陌生的主机密钥。",
   },
   "host-key-changed": {
     title: (p) =>
@@ -112,12 +155,28 @@ const SSH_ERROR: Record<SshErrorId, { title: Msg; hint: Msg }> = {
   },
   "key-permissions": {
     title: () => "私钥文件权限过宽，ssh 拒绝使用",
-    hint: () =>
-      "WSL 中把私钥放到 ~/.ssh/ 并设置 600 权限，可以用「复制到 WSL」。",
+    hint: (p) =>
+      String(p?.env ?? "").startsWith("wsl:")
+        ? "WSL 中的 ssh 要求私钥只有你能读（600 权限）。用「复制到 WSL」放一份副本到 ~/.ssh/。"
+        : "Windows 版 OpenSSH 拒绝其他用户也能读取的私钥，下载目录里的密钥常见这个问题。用「复制到 ~/.ssh」放一份只有你能读的副本，原文件不动。",
   },
   "key-not-found": {
     title: (p) => `找不到私钥文件 ${v(p, "path")}`,
     hint: () => "检查路径是否正确，或者重新选择私钥文件。",
+  },
+  "key-invalid": {
+    title: (p) =>
+      p?.reason === "putty"
+        ? "这是 PuTTY 格式的私钥（.ppk），OpenSSH 不能直接使用"
+        : p?.reason === "public-key"
+          ? "选择的是公钥（.pub），不是私钥"
+          : "无法识别这个私钥文件",
+    hint: (p) =>
+      p?.reason === "putty"
+        ? "用 PuTTYgen 打开它，选 Conversions → Export OpenSSH key 导出后再选择导出的文件。"
+        : p?.reason === "public-key"
+          ? "选择同名但不带 .pub 的那个文件。"
+          : "选择 OpenSSH 格式的私钥（以 -----BEGIN 开头）。",
   },
   partial: {
     title: (p) => `部分信息采集失败：${v(p, "section")} 需要权限`,
@@ -240,6 +299,7 @@ export const copy = {
 
   agent: AGENT_LABEL,
   agentShort: AGENT_SHORT,
+  brand: BRAND_NAME,
   /** 一份总 Skill 的名称：Agent（运行环境） */
   agentInEnv: (agent: string, env: string) => `${agent}（${env}）`,
 
@@ -490,6 +550,10 @@ export const copy = {
     agentToggle: (alias: string, agent: string) =>
       `将 ${alias} 分发给 ${agent}`,
     noAgents: "没有启用的 Agent",
+    edit: "编辑",
+    editLabel: (handle: string) => `编辑 ${handle}`,
+    editConnection: "编辑连接",
+    moreLabel: (handle: string) => `${handle} 的更多操作`,
     notesBadge: (n: number) => `笔记 ${n}`,
     linkedTo: (aliases: string) => `关联 ${aliases}`,
     probingLabel: "探测中",
@@ -614,6 +678,7 @@ export const copy = {
     passwordHint: "连接后自动配置免密密钥供 Agent 使用，不保留明文密码。",
     stage: {
       testing: "正在验证连接…",
+      saving: "正在保存…",
       converting: "正在生成并安装免密密钥…",
       enabling: "已启用，正在后台探测服务…",
     },
@@ -624,12 +689,18 @@ export const copy = {
 
   /** 首次启动（PRD 6.8） */
   onboarding: {
-    title: "还没有资源",
+    title: "接入第一个资源",
     description:
-      "接入服务器（SSH）或云平台（CLI），CloudLink 会把它们编译成一个 Skill 交给本机的 Agent，并在 Claude Code 上用护栏守住档位。",
+      "CloudLink 把服务器和云平台编译成一个 Skill，交给本机的 Agent 使用。",
+    add: "添加",
     addSsh: "添加 SSH 服务器",
-    connectCli: "连接云平台 CLI（Cloudflare / Vercel / Oracle）",
+    addSshBlurb: "VPS 或云主机：填地址和认证方式，测试通过就启用",
+    connectCli: (name: string) => `连接 ${name}`,
     importSsh: "从 ssh config 导入",
+    importFound: (n: number) => `ssh config 里有 ${n} 台主机可以导入`,
+    importNone: "读取本机的 ~/.ssh/config，挑选要接入的主机",
+    stepsLabel: "CloudLink 怎么工作",
+    steps: ["接入资源", "编译成一个 Skill", "Agent 按档位操作"],
   },
 
   /** 右侧检视面板（PRD 6.4） */
@@ -840,6 +911,72 @@ export const copy = {
     changedTitle: (alias: string) => `${alias} 的主机密钥与已知记录不符`,
     changedDescription:
       "可能是重装了系统，也可能是中间人攻击。CloudLink 已阻断这次连接。核实之后，手动更新 known_hosts。",
+    /** 在服务器上自己核对的命令 */
+    verifyHint: "在服务器控制台运行下面的命令，输出里应该有同一串指纹：",
+    verifyCommand: "ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub",
+    changedFix: (alias: string) => `确认服务器重装过之后，在终端运行 ssh-keygen -R ${alias} 删除旧记录，再测试连接。`,
+  },
+
+  /** 添加服务器时的连接过程（PRD 6.5）：逐步显示，问题就地修复 */
+  connect: {
+    title: (alias: string) => `连接 ${alias}`,
+    target: (user: string, host: string, port: number) =>
+      port === 22 ? `${user}@${host}` : `${user}@${host}:${port}`,
+    steps: {
+      key: "检查私钥",
+      reach: (host: string) => `连接 ${host}`,
+      hostKey: "核对主机指纹",
+      login: (method: string) => `登录（${method}）`,
+      enable: "保存并启用",
+    },
+    detail: {
+      checking: "正在检查…",
+      connecting: "正在连接…",
+      reached: (ms: string) => `已连通 · ${ms}`,
+      hostKeyWaiting: "等待你核对",
+      hostKeyKnown: "已在 known_hosts 中",
+      hostKeyTrusted: "已信任，写入 known_hosts",
+      hostKeyAdopted: (name: string) => `沿用 known_hosts 中 ${name} 的记录`,
+      hostKeyTrusting: "已信任，正在登录…",
+      loggingIn: "正在登录…",
+      loggedIn: (os?: string) => (os ? `已登录 · ${os}` : "已登录"),
+      saving: "正在保存…",
+      converting: "正在生成并安装免密密钥…",
+      enabling: (agents: number) =>
+        agents ? `授权给 ${agents} 个 Agent，后台探测服务` : "后台探测服务",
+      skipped: "未执行",
+    },
+    /** 读屏用的步骤状态 */
+    state: {
+      pending: "未开始",
+      running: "进行中",
+      done: "已完成",
+      attention: "等待确认",
+      failed: "失败",
+      skipped: "未执行",
+    },
+    newKey: (host: string) => `第一次连接 ${host}，请核对服务器出示的指纹：`,
+    cancelled: "已取消连接",
+    back: "返回修改",
+    retry: "重新连接",
+    copyFingerprint: "复制指纹",
+    copyToSsh: "复制到 ~/.ssh",
+    copyToWsl: "复制到 WSL",
+  },
+
+  /** 私钥预检（F-108）：显示在私钥路径下面 */
+  keyCheck: {
+    ok: (type: string, fp: string) => `${type} · ${fp}`,
+    okPlain: "可以使用",
+    missing: "找不到这个文件",
+    permissionsWindows: "其他用户也能读取这把私钥，ssh 会拒绝使用。",
+    permissionsWsl: "这把私钥权限过宽，ssh 会拒绝使用。",
+    passphrase:
+      "这把私钥设有密码短语，Agent 无法输入。先运行 ssh-add 把它加入 ssh-agent，再把认证方式改为 ssh-agent。",
+    putty: "PuTTY 格式（.ppk）。用 PuTTYgen 导出为 OpenSSH 格式后再选择。",
+    publicKey: "这是公钥。请选择同名但不带 .pub 的私钥文件。",
+    invalid: "无法识别这个文件，请选择 OpenSSH 格式的私钥。",
+    fix: "复制到 ~/.ssh",
   },
 
   include: {
@@ -865,6 +1002,9 @@ export const copy = {
     title: "把私钥复制到 WSL？",
     description: (source: string, env: string) =>
       `CloudLink 会把 ${source} 复制到 ${env} 的 ~/.ssh/，设置 600 权限，并把这一行改为副本的路径。目标位置已有同名文件时加后缀，不覆盖。`,
+    titleWindows: "把私钥复制到 ~/.ssh？",
+    descriptionWindows: (source: string) =>
+      `CloudLink 会把 ${source} 复制到 Windows 的 ~/.ssh/，副本只有你能读取，并把私钥路径改为副本。原文件不动；同名文件已存在时加后缀，不覆盖。删除这台服务器时可以一并删除副本。`,
     confirm: "复制",
     done: (path: string) => `已复制到 ${path}`,
     noSource: "先填写 Windows 的私钥路径。",
@@ -872,6 +1012,7 @@ export const copy = {
 
   basic: {
     name: "名称",
+    nameFallback: (host: string) => (host ? `留空则用 ${host}` : "留空则用地址"),
     env: "环境",
     summary: "用途",
     summaryHint: "写进总览表和 description，帮助 Agent 判断任务涉及哪项资源。",
@@ -1181,6 +1322,7 @@ export const copy = {
     "envs-required": "至少选择一个运行环境",
     "rule-empty": "红线内容不能为空",
     "convention-empty": "约定内容不能为空",
+    "relation-empty": "关系内容不能为空",
     "path-label-required": "请填写用途",
     "path-required": "请填写路径",
     "service-name-required": "请填写服务名称",
@@ -1196,7 +1338,23 @@ export const copy = {
   /** Agent 视图（PRD 6.6） */
   agents: {
     summary: (included: number, enabled: number) =>
-      `${included} 项资源已列入 · ${enabled} 个目标已启用`,
+      `${included} 项资源已列入 · ${enabled} 个目录已启用`,
+    /** Agent 与目录分区（2026-11-07 重新设计：目标、读取它的 Agent、护栏合在一行里） */
+    targetsTitle: "Agent 与目录",
+    targetsHint: "总 Skill 复制到每个已启用的目录，读取这个目录的 Agent 都能用上。",
+    /** 通用目录下面一行：哪些检测到的 Agent 读取它 */
+    readersSuffix: "读取这个目录",
+    readersNone: "Codex、Cursor、Gemini CLI、GitHub Copilot 等大多数 Agent 都读取这里",
+    readersLabel: "读取这个目录的 Agent",
+    readersTooltip: (label: string, names: string) => `${label}：${names} 读取`,
+    duplicate: (name: string, dir: string) =>
+      `${name} 已经能从「${dir}」读到总 Skill，这里再放一份会让它看到两份；不需要的话停用这个目录。`,
+    guard: "护栏",
+    installGuard: "安装护栏",
+    reinstallGuard: "重新安装护栏",
+    removeGuard: "移除护栏",
+    guardRules: "查看护栏规则",
+    homePath: (path: string) => `完整路径：${path}`,
     problems: (n: number) => `${n} 个问题需要处理`,
     problemsLabel: (n: number) => `${n} 个问题需要处理，跳到第一个`,
     preview: "预览 Skill",
@@ -1209,22 +1367,51 @@ export const copy = {
   },
 
   skillContent: {
-    title: "交给 Agent 的内容",
-    hint: "不属于任何一项资源，写进总 Skill 的 SKILL.md，原文逐字输出。",
-    relationships: "基础设施之间的关系",
-    relationshipsHint:
-      "例如哪台反代哪台、哪些容器用哪台的数据库。用英文写，Agent 读起来最准确。",
+    title: "写进 Skill 的内容",
+    hint: "所有 Agent 读到的是同一份。改动在底部保存后重新编译。",
+    relations: "资源关系",
+    relationsHint: "CloudLink 根据跳板机、域名解析、云主机等自动整理，资源变了会跟着更新。不对的可以隐藏或改写。",
+    addRelation: "补充一条",
+    relationsEmpty:
+      "还没有能自动整理的关系。服务器经跳板机连接，或在云平台里把域名关联到服务器之后，会出现在这里。",
+    /** 自动关系的中文说明，等宽片段用反引号标出 */
+    relation: {
+      "proxy-jump": (p: Params) => `${codeOf(p, "from")} 经跳板机 ${codeOf(p, "via")} 连接`,
+      "same-host": (p: Params) => `${codeList(p, "aliases")} 是同一台机器`,
+      dns: (p: Params) =>
+        `${codeOf(p, "zone")} 的解析在 ${codeOf(p, "provider")} 管理，指向 ${codeOf(p, "to")}` +
+        (p?.sites ? `，承载 ${codeList(p, "sites")}` : ""),
+      site: (p: Params) =>
+        `${codeOf(p, "to")} 承载的 ${codeList(p, "sites")} 属于 ${codeOf(p, "provider")} 管理的域名 ${codeOf(p, "zone")}`,
+      instance: (p: Params) =>
+        `${codeOf(p, "to")} 是 ${codeOf(p, "provider")} 的云主机实例 ${codeOf(p, "instance")}`,
+    } satisfies Record<RelationKind, Msg>,
+    autoAria: (n: number) => `自动整理的第 ${n} 条关系`,
+    englishLabel: "写进 Skill 的原文",
+    rewrite: "改写",
+    rewriteAria: (n: number) => `改写自动整理的第 ${n} 条关系`,
+    hide: "隐藏",
+    hideAria: (n: number) => `隐藏自动整理的第 ${n} 条关系`,
+    restore: "恢复",
+    hiddenCount: (n: number) => `已隐藏 ${n} 条`,
+    hiddenListLabel: "已隐藏的关系",
+    rewritten: "改写",
+    added: "补充",
+    noteAria: (n: number) => `补充的第 ${n} 条关系`,
+    rewriteNoteAria: (n: number) => `改写的第 ${n} 条关系（写进 Skill 的英文原文）`,
+    notePlaceholder: "用一句英文写，例如 The API containers on hk-edge use the database on sg-db.",
+    removeNote: (n: number) => `删除补充的第 ${n} 条关系`,
+    removeRewrite: (n: number) => `删除第 ${n} 条改写，恢复自动整理的那一条`,
     conventions: "运维约定",
-    conventionsHint:
-      "写进 SKILL.md 的「Rules for every server」，排在内置红线之后。",
+    conventionsHint: "写进 SKILL.md 的「Rules for every server」，排在内置红线之后。",
     addConvention: "添加约定",
     conventionsEmpty: "还没有运维约定。",
+    conventionPlaceholder: "例如 Deploy with docker compose in /opt/apps/<name>",
     conventionAria: (n: number) => `第 ${n} 条运维约定`,
     dragAria: (n: number) => `拖动排序：第 ${n} 条运维约定`,
     removeAria: (n: number) => `删除第 ${n} 条运维约定`,
     healthCheck: "巡检清单",
-    healthCheckHint:
-      "内置，Agent 巡检时只执行只读命令，清单中的命令都能通过护栏的只读白名单。",
+    healthCheckHint: "内置，只执行只读命令，都在护栏的只读白名单里。",
     viewHealthCheck: "查看",
     saved: "已保存，已重新编译",
   },
@@ -1237,7 +1424,7 @@ export const copy = {
     remove: "移除",
     reinstall: "重新安装",
     boundary:
-      "护栏只解析命令文本，能防手滑，防不了刻意绕过。Codex 没有护栏，它默认每条 ssh 都要你批准。",
+      "护栏只解析命令文本，能防手滑，防不了刻意绕过。只有 Claude Code 有护栏，其他 Agent 靠它们自己的权限设置决定是否每条 ssh 都要你批准。",
     noTarget: "还没有启用 Claude Code 目标，启用后可以在这里安装护栏。",
     installTitle: (env: string) => `为 ${env} 的 Claude Code 安装护栏？`,
     installDescription:
@@ -1297,8 +1484,7 @@ export const copy = {
   customTarget: {
     title: "添加自定义目录",
     description:
-      "选择主流 Agent 自动填入默认目录与官方图标，或手动指定任意全局 skills 目录。",
-    presets: "常见 Agent 快捷填充",
+      "Codex、Cursor、Gemini CLI 等大多数 Agent 已经读取通用目录，Trae、Kiro、Continue 检测到后会自动加入。只有 CloudLink 不认识的 Agent 才需要在这里指定它的全局 skills 目录。",
     name: "名称",
     path: "目录",
     pick: "选择目录",

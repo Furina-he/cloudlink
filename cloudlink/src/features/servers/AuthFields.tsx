@@ -1,8 +1,8 @@
-import { CopyIcon, EyeIcon, EyeOffIcon, FolderOpenIcon, TriangleAlertIcon } from "lucide-react"
+import { CircleCheckIcon, CopyIcon, EyeIcon, EyeOffIcon, FolderOpenIcon, InfoIcon, TriangleAlertIcon } from "lucide-react"
 import { useState } from "react"
 import { Controller, useFormContext, useWatch } from "react-hook-form"
 
-import type { EnvId } from "@/bindings"
+import type { EnvId, KeyCheck } from "@/bindings"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field"
@@ -15,9 +15,56 @@ import type { ServerFormValues } from "@/lib/schemas"
 import { useAssetStore } from "@/stores/assets"
 import { serverActions } from "./actions"
 import { CopyKeyDialog, type CopyKeyRequest } from "./CopyKeyDialog"
+import { forgetKeyCheck, useKeyCheck } from "./keyCheck"
 import { sortEnvs } from "./serverForm"
 import { useAvailableEnvs } from "./useServerForm"
 import { ValidationError } from "./ValidationError"
+
+/** 预检结论的一行说明；没能检查（unchecked）时不显示 */
+function keyCheckText(check: KeyCheck, wsl: boolean): { tone: "ok" | "warn" | "info"; text: string } | null {
+  switch (check.status) {
+    case "ok":
+      return { tone: "ok", text: check.keyType && check.fingerprint ? copy.keyCheck.ok(check.keyType, check.fingerprint) : copy.keyCheck.okPlain }
+    case "missing":
+      return { tone: "warn", text: copy.keyCheck.missing }
+    case "permissions":
+      return { tone: "warn", text: wsl ? copy.keyCheck.permissionsWsl : copy.keyCheck.permissionsWindows }
+    case "passphrase":
+      return { tone: "info", text: copy.keyCheck.passphrase }
+    case "putty":
+      return { tone: "warn", text: copy.keyCheck.putty }
+    case "public-key":
+      return { tone: "warn", text: copy.keyCheck.publicKey }
+    case "invalid":
+      return { tone: "warn", text: copy.keyCheck.invalid }
+    case "unchecked":
+      return null
+  }
+}
+
+/** 私钥路径下面的预检结果（F-108「检测常见问题」）；Windows 权限过宽时就地提供「复制到 ~/.ssh」 */
+function KeyStatus({ id, env, path, hideWslPermissions, onCopy }: { id: string; env: EnvId; path: string; hideWslPermissions: boolean; onCopy: () => void }) {
+  const check = useKeyCheck(env, path)
+  const wsl = env.startsWith("wsl:")
+  if (!check || (wsl && hideWslPermissions && check.status === "permissions")) return null
+  const line = keyCheckText(check, wsl)
+  if (!line) return null
+  const Icon = line.tone === "ok" ? CircleCheckIcon : line.tone === "warn" ? TriangleAlertIcon : InfoIcon
+  return (
+    <div id={id} data-key-check={check.status} className="col-start-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span className={line.tone === "warn" ? "flex min-w-0 items-start gap-1 text-xs text-warning" : "flex min-w-0 items-start gap-1 text-xs text-muted-foreground"}>
+        <Icon className={line.tone === "ok" ? "mt-px size-3.5 shrink-0 text-success" : "mt-px size-3.5 shrink-0"} aria-hidden />
+        <span className={line.tone === "ok" ? "font-mono break-all" : undefined}>{line.text}</span>
+      </span>
+      {check.status === "permissions" && !wsl && (
+        <Button type="button" variant="outline" size="xs" onClick={onCopy}>
+          <CopyIcon data-icon="inline-start" />
+          {copy.keyCheck.fix}
+        </Button>
+      )}
+    </div>
+  )
+}
 
 /** 私钥文件：每个写入的运行环境一行路径，带文件选择；WSL 的行可以「复制到 WSL」（F-108 AC4） */
 function KeyRows() {
@@ -39,6 +86,10 @@ function KeyRows() {
     const source = keys.windows?.trim() || mntToWindows(keys[env] ?? "") || ""
     if (!source) toast.add({ title: copy.copyKey.noSource, type: "warning" })
     else setCopyReq({ source, envId: env })
+  }
+  const copied = (env: EnvId, path: string) => {
+    forgetKeyCheck(env, path)
+    setKey(env, path)
   }
 
   return (
@@ -70,7 +121,7 @@ function KeyRows() {
                       onBlur={field.onBlur}
                       aria-label={copy.serverForm.keyLabel(copy.env.long(env))}
                       aria-invalid={!!error || undefined}
-                      aria-describedby={mnt ? `${id}-mnt` : undefined}
+                      aria-describedby={mnt ? `${id}-mnt` : `${id}-check`}
                       className="font-mono"
                       spellCheck={false}
                       autoComplete="off"
@@ -82,6 +133,7 @@ function KeyRows() {
                       </InputGroupButton>
                     </InputGroupAddon>
                   </InputGroup>
+                  <KeyStatus id={`${id}-check`} env={env} path={value} hideWslPermissions={mnt} onCopy={() => requestCopy(env)} />
                   {wsl && (
                     <div className="col-start-2 flex flex-wrap items-center gap-x-2 gap-y-1">
                       {mnt && (
@@ -103,7 +155,7 @@ function KeyRows() {
         )}
       />
       <ValidationError error={error} />
-      <CopyKeyDialog request={copyReq} onClose={() => setCopyReq(null)} onCopied={(env, path) => setKey(env, path)} />
+      <CopyKeyDialog request={copyReq} onClose={() => setCopyReq(null)} onCopied={copied} />
     </FieldSet>
   )
 }

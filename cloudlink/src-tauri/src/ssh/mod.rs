@@ -4,6 +4,7 @@
 pub mod classify;
 pub mod config;
 pub mod connect;
+pub mod keycheck;
 pub mod keyconv;
 pub mod managed;
 pub mod validate;

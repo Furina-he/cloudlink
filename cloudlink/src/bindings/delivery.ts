@@ -1,8 +1,42 @@
 // 手写契约（PRD 3.4、4.5、7.8）。v3 只有 Agent 全局目录这一种目标，分发一律受管复制
 import type { EnvId } from "./env"
 
-/** v0.1 只有这三类（4.5） */
-export type AgentId = "claude-code" | "universal" | "custom"
+/**
+ * CloudLink 维护的目标（4.5，2026-11-07）：Claude Code、通用目录 `~/.agents/skills`（Codex、Cursor 等大多数 Agent 读这里），
+ * 只认自己目录的 Trae、Trae CN、Kiro、Continue（检测到才有），以及自定义目录
+ */
+export type AgentId = "claude-code" | "universal" | "trae" | "trae-cn" | "kiro" | "continue" | "custom"
+
+/** CloudLink 认得的 Agent 品牌（2026-11-07），只用来显示谁会读到哪份 Skill */
+export type AgentBrand =
+  | "claude-code"
+  | "codex"
+  | "cursor"
+  | "windsurf"
+  | "gemini-cli"
+  | "copilot"
+  | "opencode"
+  | "cline"
+  | "roo-code"
+  | "kilo-code"
+  | "goose"
+  | "amp"
+  | "qwen-code"
+  | "droid"
+  | "augment"
+  | "crush"
+  | "junie"
+  | "warp"
+  | "trae"
+  | "trae-cn"
+  | "kiro"
+  | "continue"
+
+/** 某个运行环境里检测到的一个 Agent，和它读取的目标（第一个是它主要使用的那个） */
+export interface DetectedAgent {
+  brand: AgentBrand
+  reads: AgentId[]
+}
 
 /**
  * 回路行上点选的 Agent（2026-11-01 用户确认）：内置 Agent 取 AgentId，自定义目录取 `custom:<名称>`。

@@ -3,9 +3,13 @@
 //! - managed 服务器保存前用只含这台服务器的临时配置（`ssh -F <临时文件>`），末尾附收敛的 `Host *`；
 //!   imported 服务器用该环境的用户 config。
 //! - 首次连接用 `StrictHostKeyChecking=yes`，从 `ssh -v` 的输出里取服务器出示的指纹交给用户核对；
-//!   确认时先在临时 known_hosts 中无认证核对，实际认证只信任这个固定公钥；
-//!   成功后以无认证握手和 askpass 精确指纹回复让 OpenSSH 写入用户 known_hosts。
+//!   确认时先在临时 known_hosts 中无认证核对，随即以无认证握手和 askpass 精确指纹回复让 OpenSSH
+//!   写入用户 known_hosts（与 OpenSSH 回答 yes 后的行为一致，认证失败也不必再核对一次），
+//!   实际认证只信任临时文件里这个固定公钥。
+//! - 用户 known_hosts 里这个地址（`host` 或 `[host]:port`）已有同一把公钥时，视为用户已经核对过，
+//!   直接沿用（`@revoked`、`@cert-authority` 不算）。
 //!   密钥变更时不发送凭据、不执行远端命令、不写入或删除用户记录。
+//! - 私钥认证先用 `ssh-keygen` 预检私钥文件（`keycheck`），权限过宽、格式不对时不发起连接。
 //! - 密码只经 askpass broker 交给 ssh（`secret::askpass`），v0.1 只支持 Windows 原生环境。
 
 use std::collections::HashMap;
@@ -17,13 +21,14 @@ use std::time::{Duration, Instant};
 use ssh_key::{HashAlg, KnownHosts, known_hosts::HostPatterns};
 
 use super::classify::{classify, pretty_name, server_host_key};
+use super::keycheck;
 use super::managed::{ManagedHost, quote_path, render_host};
 use super::{SshTools, Tool};
 use crate::env::EnvContext;
 use crate::error::{AppError, Result};
 use crate::fsx;
 use crate::model::asset::{AuthMethod, ConnectionInput, ConnectionSource, ServerAsset};
-use crate::model::connection::{ConnectionTestStatus, HostKeyInfo, HostKeyKnown};
+use crate::model::connection::{ConnectionTestStatus, HostKeyInfo, HostKeyKnown, KeyCheckStatus};
 use crate::model::misc::IpcErrorId;
 use crate::model::probe::{SshError, SshErrorId};
 use crate::params;
@@ -80,6 +85,31 @@ impl TestOutcome {
             remote_os: None,
             error: Some(error),
             host_key: None,
+        }
+    }
+
+    fn cancelled(ms: u32) -> Self {
+        TestOutcome {
+            status: ConnectionTestStatus::Cancelled,
+            ms,
+            remote_os: None,
+            error: None,
+            host_key: None,
+        }
+    }
+
+    /// 服务器出示的公钥与确认过的不同：阻断，不发送凭据
+    fn changed(alias: &str, fingerprint: Option<String>, ms: u32) -> Self {
+        TestOutcome {
+            status: ConnectionTestStatus::HostKey,
+            ms,
+            remote_os: None,
+            error: Some(SshError::new(SshErrorId::HostKeyChanged, params! {"alias" => alias})),
+            host_key: fingerprint.map(|fingerprint| HostKeyInfo {
+                fingerprint,
+                known: HostKeyKnown::Changed,
+                known_as: None,
+            }),
         }
     }
 }
@@ -302,7 +332,7 @@ fn pinned_fingerprint(path: &std::path::Path, alias: &str) -> Option<String> {
     Some(entry.public_key().fingerprint(HashAlg::Sha256).to_string())
 }
 
-fn preflight(t: &TestTarget, confirming_host_key: bool) -> Option<SshError> {
+fn preflight(tools: &SshTools, t: &TestTarget, confirming_host_key: bool) -> Option<SshError> {
     let alias = params! {"alias" => t.alias.as_str()};
     if confirming_host_key && !t.env.is_windows() && !t.env.interop {
         return Some(SshError::new(SshErrorId::NeedsInteraction, alias));
@@ -313,12 +343,91 @@ fn preflight(t: &TestTarget, confirming_host_key: bool) -> Option<SshError> {
     if let Some(h) = &t.managed
         && h.method == AuthMethod::Key
     {
-        match &h.identity_file {
-            Some(f) if t.env.to_host(f).is_file() => {}
-            _ => return Some(SshError::new(SshErrorId::KeyNotFound, alias)),
+        let file = match &h.identity_file {
+            Some(f) if t.env.to_host(f).is_file() => f,
+            _ => return Some(key_error(SshErrorId::KeyNotFound, t, None)),
+        };
+        // 有密码短语的私钥可能已在 ssh-agent 里，交给实际连接判断
+        match keycheck::check(tools, &t.env, file).status {
+            KeyCheckStatus::Permissions => return Some(key_error(SshErrorId::KeyPermissions, t, None)),
+            status @ (KeyCheckStatus::Putty | KeyCheckStatus::PublicKey | KeyCheckStatus::Invalid) => {
+                return Some(key_error(SshErrorId::KeyInvalid, t, Some(status)));
+            }
+            _ => {}
         }
     }
     None
+}
+
+/// 私钥相关的错误带上路径和运行环境，界面据此给出对应环境的修复按钮
+fn key_error(id: SshErrorId, t: &TestTarget, reason: Option<KeyCheckStatus>) -> SshError {
+    let mut params = params! {"alias" => t.alias.as_str(), "env" => t.env.id.as_str()};
+    if let Some(file) = t.managed.as_ref().and_then(|h| h.identity_file.as_deref()) {
+        params.insert("path".into(), crate::model::ParamValue::from(file));
+    }
+    if let Some(reason) = reason
+        .and_then(|r| serde_json::to_value(r).ok())
+        .and_then(|v| v.as_str().map(String::from))
+    {
+        params.insert("reason".into(), crate::model::ParamValue::from(reason.as_str()));
+    }
+    SshError::new(id, params)
+}
+
+/// 用户 known_hosts 里记录同一把公钥的名字（`[host]:port` 优先，其次 `host`）。
+/// 只认普通记录：`@revoked`、`@cert-authority` 一律不算；查不了时返回 None，照常请用户核对
+fn known_elsewhere(tools: &SshTools, t: &TestTarget, fingerprint: &str, cancel: Option<&AtomicBool>) -> Option<String> {
+    let h = t.managed.as_ref()?;
+    let mut names = Vec::new();
+    if h.port != 22 {
+        names.push(format!("[{}]:{}", h.host, h.port));
+    }
+    names.push(h.host.clone());
+    let known_hosts = t.env.known_hosts_native();
+    if !t.env.to_host(&known_hosts).is_file() {
+        return None;
+    }
+    names.into_iter().find(|name| {
+        let mut cmd = tools.command(&t.env, Tool::SshKeygen);
+        cmd.args(["-E", "sha256", "-l", "-F", name, "-f", &known_hosts]);
+        proc::run(
+            cmd,
+            RunOpts {
+                timeout: Duration::from_secs(10),
+                cancel,
+                ..Default::default()
+            },
+        )
+        .is_ok_and(|out| {
+            out.ended == Ended::Exited
+                && out.code == Some(0)
+                && known_host_fingerprints(&out.stdout_str())
+                    .iter()
+                    .any(|(plain, fp)| *plain && fp == fingerprint)
+        })
+    })
+}
+
+/// `ssh-keygen -l -F` 的输出：每条记录先是 `# Host x found: line N [REVOKED|CA]`，下一行是指纹。
+/// 返回（是否普通记录, 指纹）
+fn known_host_fingerprints(stdout: &str) -> Vec<(bool, String)> {
+    let mut found = Vec::new();
+    let mut plain = None;
+    for line in stdout.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("# Host ") {
+            plain = rest.split_once(" found: line ").map(|(_, tail)| {
+                let mut words = tail.split_whitespace();
+                words.next(); // line number
+                words.next().is_none()
+            });
+        } else if let Some(is_plain) = plain.take()
+            && let Some(fp) = line.split_whitespace().find(|w| w.starts_with("SHA256:"))
+        {
+            found.push((is_plain, fp.to_string()));
+        }
+    }
+    found
 }
 
 /// 测试连接。`accept`：用户在指纹对话框里确认过的指纹（trust_host_key 之后的重测）
@@ -331,7 +440,9 @@ pub fn run_test(
 ) -> TestOutcome {
     let started = Instant::now();
     let ms = || started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
-    if let Some(e) = preflight(t, accept.is_some()) {
+    let alias = t.alias.as_str();
+    let unknown = || SshError::new(SshErrorId::Unknown, params! {"alias" => alias});
+    if let Some(e) = preflight(tools, t, accept.is_some()) {
         return TestOutcome::failed(e, ms());
     }
     // Keep the public key written by the preview alive through actual authentication.
@@ -339,63 +450,59 @@ pub fn run_test(
     if let Some(hosts) = &pinned_hosts
         && fsx::write_atomic(&hosts.0, b"").is_err()
     {
-        return TestOutcome::failed(
-            SshError::new(SshErrorId::Unknown, params! {"alias" => t.alias.as_str()}),
-            ms(),
-        );
+        return TestOutcome::failed(unknown(), ms());
     }
     let pinned_native = pinned_hosts
         .as_ref()
         .map(|hosts| t.env.windows_path_to_native(&hosts.0));
     if let Some(want) = accept {
-        let (preview, fp) = match run_ssh(tools, tmp_dir, t, None, None, pinned_native.as_deref(), cancel) {
-            Ok(out) => out,
-            Err(_) => {
-                return TestOutcome::failed(
-                    SshError::new(SshErrorId::Unknown, params! {"alias" => t.alias.as_str()}),
-                    ms(),
-                );
-            }
+        let Ok((preview, fp)) = run_ssh(tools, tmp_dir, t, None, None, pinned_native.as_deref(), cancel) else {
+            return TestOutcome::failed(unknown(), ms());
         };
         if preview.ended == Ended::Cancelled {
-            return TestOutcome {
-                status: ConnectionTestStatus::Cancelled,
-                ms: ms(),
-                remote_os: None,
-                error: None,
-                host_key: None,
-            };
+            return TestOutcome::cancelled(ms());
         }
         let actual_key = pinned_hosts
             .as_ref()
             .and_then(|hosts| pinned_fingerprint(&hosts.0, &t.alias));
-        if let Some(ref actual) = actual_key {
-            if actual != want {
-                return TestOutcome {
-                    status: ConnectionTestStatus::HostKey,
-                    ms: ms(),
-                    remote_os: None,
-                    error: Some(SshError::new(
-                        SshErrorId::HostKeyChanged,
-                        params! {"alias" => t.alias.as_str()},
-                    )),
-                    host_key: Some(HostKeyInfo {
-                        fingerprint: actual.clone(),
-                        known: HostKeyKnown::Changed,
-                    }),
-                };
+        match actual_key {
+            Some(actual) if actual != want => return TestOutcome::changed(alias, Some(actual), ms()),
+            Some(_) => {}
+            None => {
+                return TestOutcome::failed(
+                    if fp.as_deref().is_some_and(|actual| actual != want) {
+                        SshError::new(SshErrorId::HostKeyChanged, params! {"alias" => alias})
+                    } else {
+                        classify(&preview.stderr_str(), preview.ended == Ended::TimedOut, false, alias)
+                    },
+                    ms(),
+                );
             }
-        } else {
-            return TestOutcome::failed(
-                if fp.as_deref().is_some_and(|actual| actual != want) {
-                    SshError::new(SshErrorId::HostKeyChanged, params! {"alias" => t.alias.as_str()})
-                } else {
-                    classify(&preview.stderr_str(), preview.ended == Ended::TimedOut, false, &t.alias)
-                },
-                ms(),
-            );
+        }
+        // Persist the confirmed key before authenticating, as OpenSSH does after "yes":
+        // a later authentication failure must not ask for the same fingerprint again.
+        let not_saved = || SshError::new(SshErrorId::HostKeyUnknown, params! {"alias" => alias});
+        let Ok((remember, actual)) = run_ssh(tools, tmp_dir, t, None, Some(want), None, cancel) else {
+            return TestOutcome::failed(not_saved(), ms());
+        };
+        if remember.ended == Ended::Cancelled {
+            return TestOutcome::cancelled(ms());
+        }
+        if actual.as_deref().is_some_and(|fingerprint| fingerprint != want) {
+            return TestOutcome::changed(alias, actual, ms());
+        }
+        let detail = remember.stderr_str();
+        if actual.as_deref() != Some(want)
+            || !(detail.contains("Permanently added ") || detail.contains("is known and matches the "))
+        {
+            return TestOutcome::failed(not_saved(), ms());
         }
     }
+    let trusted = accept.map(|want| HostKeyInfo {
+        fingerprint: want.to_string(),
+        known: HostKeyKnown::Trusted,
+        known_as: None,
+    });
     let (out, fp) = match run_ssh(
         tools,
         tmp_dir,
@@ -408,115 +515,64 @@ pub fn run_test(
         Ok(r) => r,
         Err(e) => {
             log::warn!("connection test could not start: {e}");
-            return TestOutcome::failed(
-                SshError::new(SshErrorId::Unknown, params! {"alias" => t.alias.as_str()}),
-                ms(),
-            );
+            return TestOutcome::failed(unknown(), ms());
         }
     };
     if out.ended == Ended::Cancelled {
-        return TestOutcome {
-            status: ConnectionTestStatus::Cancelled,
-            ms: ms(),
-            remote_os: None,
-            error: None,
-            host_key: None,
-        };
+        return TestOutcome::cancelled(ms());
     }
     if let Some(want) = accept
         && fp.as_deref().is_some_and(|actual| actual != want)
     {
         // The temporary known_hosts pins the key; strict checking refuses a race before authentication.
-        return TestOutcome {
-            status: ConnectionTestStatus::HostKey,
-            ms: ms(),
-            remote_os: None,
-            error: Some(SshError::new(
-                SshErrorId::HostKeyChanged,
-                params! {"alias" => t.alias.as_str()},
-            )),
-            host_key: fp.map(|fingerprint| HostKeyInfo {
-                fingerprint,
-                known: HostKeyKnown::Changed,
-            }),
-        };
+        return TestOutcome::changed(alias, fp, ms());
     }
     if connected(&out) {
-        if let Some(want) = accept {
-            let (remember, actual) = match run_ssh(tools, tmp_dir, t, None, Some(want), None, cancel) {
-                Ok(out) => out,
-                Err(_) => {
-                    return TestOutcome::failed(
-                        SshError::new(SshErrorId::HostKeyUnknown, params! {"alias" => t.alias.as_str()}),
-                        ms(),
-                    );
-                }
-            };
-            if remember.ended == Ended::Cancelled {
-                return TestOutcome {
-                    status: ConnectionTestStatus::Cancelled,
-                    ms: ms(),
-                    remote_os: None,
-                    error: None,
-                    host_key: None,
-                };
-            }
-            if actual.as_deref().is_some_and(|fingerprint| fingerprint != want) {
-                return TestOutcome {
-                    status: ConnectionTestStatus::HostKey,
-                    ms: ms(),
-                    remote_os: None,
-                    error: Some(SshError::new(
-                        SshErrorId::HostKeyChanged,
-                        params! {"alias" => t.alias.as_str()},
-                    )),
-                    host_key: actual.map(|fingerprint| HostKeyInfo {
-                        fingerprint,
-                        known: HostKeyKnown::Changed,
-                    }),
-                };
-            }
-            let detail = remember.stderr_str();
-            if actual.as_deref() != Some(want)
-                || !(detail.contains("Permanently added ") || detail.contains("is known and matches the "))
-            {
-                return TestOutcome::failed(
-                    SshError::new(SshErrorId::HostKeyUnknown, params! {"alias" => t.alias.as_str()}),
-                    ms(),
-                );
-            }
-        }
         return TestOutcome {
             status: ConnectionTestStatus::Ok,
             ms: ms(),
             remote_os: pretty_name(&out.stdout_str()),
             error: None,
-            host_key: None,
+            host_key: trusted,
         };
     }
-    let err = classify(
+    let mut err = classify(
         &out.stderr_str(),
         out.ended == Ended::TimedOut,
         t.password.is_some(),
-        &t.alias,
+        alias,
     );
-    let known = match err.id {
-        SshErrorId::HostKeyUnknown => Some(HostKeyKnown::New),
-        SshErrorId::HostKeyChanged => Some(HostKeyKnown::Changed),
-        _ => None,
-    };
-    match (known, fp) {
-        (Some(HostKeyKnown::New), Some(fingerprint)) => TestOutcome {
-            status: ConnectionTestStatus::HostKey,
-            ms: ms(),
-            remote_os: None,
-            error: None,
-            host_key: Some(HostKeyInfo {
-                fingerprint,
-                known: HostKeyKnown::New,
-            }),
-        },
-        (Some(HostKeyKnown::Changed), Some(fingerprint)) => TestOutcome {
+    if matches!(
+        err.id,
+        SshErrorId::KeyPermissions | SshErrorId::KeyNotFound | SshErrorId::KeyInvalid
+    ) {
+        err = key_error(err.id, t, None);
+    }
+    match (err.id, fp) {
+        (SshErrorId::HostKeyUnknown, Some(fingerprint)) if accept.is_none() => {
+            if let Some(known_as) = known_elsewhere(tools, t, &fingerprint, cancel) {
+                // 用户以前用 ssh 确认过这把公钥：走与「信任并继续」相同的固定公钥流程，不再询问
+                let mut adopted = run_test(tools, tmp_dir, t, Some(&fingerprint), cancel);
+                if let Some(key) = adopted.host_key.as_mut().filter(|k| k.known == HostKeyKnown::Trusted) {
+                    key.known = HostKeyKnown::Adopted;
+                    key.known_as = Some(known_as);
+                }
+                adopted.ms = ms();
+                return adopted;
+            }
+            TestOutcome {
+                status: ConnectionTestStatus::HostKey,
+                ms: ms(),
+                remote_os: None,
+                error: None,
+                host_key: Some(HostKeyInfo {
+                    fingerprint,
+                    known: HostKeyKnown::New,
+                    known_as: None,
+                }),
+            }
+        }
+        (SshErrorId::HostKeyChanged, Some(fingerprint)) => TestOutcome {
             status: ConnectionTestStatus::HostKey,
             ms: ms(),
             remote_os: None,
@@ -524,9 +580,13 @@ pub fn run_test(
             host_key: Some(HostKeyInfo {
                 fingerprint,
                 known: HostKeyKnown::Changed,
+                known_as: None,
             }),
         },
-        _ => TestOutcome::failed(err, ms()),
+        _ => TestOutcome {
+            host_key: trusted,
+            ..TestOutcome::failed(err, ms())
+        },
     }
 }
 
@@ -756,6 +816,9 @@ mod tests {
     #[test]
     fn wsl_host_confirmation_preflight_requires_interop_without_running_a_process() {
         let tmp = tempfile::tempdir().unwrap();
+        let tools = SshTools {
+            windows_ssh: tmp.path().join("no-ssh.exe"),
+        };
         let mut t = target(tmp.path(), false);
         t.managed = None;
         t.env = EnvContext::wsl(
@@ -767,8 +830,36 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert!(preflight(&t, false).is_none());
-        assert_eq!(preflight(&t, true).unwrap().id, SshErrorId::NeedsInteraction);
+        assert!(preflight(&tools, &t, false).is_none());
+        assert_eq!(preflight(&tools, &t, true).unwrap().id, SshErrorId::NeedsInteraction);
+    }
+
+    #[test]
+    fn known_hosts_lookup_only_counts_plain_records() {
+        let out = "# Host 203.0.113.10 found: line 1 \n203.0.113.10 ED25519 SHA256:plain\n\
+                   # Host 203.0.113.10 found: line 2 REVOKED\n203.0.113.10 ED25519 SHA256:revoked\n\
+                   # Host 203.0.113.10 found: line 3 CA\n203.0.113.10 ED25519 SHA256:ca\n";
+        assert_eq!(
+            known_host_fingerprints(out),
+            [
+                (true, "SHA256:plain".to_string()),
+                (false, "SHA256:revoked".to_string()),
+                (false, "SHA256:ca".to_string()),
+            ]
+        );
+        assert!(known_host_fingerprints("").is_empty());
+        assert!(known_host_fingerprints("203.0.113.10 ED25519 SHA256:orphan\n").is_empty());
+    }
+
+    #[test]
+    fn key_errors_carry_the_environment_and_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let t = target(tmp.path(), false);
+        let e = key_error(SshErrorId::KeyInvalid, &t, Some(KeyCheckStatus::Putty));
+        let params = e.params.unwrap();
+        assert_eq!(params["env"], crate::model::ParamValue::from("windows"));
+        assert_eq!(params["reason"], crate::model::ParamValue::from("putty"));
+        assert!(params.contains_key("path"));
     }
 
     #[test]
@@ -990,6 +1081,80 @@ exit 0
             "pw"
         );
         assert!(tmp.path().join("remote-ran").exists());
+    }
+
+    /// The confirmed key is saved before authentication, so a failed login never asks again.
+    #[cfg(windows)]
+    #[test]
+    fn confirmed_key_is_remembered_even_when_authentication_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (tools, fingerprint) = changed_key_tools(tmp.path());
+        let script = tmp.path().join("fake-ssh.ps1");
+        let code = std::fs::read_to_string(&script)
+            .unwrap()
+            .replace(
+                "    [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'remote-ran'), 'yes')\n",
+                "    [Console]::Error.WriteLine('root@hk-edge: Permission denied (password).')\n    exit 255\n",
+            )
+            .replace(
+                "if ($args -contains 'StrictHostKeyChecking=accept-new' -or",
+                "if ($args -contains 'StrictHostKeyChecking=ask') {\n    [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'remembered'), 'yes')\n}\nif ($args -contains 'StrictHostKeyChecking=accept-new' -or",
+            );
+        std::fs::write(&script, code).unwrap();
+        let out = run_test(&tools, tmp.path(), &target(tmp.path(), true), Some(&fingerprint), None);
+        assert_eq!(out.status, ConnectionTestStatus::Failed);
+        assert_eq!(out.error.unwrap().id, SshErrorId::PasswordRejected);
+        let key = out.host_key.unwrap();
+        assert_eq!((key.known, key.fingerprint), (HostKeyKnown::Trusted, fingerprint));
+        assert!(tmp.path().join("remembered").exists());
+    }
+
+    /// A key the user already accepted for this address with plain ssh is reused without asking.
+    #[cfg(windows)]
+    #[test]
+    fn a_key_already_trusted_for_the_address_is_adopted() {
+        let keygen = PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
+            .join("System32")
+            .join("OpenSSH")
+            .join("ssh-keygen.exe");
+        if !keygen.is_file() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let (tools, fingerprint) = changed_key_tools(tmp.path());
+        std::fs::copy(&keygen, tmp.path().join("ssh-keygen.exe")).unwrap();
+        // Unknown under the alias: strict checking without the pinned file fails like OpenSSH does.
+        let script = tmp.path().join("fake-ssh.ps1");
+        let code = std::fs::read_to_string(&script).unwrap().replace(
+            "[Console]::Error.WriteLine(\"debug1: Server host key: ssh-ed25519 $fingerprint\")\n",
+            "[Console]::Error.WriteLine(\"debug1: Server host key: ssh-ed25519 $fingerprint\")\n\
+             if ($args -contains 'StrictHostKeyChecking=yes' -and -not ($args | Where-Object { $_ -like 'UserKnownHostsFile=*trust-*' })) {\n\
+                 [Console]::Error.WriteLine('Host key verification failed.')\n\
+                 exit 255\n\
+             }\n",
+        );
+        std::fs::write(&script, code).unwrap();
+        let t = target(tmp.path(), true);
+        let known_hosts = t.env.to_host(&t.env.known_hosts_native());
+        std::fs::create_dir_all(known_hosts.parent().unwrap()).unwrap();
+        let public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqti";
+        std::fs::write(
+            &known_hosts,
+            format!("@revoked [203.0.113.10]:2222 {public_key}\n203.0.113.10 {public_key}\n"),
+        )
+        .unwrap();
+        let out = run_test(&tools, tmp.path(), &t, None, None);
+        assert_eq!(out.status, ConnectionTestStatus::Ok, "{out:?}");
+        let key = out.host_key.unwrap();
+        assert_eq!(key.known, HostKeyKnown::Adopted);
+        assert_eq!(key.known_as.as_deref(), Some("203.0.113.10"));
+        assert_eq!(key.fingerprint, fingerprint);
+
+        // Only a revoked record: the user is asked as usual.
+        std::fs::write(&known_hosts, format!("@revoked 203.0.113.10 {public_key}\n")).unwrap();
+        let out = run_test(&tools, tmp.path(), &t, None, None);
+        assert_eq!(out.status, ConnectionTestStatus::HostKey);
+        assert_eq!(out.host_key.unwrap().known, HostKeyKnown::New);
     }
 
     #[cfg(windows)]

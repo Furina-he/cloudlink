@@ -23,4 +23,4 @@ export type ProbeStepStatus = "running" | "done" | "error";
 
 export type SshError = { id: SshErrorId, params?: Record<string, string | number>, };
 
-export type SshErrorId = "auth-failed" | "password-rejected" | "host-key-unknown" | "host-key-changed" | "resolve-failed" | "timeout" | "connection-refused" | "needs-interaction" | "key-permissions" | "key-not-found" | "partial" | "unknown";
+export type SshErrorId = "auth-failed" | "password-rejected" | "host-key-unknown" | "host-key-changed" | "resolve-failed" | "timeout" | "connection-refused" | "needs-interaction" | "key-permissions" | "key-not-found" | "key-invalid" | "partial" | "unknown";

@@ -1,6 +1,6 @@
 # CloudLink
 
-CloudLink 是一个面向 AI Agent 的全栈基础设施配电盘与安全护栏桌面工具（Windows 优先，v0.1）。你在一个一目了然的「钢制配电盘」界面里接入 **SSH 服务器** 与 **云平台 CLI（Cloudflare `wrangler`、Vercel `vercel`、Oracle Cloud `oci`）**，它把全部已授权资源编译成一个符合 Agent Skills 规范的总 Skill，分发给 Claude Code、Codex 等 CLI Agent 的全局 skills 目录。在 Claude Code 上，它用护栏按档位（只读巡检 / 标准运维）拦下越界的 `ssh` 与云 CLI 命令，并记录 Agent 执行过什么。
+CloudLink 是一个面向 AI Agent 的全栈基础设施配电盘与安全护栏桌面工具（Windows 优先，v0.1）。你在一个一目了然的「钢制配电盘」界面里接入 **SSH 服务器** 与 **云平台 CLI（Cloudflare `wrangler`、Vercel `vercel`、Oracle Cloud `oci`）**，它把全部已授权资源编译成一个符合 Agent Skills 规范的总 Skill，分发给 Agent 的全局 skills 目录：Claude Code 的 `~/.claude/skills`，以及 Codex、Cursor、Gemini CLI、GitHub Copilot 等十几个 Agent 共用的 `~/.agents/skills`（Trae、Kiro、Continue 等只认自己目录的 Agent 检测到后单独分发）。在 Claude Code 上，它用护栏按档位（只读巡检 / 标准运维）拦下越界的 `ssh` 与云 CLI 命令，并记录 Agent 执行过什么。
 
 一句话：在一个极简配电盘里管好服务器与云平台，让本机的 Agent 知道有哪些资源、彼此怎么关联、怎么连、什么事不能做，再放心地让它在护栏内帮你操作和运维。
 

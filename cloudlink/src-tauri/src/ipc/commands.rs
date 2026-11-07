@@ -11,8 +11,8 @@ use super::backend::Backend;
 use super::requests::{CliRequest, CopyKeyRequest, DeleteOptions, MergeNote, SettingsPatch, TerminalRequest};
 use crate::error::{AppError, Result};
 use crate::model::asset::{Asset, AssetInput, CliEnvState, CliScopeItem, ImportHost, Mode};
-use crate::model::compile::{CompilePreview, CompileStatus, PreviewRequest, SkillConfig};
-use crate::model::connection::ConnectionTestRequest;
+use crate::model::compile::{CompilePreview, CompileStatus, PreviewRequest, Relation, SkillConfig};
+use crate::model::connection::{ConnectionTestRequest, KeyCheck, KeyCheckRequest};
 use crate::model::delivery::{AddCustomTargetRequest, Delivery, Inclusion, Target};
 use crate::model::env::{EnvId, Environment, SshConfigStatus, SshHostList};
 use crate::model::guard::{GuardRules, GuardStatus, Operation, OperationQuery};
@@ -147,6 +147,26 @@ pub async fn copy_key_to_wsl(state: State<'_, Arc<Backend>>, req: CopyKeyRequest
             .map(|path| CopiedKey { path })
     })
     .await
+}
+
+#[tauri::command]
+pub async fn copy_key_to_ssh_dir(state: State<'_, Arc<Backend>>, req: CopyKeyRequest) -> Result<CopiedKey> {
+    blocking(state, move |backend| {
+        backend
+            .copy_key_to_ssh_dir(&req.source, &req.env_id)
+            .map(|path| CopiedKey { path })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn check_key(state: State<'_, Arc<Backend>>, req: KeyCheckRequest) -> Result<KeyCheck> {
+    blocking(state, move |backend| backend.check_key(&req)).await
+}
+
+#[tauri::command]
+pub async fn list_relations(state: State<'_, Arc<Backend>>) -> Result<Vec<Relation>> {
+    blocking(state, |backend| backend.list_relations()).await
 }
 
 #[tauri::command]

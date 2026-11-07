@@ -100,6 +100,8 @@ pub struct Environment {
     pub available: bool,
     pub managed_ssh_config: ManagedSshConfig,
     pub ssh_agent_keys: Option<u32>,
+    /// 这个环境里检测到的 Agent（2026-11-07）
+    pub agents: Vec<super::delivery::DetectedAgent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

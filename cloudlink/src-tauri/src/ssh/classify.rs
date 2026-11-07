@@ -15,6 +15,8 @@ pub fn classify(stderr: &str, timed_out: bool, password_attempted: bool, alias: 
         SshErrorId::HostKeyUnknown
     } else if s.contains("UNPROTECTED PRIVATE KEY FILE") || s.contains("Bad permissions") {
         SshErrorId::KeyPermissions
+    } else if s.contains("Load key") && s.contains("invalid format") {
+        SshErrorId::KeyInvalid
     } else if s.contains("no such identity") || s.contains("Warning: Identity file") && s.contains("not accessible") {
         SshErrorId::KeyNotFound
     } else if s.contains("Could not resolve hostname") || s.contains("Name or service not known") {

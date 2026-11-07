@@ -17,6 +17,14 @@ export const environments: Environment[] = [
     available: true,
     managedSshConfig: { path: "C:\\Users\\me\\.ssh\\cloudlink.conf", included: true },
     sshAgentKeys: 1,
+    // 2026-11-07：检测到的 Agent。Cursor 和 Augment 同时读 Claude Code 的目录
+    agents: [
+      { brand: "claude-code", reads: ["claude-code"] },
+      { brand: "codex", reads: ["universal"] },
+      { brand: "cursor", reads: ["universal", "claude-code"] },
+      { brand: "windsurf", reads: ["universal"] },
+      { brand: "augment", reads: ["universal", "claude-code"] },
+    ],
   },
   {
     id: WSL,
@@ -27,6 +35,11 @@ export const environments: Environment[] = [
     // WSL 还没有加入 Include：用来复现 F-107 的同意对话框
     managedSshConfig: { path: "/home/me/.ssh/cloudlink.conf", included: false },
     sshAgentKeys: null,
+    agents: [
+      { brand: "claude-code", reads: ["claude-code"] },
+      { brand: "codex", reads: ["universal"] },
+      { brand: "gemini-cli", reads: ["universal"] },
+    ],
   },
 ]
 
@@ -139,7 +152,8 @@ export const assets: Asset[] = [
       source: "imported",
       sshAlias: "sg-db",
       definedIn: ["windows", WSL],
-      resolved: { hostname: "198.51.100.7", user: "deploy", port: 2222, proxyJump: null, resolvedAt: ago(3 * DAY) },
+      // 数据库不对公网开放，经 hk-edge 跳转（资源关系里会推出这一条）
+      resolved: { hostname: "198.51.100.7", user: "deploy", port: 2222, proxyJump: "hk-edge", resolvedAt: ago(3 * DAY) },
       verified: { ok: true, at: ago(3 * DAY), envIds: [WSL] },
     },
     // 生产环境开着标准运维：回路行的档位闸刀是琥珀色（DESIGN.md Breaker Row）

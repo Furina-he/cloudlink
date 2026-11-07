@@ -49,12 +49,15 @@ export function ViewShell({
   view,
   title,
   focusTitle,
+  titleHidden = false,
   children,
 }: {
   view: ViewId
   title: string
   /** 由视图切换触发的挂载才移动焦点，首次启动不抢焦点 */
   focusTitle: boolean
+  /** 标题只给读屏器（和资源配电盘一样，内容自己有可见的标题） */
+  titleHidden?: boolean
   children: ReactNode
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
@@ -73,7 +76,7 @@ export function ViewShell({
           id="view-title"
           ref={titleRef}
           tabIndex={-1}
-          className="text-base font-semibold outline-none"
+          className={titleHidden ? "sr-only" : "text-base font-semibold outline-none"}
         >
           {title}
         </h1>

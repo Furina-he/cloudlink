@@ -3,6 +3,7 @@
 
 pub mod lint;
 pub mod publish;
+pub mod relations;
 pub mod render;
 pub mod secrets;
 

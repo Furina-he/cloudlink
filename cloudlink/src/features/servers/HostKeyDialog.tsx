@@ -13,16 +13,17 @@ import {
 } from "@/components/ui/alert-dialog"
 import { CodeBlock, CodeBlockContent } from "@/components/ui/code-block"
 import { copy } from "@/lib/copy"
-import { useConnectionStore } from "@/stores/connection"
+import { NEW_KEY, useConnectionStore } from "@/stores/connection"
 import { toastError } from "./actions"
 
 /**
  * 首次连接时核对主机指纹（F-106 AC2）：用户确认后才写入 known_hosts；
- * 指纹与已知记录不符时阻断，并提示可能的中间人风险。挂在 App 上，任何地方发起的测试都会走到这里
+ * 指纹与已知记录不符时阻断，并提示可能的中间人风险。挂在 App 上，任何地方发起的测试都会走到这里；
+ * 添加服务器的弹窗在连接步骤里就地核对（ConnectFlow），这里不再叠一层
  */
 export function HostKeyDialog() {
   // 只选出 key（字符串），避免每次渲染都得到新对象
-  const key = useConnectionStore((s) => Object.keys(s.testsByKey).find((k) => s.testsByKey[k].status === "host-key") ?? null)
+  const key = useConnectionStore((s) => Object.keys(s.testsByKey).find((k) => k !== NEW_KEY && s.testsByKey[k].status === "host-key") ?? null)
   const test = useConnectionStore((s) => (key ? s.testsByKey[key] : undefined))
   const hostKey = test?.hostKey
   const changed = hostKey?.known === "changed"

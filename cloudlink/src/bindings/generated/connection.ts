@@ -12,6 +12,31 @@ export type ConnectionTestStatus = "ok" | "failed" | "cancelled" | "host-key";
  */
 export type ConnectionTestedEvent = { testId: string, status: ConnectionTestStatus, ms?: number, remoteOs?: string, error?: SshError, hostKey?: HostKeyInfo, };
 
-export type HostKeyInfo = { fingerprint: string, known: HostKeyKnown, };
+export type HostKeyInfo = { fingerprint: string, known: HostKeyKnown, 
+/**
+ * Adopted：known_hosts 里记录这把公钥的名字，例如 `203.0.113.10` 或 `[203.0.113.10]:2222`
+ */
+knownAs?: string, };
 
-export type HostKeyKnown = "new" | "changed";
+export type HostKeyKnown = "new" | "changed" | "trusted" | "adopted";
+
+export type KeyCheck = { status: KeyCheckStatus, 
+/**
+ * 例如 `ED25519`
+ */
+keyType?: string, 
+/**
+ * 公钥的 SHA256 指纹
+ */
+fingerprint?: string, };
+
+export type KeyCheckRequest = { envId: EnvId, 
+/**
+ * 该运行环境里的写法
+ */
+path: string, };
+
+/**
+ * 私钥文件预检的结论（F-108「检测常见问题」）
+ */
+export type KeyCheckStatus = "ok" | "missing" | "permissions" | "passphrase" | "putty" | "public-key" | "invalid" | "unchecked";

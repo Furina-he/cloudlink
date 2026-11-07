@@ -2,10 +2,19 @@ import { expect, test, type Page } from "@playwright/test"
 
 import { GATE, collectConsoleErrors, openServer, ready } from "./helpers"
 
-// P3.6 门槛截图：资源（配电盘、服务器详情、云平台详情）、添加 SSH 服务器、添加云平台、Agent、设置，以及有新版本时的顶栏提醒和更新对话框 × 浅色 / 深色 × 900×640 / 760×520，随提交
+// P3.6 门槛截图：资源（配电盘、首次启动、服务器详情、云平台详情）、添加 SSH 服务器、添加云平台、Agent、设置，以及有新版本时的顶栏提醒和更新对话框 × 浅色 / 深色 × 900×640 / 760×520，随提交
 
-const VIEWS: { name: string; query?: string; open: (page: Page) => Promise<void> }[] = [
+const VIEWS: { name: string; query?: string; empty?: boolean; open: (page: Page) => Promise<void> }[] = [
   { name: "servers-list", open: async () => {} },
+  // 首次启动：服务器、云平台两组入口
+  {
+    name: "servers-empty",
+    query: "?mock=empty",
+    empty: true,
+    open: async (page) => {
+      await expect(page.getByRole("button", { name: /^从 ssh config 导入/ })).toContainText("3 台主机")
+    },
+  },
   { name: "servers-detail", open: (page) => openServer(page, "hk-edge") },
   { name: "servers-cli", open: (page) => openServer(page, "vercel", "Vercel") },
   {
@@ -32,7 +41,7 @@ const VIEWS: { name: string; query?: string; open: (page: Page) => Promise<void>
     name: "agents",
     open: async (page) => {
       await page.keyboard.press("Control+2")
-      await expect(page.getByRole("heading", { level: 2, name: "分发目标" })).toBeVisible()
+      await expect(page.getByRole("heading", { level: 2, name: "Agent 与目录" })).toBeVisible()
     },
   },
   {
@@ -68,7 +77,8 @@ for (const scheme of ["light", "dark"] as const) {
         const errors = collectConsoleErrors(page)
         await page.emulateMedia({ colorScheme: scheme })
         await page.setViewportSize({ width, height })
-        await ready(page, v.query)
+        if (v.empty) await page.goto(`/${v.query}`)
+        else await ready(page, v.query)
         await v.open(page)
         // 焦点环不进截图
         await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())

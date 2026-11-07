@@ -1,4 +1,4 @@
-import { FileInputIcon, PlusIcon, ServerIcon } from "lucide-react"
+import { FileInputIcon, ServerIcon } from "lucide-react"
 import { useRef, useState } from "react"
 import { useHotkeys } from "react-hotkeys-hook"
 import { useShallow } from "zustand/react/shallow"
@@ -6,10 +6,9 @@ import { useShallow } from "zustand/react/shallow"
 import type { CliProvider } from "@/bindings"
 import { PreviewSheet } from "@/components/app/PreviewSheet"
 import { ProviderMark } from "@/components/app/ProviderMark"
-import { useScrollRestore, useViewTitleFocus, ViewShell } from "@/components/app/ViewShell"
+import { useScrollRestore, useViewTitleFocus } from "@/components/app/ViewShell"
 import { Button } from "@/components/ui/button"
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { CLI_BINARY, CLI_PROVIDERS } from "@/lib/cliProviders"
@@ -19,6 +18,7 @@ import { useAssetStore } from "@/stores/assets"
 import { useUIStore, type CreateKind } from "@/stores/ui"
 import { CliDetail } from "./CliDetail"
 import { CreateHeader } from "./CreateParts"
+import { FirstLaunch } from "./FirstLaunch"
 import { NewCliForm } from "./NewCliForm"
 import { NewServerForm } from "./NewServerForm"
 import { ProbeSheet } from "./ProbeSheet"
@@ -28,37 +28,6 @@ import { ServerDetail } from "./ServerDetail"
 /** 没有选中资源时的预览：已发布的总 Skill，列出全部文件 */
 function WholePreview() {
   return <PreviewSheet scope="all" draft={{}} dirty={false} defaultFile="SKILL.md" />
-}
-
-/** 首次启动（PRD 6.8）：干净的 Empty，直接给出三个入口，不罗列工程检查表 */
-function FirstLaunch({ focusTitle }: { focusTitle: boolean }) {
-  const ui = useUIStore.getState
-  return (
-    <ViewShell view="servers" title={copy.nav.servers} focusTitle={focusTitle}>
-      <Empty className="border">
-        <EmptyHeader className="max-w-lg">
-          <EmptyMedia variant="icon">
-            <ServerIcon />
-          </EmptyMedia>
-          <EmptyTitle className="text-base">{copy.onboarding.title}</EmptyTitle>
-          <EmptyDescription>{copy.onboarding.description}</EmptyDescription>
-        </EmptyHeader>
-        <EmptyContent className="max-w-lg flex-row flex-wrap justify-center gap-2">
-          <Button size="sm" onClick={() => ui().startCreate("ssh")}>
-            <PlusIcon data-icon="inline-start" />
-            {copy.onboarding.addSsh}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => ui().startCreate()}>
-            {copy.onboarding.connectCli}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => ui().setImportOpen(true)}>
-            <FileInputIcon data-icon="inline-start" />
-            {copy.onboarding.importSsh}
-          </Button>
-        </EmptyContent>
-      </Empty>
-    </ViewShell>
-  )
 }
 
 /** 一个资源类型选择项（DESIGN.md：添加面板里的类型选择用 Card）。整张卡片是一个按钮 */

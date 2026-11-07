@@ -1,5 +1,6 @@
 // Mock 的总 Skill 渲染（PRD 5.2、5.3、5.6）。只为界面提供接近真实的内容，真正的渲染在 Rust 编译器
 import type { Asset, CliAsset, EnvId, ServerAsset, Settings, SkillConfig } from "@/bindings"
+import { relationLines } from "./relations"
 import { handleOf, isCli, isServer } from "@/stores/assets"
 
 export const ENV_WORD = { prod: "production", staging: "staging", dev: "development" } as const
@@ -194,6 +195,7 @@ export interface RenderedSkill {
 
 /** 总 Skill（5.2）：SKILL.md 排第一，然后是每台服务器的详情和巡检清单。一台都没列入时没有文件 */
 export function renderSkill(envId: EnvId, assets: Asset[], config: SkillConfig, settings: Settings): RenderedSkill {
+  const relationships = relationLines(assets, config)
   const names = detailNames(assets)
   const detailPath = new Map([...names].map(([id, n]) => [id, `references/${n}.md`]))
   if (assets.length === 0) return { files: [], descriptionChars: 0, rawDescriptionChars: 0, bodyLines: 0, detailPath }
@@ -225,7 +227,7 @@ export function renderSkill(envId: EnvId, assets: Asset[], config: SkillConfig, 
           ),
         ]
       : []),
-    ...(config.relationships.trim() ? ["", "## How they fit together", config.relationships.trim()] : []),
+    ...(relationships.length ? ["", "## How they fit together", ...relationships.map((r) => `- ${r}`)] : []),
     "",
     "## Modes",
     "- **read-only**: inspection commands only, e.g. `docker ps`, `docker logs --tail 200 <container>`, `df -h`, `free -m`, `uptime`, `ss -tln`, `journalctl -u <service> -n 200`. If a change is needed, describe the plan to the user and stop; the user can switch it to standard mode in CloudLink.",

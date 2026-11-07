@@ -30,7 +30,9 @@ Use these CLIs from the local shell. They are already logged in; only touch the 
 {% if relationships %}
 
 ## How they fit together
-{{ relationships }}
+{% for r in relationships %}
+- {{ r }}
+{% endfor %}
 {% endif %}
 
 ## Modes

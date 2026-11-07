@@ -339,22 +339,22 @@ impl Backend {
         self.database()?.get_skill_config()
     }
 
-    fn agent_detected(&self, env: &EnvContext, agent: AgentId) -> bool {
-        let directory = match agent {
-            AgentId::ClaudeCode => ".claude",
-            AgentId::Universal => ".codex",
-            AgentId::Custom => return false,
-        };
-        if env.host_in_home(&[directory]).is_dir() {
-            return true;
+    /// 这个环境里装了哪些 Agent：先看目录，Claude Code 和 Codex 再看 PATH 里有没有命令（2026-11-07）
+    fn detect_agents(&self, env: &EnvContext) -> Vec<DetectedAgent> {
+        let mut agents = deliver::agents::detect(env);
+        for (brand, binary) in [(AgentBrand::ClaudeCode, "claude"), (AgentBrand::Codex, "codex")] {
+            if !agents.iter().any(|a| a.brand == brand) && self.binary_on_path(env, binary) {
+                agents.push(deliver::agents::found(brand));
+            }
         }
+        deliver::agents::sort(&mut agents);
+        agents
+    }
+
+    fn binary_on_path(&self, env: &EnvContext, binary: &str) -> bool {
         if self.paths.isolated || cfg!(test) || !env.available {
             return false;
         }
-        let binary = match agent {
-            AgentId::ClaudeCode => "claude",
-            _ => "codex",
-        };
         let mut cmd = if let Some(distro) = env.distro() {
             let mut c = proc::command("wsl.exe");
             c.args(["-d", distro, "-e", "bash", "-ilc"]);
@@ -398,32 +398,34 @@ impl Backend {
             }
         }
         let mut known = self.list_targets()?;
-        for env in &detected {
-            for agent in [AgentId::ClaudeCode, AgentId::Universal] {
-                let detected_agent = self.agent_detected(env, agent);
+        let agents: Vec<Vec<DetectedAgent>> = detected.iter().map(|env| self.detect_agents(env)).collect();
+        for (env, found) in detected.iter().zip(&agents) {
+            for agent in AgentId::BUILTIN {
+                let detected_agent = deliver::agents::target_detected(agent, found);
                 if let Some(target) = known.iter_mut().find(|t| t.env_id == env.id && t.agent == agent) {
                     target.detected = detected_agent;
-                } else {
-                    let folder = if agent == AgentId::ClaudeCode {
-                        ".claude"
-                    } else {
-                        ".agents"
-                    };
-                    known.push(Target {
-                        id: crate::new_id("tgt"),
-                        env_id: env.id.clone(),
-                        agent,
-                        agent_key: agent.as_str().into(),
-                        label: if agent == AgentId::ClaudeCode {
-                            "Claude Code".into()
-                        } else {
-                            "Codex".into()
-                        },
-                        path: env.native_in_home(&[folder, "skills"]),
-                        enabled: detected_agent,
-                        detected: detected_agent,
-                    });
+                    continue;
                 }
+                // 只认自己目录的 Agent 检测到以后才加；用户已经把这个目录加成自定义目录时不重复
+                let Some(dir) = agent.skills_dir() else { continue };
+                let path = env.native_in_home(&dir);
+                if !(agent.always_listed() || detected_agent)
+                    || known
+                        .iter()
+                        .any(|t| t.env_id == env.id && same_or_nested(&t.path, &path, env.is_windows()))
+                {
+                    continue;
+                }
+                known.push(Target {
+                    id: crate::new_id("tgt"),
+                    env_id: env.id.clone(),
+                    agent,
+                    agent_key: agent.as_str().into(),
+                    label: agent.default_label().into(),
+                    path,
+                    enabled: detected_agent,
+                    detected: detected_agent,
+                });
             }
         }
         {
@@ -438,15 +440,24 @@ impl Backend {
             .lock()
             .map_err(|_| AppError::internal("environment state unavailable"))? = detected.clone();
         self.reconcile_locked(true)?;
-        Ok(detected.iter().map(|e| self.environment(e)).collect())
+        Ok(detected
+            .iter()
+            .zip(agents)
+            .map(|(e, agents)| self.environment(e, agents))
+            .collect())
     }
 
-    fn environment(&self, e: &EnvContext) -> Environment {
+    /// 用户的 `~/.ssh/config` 是否已经 Include 托管文件
+    fn include_present(e: &EnvContext) -> bool {
         let config = e.host_in_home(&[".ssh", "config"]);
-        let included = check_ancestors(&config).is_ok()
+        check_ancestors(&config).is_ok()
             && fs::read_to_string(config).is_ok_and(|s| {
                 managed::is_included_at(&s, &e.managed_config_native(), managed::IncludeMode::for_env(e))
-            });
+            })
+    }
+
+    fn environment(&self, e: &EnvContext, agents: Vec<DetectedAgent>) -> Environment {
+        let included = Self::include_present(e);
         Environment {
             id: e.id.clone(),
             label: e.label.clone(),
@@ -458,6 +469,7 @@ impl Backend {
                 included,
             },
             ssh_agent_keys: self.system.ssh_agent_keys(e),
+            agents,
         }
     }
 
@@ -469,7 +481,7 @@ impl Backend {
                     env_id: env.id.clone(),
                     managed_path: env.managed_config_native(),
                     user_config_path: env.ssh_config_native(),
-                    included: self.environment(env).managed_ssh_config.included,
+                    included: Self::include_present(env),
                     include_line: managed::include_line(
                         &env.managed_config_native(),
                         managed::IncludeMode::for_env(env),
@@ -670,17 +682,32 @@ impl Backend {
 
     pub fn save_skill_config(&self, input: SkillConfig) -> Result<Vec<CompileStatus>> {
         let _edit = self.edit()?;
-        if input.relationships.len() > 32_768
-            || input.conventions.len() > 100
-            || input
-                .conventions
+        let input = input.migrated();
+        let line_ok = |text: &str| !text.trim().is_empty() && text.len() <= 4096;
+        if input.conventions.len() > 100
+            || input.relation_notes.len() > 100
+            || input.hidden_relations.len() > 1000
+            || !input.conventions.iter().all(|c| line_ok(&c.text))
+            || !input
+                .relation_notes
                 .iter()
-                .any(|c| c.text.trim().is_empty() || c.text.len() > 4096)
+                .all(|n| line_ok(&n.text) && n.id.len() <= 200)
+            || input.hidden_relations.iter().any(|id| id.is_empty() || id.len() > 400)
         {
             return Err(AppError::ipc(IpcErrorId::SettingsInvalid));
         }
         self.database()?.put_skill_config(&input)?;
         self.publish_locked()
+    }
+
+    /// CloudLink 从资源数据推出的关系，标出用户隐藏的（资源关系，2026-11-07）
+    pub fn list_relations(&self) -> Result<Vec<Relation>> {
+        let assets = self.list_assets()?;
+        let config = self.get_skill_config()?;
+        Ok(crate::compile::relations::with_hidden(
+            crate::compile::relations::derive(&assets),
+            &config,
+        ))
     }
 
     pub fn preview_skill(&self, req: PreviewRequest) -> Result<CompilePreview> {
@@ -984,4 +1011,16 @@ fn ensure_data_marker(paths: &Paths) -> Result<()> {
         }
         Err(e) => Err(e.into()),
     }
+}
+
+/// 同一环境写法的两个目录是否相同或互相包含（只比较字面；Windows 不区分大小写）
+fn same_or_nested(a: &str, b: &str, windows: bool) -> bool {
+    let parts = |p: &str| -> Vec<String> {
+        p.split(['/', '\\'])
+            .filter(|s| !s.is_empty())
+            .map(|s| if windows { s.to_lowercase() } else { s.to_string() })
+            .collect()
+    };
+    let (a, b) = (parts(a), parts(b));
+    a.starts_with(&b) || b.starts_with(&a)
 }

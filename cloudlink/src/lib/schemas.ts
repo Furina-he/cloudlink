@@ -29,6 +29,13 @@ export const conventionSchema = z.object({
   text: z.string().trim().min(1, "convention-empty"),
 })
 
+/** 用户补充或改写的一条关系（2026-11-07） */
+export const relationNoteSchema = z.object({
+  id: z.string(),
+  text: z.string().trim().min(1, "relation-empty"),
+  replaces: z.string().optional(),
+})
+
 export const assetPathSchema = z.object({
   key: z.string().min(1),
   label: z.string().trim().min(1, "path-label-required"),
@@ -162,9 +169,10 @@ export type CliFormValues = z.infer<typeof cliFormSchema>
 /** 两类资源共有的表单字段：名称、环境、用途、红线、笔记由同一组组件编辑 */
 export type ProfileFormValues = CliFormValues
 
-/** Agent 页「交给 Agent 的内容」（F-201 AC1） */
+/** Agent 页「写进 Skill 的内容」（F-201 AC1）：关系由 CloudLink 推出，这里只有用户的补充、改写和隐藏 */
 export const skillConfigSchema = z.object({
-  relationships: z.string(),
+  relationNotes: z.array(relationNoteSchema),
+  hiddenRelations: z.array(z.string()),
   conventions: z.array(conventionSchema),
 })
 export type SkillConfigValues = z.infer<typeof skillConfigSchema>
@@ -251,6 +259,7 @@ export type ValidationKey =
   | "envs-required"
   | "rule-empty"
   | "convention-empty"
+  | "relation-empty"
   | "path-label-required"
   | "path-required"
   | "service-name-required"

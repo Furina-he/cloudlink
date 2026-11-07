@@ -22,12 +22,11 @@ import { compileKey, selectCompileSummary, useSkillStore } from "@/stores/skills
 import { useTargetStore } from "@/stores/targets"
 import { useUIStore } from "@/stores/ui"
 import { compileLabel, useAgentOptions } from "./agentKeys"
-import { GuardSection } from "./GuardSection"
 import { SkillContentSection } from "./SkillContentSection"
 import { targetActions } from "./targetActions"
 import { TargetsSection } from "./TargetsSection"
 
-const EMPTY_CONFIG: SkillConfigValues = { relationships: "", conventions: [] }
+const EMPTY_CONFIG: SkillConfigValues = { relationNotes: [], hiddenRelations: [], conventions: [] }
 
 /** 整个总 Skill 的预览：有未保存的全局内容时预览草稿 */
 function ConfigPreview({ control, dirty }: { control: Control<SkillConfigValues>; dirty: boolean }) {
@@ -92,7 +91,7 @@ function Summary() {
   )
 }
 
-/** Agent 视图（PRD 6.6）：交给 Agent 的内容、护栏、分发目标三个分区 */
+/** Agent 视图（PRD 6.6，2026-11-07 重新设计）：Agent 与目录（含护栏）在前，写进 Skill 的内容在后 */
 export function AgentsView({ focusTitle }: { focusTitle: boolean }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const titleRef = useRef<HTMLHeadingElement>(null)
@@ -157,11 +156,9 @@ export function AgentsView({ focusTitle }: { focusTitle: boolean }) {
               </div>
               <Summary />
             </header>
-            <SkillContentSection saved={saved} />
-            <Separator />
-            <GuardSection />
-            <Separator />
             <TargetsSection />
+            <Separator />
+            <SkillContentSection saved={saved} />
           </div>
         </ScrollArea>
         {dirty && <SaveBar saving={saving} onDiscard={discard} onSave={save} />}

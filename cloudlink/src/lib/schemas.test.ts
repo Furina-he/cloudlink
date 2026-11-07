@@ -82,8 +82,10 @@ describe("手动添加服务", () => {
 
 describe("Agent 页与设置", () => {
   it("运维约定不能为空；关系可以为空", () => {
-    expect(skillConfigSchema.safeParse({ relationships: "", conventions: [] }).success).toBe(true)
-    expect(err(skillConfigSchema.safeParse({ relationships: "", conventions: [{ id: "c1", text: "  " }] }))).toBe("convention-empty")
+    const empty = { relationNotes: [], hiddenRelations: [], conventions: [] }
+    expect(skillConfigSchema.safeParse(empty).success).toBe(true)
+    expect(err(skillConfigSchema.safeParse({ ...empty, conventions: [{ id: "c1", text: "  " }] }))).toBe("convention-empty")
+    expect(err(skillConfigSchema.safeParse({ ...empty, relationNotes: [{ id: "n1", text: " ", replaces: "jump:a" }] }))).toBe("relation-empty")
   })
 
   it("自定义目录要有名称和目录", () => {

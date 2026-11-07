@@ -4,6 +4,7 @@ import { emit } from "@tauri-apps/api/event"
 import type { AddCustomTargetRequest, EnvId, PreviewRequest, SkillConfig } from "@/bindings"
 import * as fx from "./fixtures"
 import { compileSkill } from "./lint"
+import { deriveRelations, withHidden } from "./relations"
 import { agentKeyOf, db, draftToAsset, emitCompiled, emitDeliveries, fail, includedIn, logActivity, newId, now, recompile, sleep } from "./state"
 
 /** 预览（F-204）：带 asset 时，这台服务器按「已列入」计算（2026-10-31 用户确认）；带 config 时预览全局内容草稿 */
@@ -113,6 +114,7 @@ type Args = Record<string, unknown>
 
 export const agentHandlers: Record<string, (a: Args) => unknown> = {
   get_skill_config: () => db.skillConfig,
+  list_relations: () => withHidden(deriveRelations(db.assets), db.skillConfig),
   save_skill_config: (a) => saveSkillConfig(a.input as SkillConfig),
   preview_skill: (a) => previewSkill(a.req as PreviewRequest),
   get_compile_status: () => Object.values(db.compile),

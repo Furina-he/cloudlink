@@ -23,7 +23,8 @@ Use these CLIs from the local shell. They are already logged in; only touch the 
 | cloudflare | `wrangler` | DNS for the main domains and the edge API gateway Worker; example.com, example.org, api-gateway | production | read-only | `references/cloudflare.md` |
 
 ## How they fit together
-hk-edge reverse-proxies api.example.com to the API containers on hk-edge; those containers use the PostgreSQL database on sg-db over the private network.
+- DNS for `example.com` (cloudflare, managed with `wrangler`) points at `hk-edge`, which serves `api.example.com`, `blog.example.com`.
+- hk-edge reverse-proxies api.example.com to the API containers on hk-edge; those containers use the PostgreSQL database on sg-db over the private network.
 
 ## Modes
 - **read-only**: inspection commands only, e.g. `docker ps`, `docker logs --tail 200 <container>`, `df -h`, `free -m`, `uptime`, `ss -tln`, `journalctl -u <service> -n 200`. If a change is needed, describe the plan to the user and stop; the user can switch the server to standard mode in CloudLink.

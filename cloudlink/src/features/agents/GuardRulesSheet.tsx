@@ -61,6 +61,7 @@ export function GuardRulesSheet({ open, onOpenChange }: { open: boolean; onOpenC
               <Categories title={copy.guard.standardTitle} list={rules.standardDeny} />
               <Categories title={copy.guard.alwaysTitle} list={rules.alwaysDeny} />
               <p className="text-xs text-muted-foreground">{copy.guard.unparsedNote}</p>
+              <p className="text-xs text-muted-foreground">{copy.guard.boundary}</p>
             </div>
           ) : (
             <div className="flex flex-col gap-3 px-4" aria-busy="true" aria-label={copy.guard.loading}>

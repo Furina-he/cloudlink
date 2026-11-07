@@ -26,7 +26,8 @@ export interface CopyKeyRequest {
 
 /**
  * 复制到 WSL（F-108 AC4，2026-10-31 用户确认由 CloudLink 复制）：先说明源文件和目标位置，
- * 确认后复制到发行版的 ~/.ssh/，600 权限，重名加后缀不覆盖，再把这一行改成副本的路径
+ * 确认后复制到发行版的 ~/.ssh/，600 权限，重名加后缀不覆盖，再把这一行改成副本的路径。
+ * 目标是 Windows 时（权限过宽的私钥，2026-11-07）：复制到 Windows 的 ~/.ssh/，副本只有当前用户能读
  */
 export function CopyKeyDialog({
   request,
@@ -47,7 +48,7 @@ export function CopyKeyDialog({
     if (!request) return
     setBusy(true)
     try {
-      const { path } = await ipc.copyKeyToWsl(request)
+      const { path } = request.envId === "windows" ? await ipc.copyKeyToSshDir(request) : await ipc.copyKeyToWsl(request)
       onCopied(request.envId, path)
       toast.add({ title: copy.copyKey.done(path), type: "success" })
       onClose()
@@ -65,9 +66,12 @@ export function CopyKeyDialog({
           <AlertDialogMedia>
             <CopyIcon />
           </AlertDialogMedia>
-          <AlertDialogTitle>{copy.copyKey.title}</AlertDialogTitle>
+          <AlertDialogTitle>{shown?.envId === "windows" ? copy.copyKey.titleWindows : copy.copyKey.title}</AlertDialogTitle>
           <AlertDialogDescription className="break-all">
-            {shown && copy.copyKey.description(shown.source, copy.env.long(shown.envId))}
+            {shown &&
+              (shown.envId === "windows"
+                ? copy.copyKey.descriptionWindows(shown.source)
+                : copy.copyKey.description(shown.source, copy.env.long(shown.envId)))}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

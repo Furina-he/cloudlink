@@ -130,6 +130,36 @@ pub fn copy_key_to_wsl(win_private: &Path, wsl: &EnvContext) -> Result<String> {
     Ok(wsl.native_in_home(&[".ssh", &dest_name]))
 }
 
+/// Windows：把权限过宽的私钥复制到 `~/.ssh/`，副本只有当前用户能读（Windows 版 OpenSSH 拒绝其他人也能读的私钥）。
+/// 原文件不动；重名时加后缀，不覆盖。返回副本路径
+pub fn copy_key_to_windows_ssh(win_private: &Path, windows: &EnvContext) -> Result<String> {
+    if !windows.is_windows() {
+        return Err(AppError::internal("copy target must be the Windows environment"));
+    }
+    let meta = fs::symlink_metadata(win_private)?;
+    if crate::fsx::is_link(&meta) || !meta.is_file() {
+        return Err(AppError::internal("private key is not a regular file"));
+    }
+    let name = win_private
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let dest = keygen::unique_key_path(&windows.host_in_home(&[".ssh"]), &name);
+    let private = zeroize::Zeroizing::new(fs::read(win_private)?);
+    keygen::write_private(&dest, &private)?;
+    if let Ok(public) = fs::read(keygen::pub_path(win_private))
+        && let Err(e) = keygen::write_new(&keygen::pub_path(&dest), &public)
+    {
+        let _ = fs::remove_file(&dest);
+        return Err(e.into());
+    }
+    let dest_name = dest
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(windows.native_in_home(&[".ssh", &dest_name]))
+}
+
 /// 经 \\wsl.localhost 写入的文件权限过宽，OpenSSH 会拒绝使用。复制后要在发行版内把私钥改成 600
 pub fn wsl_chmod_private(wsl: &EnvContext, native: &str) -> Result<()> {
     let Some(distro) = wsl.distro() else {
@@ -280,5 +310,52 @@ mod tests {
         );
 
         assert!(copy_key_to_wsl(&src, &EnvContext::windows(&Paths::isolated_in(tmp.path()))).is_err());
+    }
+
+    /// 权限过宽的私钥：副本只有当前用户能读，ssh-keygen 接受；原文件不动，重名加后缀
+    #[cfg(windows)]
+    #[test]
+    fn windows_copy_is_restricted_and_never_overwrites() {
+        use crate::model::connection::KeyCheckStatus;
+        use crate::proc::{self, RunOpts};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let system = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
+            .join("System32");
+        let open_dir = tmp.path().join("downloads");
+        fs::create_dir(&open_dir).unwrap();
+        let mut acl = proc::command(system.join("icacls.exe"));
+        acl.arg(&open_dir).args(["/grant", "*S-1-1-0:(OI)(CI)R", "/q"]);
+        assert!(proc::run(acl, RunOpts::default()).unwrap().success());
+        let key = keygen::generate("downloaded").unwrap();
+        let src = open_dir.join("ssh-key-2026-05-21.key");
+        fs::write(&src, key.private_openssh.as_bytes()).unwrap();
+
+        let env = EnvContext::windows(&Paths::isolated_in(tmp.path()));
+        let first = copy_key_to_windows_ssh(&src, &env).unwrap();
+        let second = copy_key_to_windows_ssh(&src, &env).unwrap();
+        assert!(first.ends_with("ssh-key-2026-05-21.key"), "{first}");
+        assert!(second.ends_with("ssh-key-2026-05-21.key-2"), "{second}");
+        assert_eq!(fs::read(&src).unwrap(), key.private_openssh.as_bytes());
+        assert_eq!(fs::read(env.to_host(&first)).unwrap(), key.private_openssh.as_bytes());
+        assert!(
+            !keygen::pub_path(&env.to_host(&first)).exists(),
+            "no public key to copy"
+        );
+
+        let tools = SshTools {
+            windows_ssh: system.join("OpenSSH").join("ssh.exe"),
+        };
+        if tools.windows_ssh.with_file_name("ssh-keygen.exe").is_file() {
+            let source = src.to_string_lossy();
+            assert_eq!(
+                super::super::keycheck::check(&tools, &env, &source).status,
+                KeyCheckStatus::Permissions
+            );
+            let copied = super::super::keycheck::check(&tools, &env, &first);
+            assert_eq!(copied.status, KeyCheckStatus::Ok);
+            assert_eq!(copied.fingerprint.as_deref(), Some(key.fingerprint.as_str()));
+        }
+        assert!(copy_key_to_windows_ssh(&src, &wsl(tmp.path())).is_err());
     }
 }

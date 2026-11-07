@@ -1,4 +1,4 @@
-import { CopyIcon, KeyRoundIcon, PlugIcon, RadarIcon, RefreshCwIcon, Trash2Icon, TriangleAlertIcon } from "lucide-react"
+import { CopyIcon, EllipsisIcon, KeyRoundIcon, PencilIcon, PlugIcon, RadarIcon, RefreshCwIcon, SquarePenIcon, Trash2Icon, TriangleAlertIcon, type LucideIcon } from "lucide-react"
 import { motion } from "motion/react"
 import type { ReactNode } from "react"
 
@@ -7,8 +7,10 @@ import { ProviderMark } from "@/components/app/ProviderMark"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Item } from "@/components/ui/item"
 import { Spinner } from "@/components/ui/spinner"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useAgentOptions } from "@/features/agents/agentKeys"
 import { SCOPE_KINDS } from "@/lib/cliProviders"
 import { copy } from "@/lib/copy"
@@ -50,11 +52,73 @@ function NotesBadge({ assetId }: { assetId: string }) {
   ) : null
 }
 
+/** 一行资源的操作：右键菜单和「⋯」菜单共用 */
+interface RowAction {
+  key: string
+  icon: LucideIcon
+  label: string
+  onClick: () => void
+  destructive?: boolean
+  /** 前面加分隔线 */
+  separated?: boolean
+}
+
+/** 打开详情；tab 为 "connection" 时直接到服务器的连接配置（「编辑连接」） */
+const openDetail = (asset: Asset, tab?: "connection") => {
+  const ui = useUIStore.getState()
+  ui.selectAsset(asset.id)
+  if (tab && useUIStore.getState().selectedAssetId === asset.id) ui.setDetailTab(tab)
+}
+
+const ROW_END_BUTTON = "text-muted-foreground/70 group-hover/row:text-foreground group-focus-within/row:text-foreground"
+
+function RowMenuItem({ action: a, kind }: { action: RowAction; kind: "dropdown" | "context" }) {
+  const MenuItem = kind === "dropdown" ? DropdownMenuItem : ContextMenuItem
+  const MenuSeparator = kind === "dropdown" ? DropdownMenuSeparator : ContextMenuSeparator
+  return (
+    <>
+      {a.separated && <MenuSeparator />}
+      <MenuItem variant={a.destructive ? "destructive" : "default"} onClick={a.onClick}>
+        <a.icon />
+        {a.label}
+      </MenuItem>
+    </>
+  )
+}
+
 /**
- * 一条单行回路（DESIGN.md Signature 1，行高 46px）：左侧身份，点击进入详情；右侧档位闸刀和 Agent 开关，独立可操作。
+ * 行尾的「编辑」和「⋯」（2026-11-07，用户反馈回路行看不出能编辑）：常驻、灰色，悬停或聚焦这一行时加深；
+ * 「⋯」里是原来只能右键打开的操作
+ */
+function RowEnd({ asset, actions }: { asset: Asset; actions: RowAction[] }) {
+  const handle = handleOf(asset)
+  return (
+    <div className="flex shrink-0 items-center gap-0.5 border-l pl-2">
+      <Tooltip>
+        <TooltipTrigger render={<Button variant="ghost" size="icon-sm" className={ROW_END_BUTTON} aria-label={copy.servers.editLabel(handle)} onClick={() => openDetail(asset)} />}>
+          <PencilIcon />
+        </TooltipTrigger>
+        <TooltipContent>{copy.servers.edit}</TooltipContent>
+      </Tooltip>
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className={ROW_END_BUTTON} aria-label={copy.servers.moreLabel(handle)} />}>
+          <EllipsisIcon />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-auto min-w-44">
+          {actions.map((a) => (
+            <RowMenuItem key={a.key} action={a} kind="dropdown" />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  )
+}
+
+/**
+ * 一条单行回路（DESIGN.md Signature 1，行高 46px）：左侧身份，点击进入详情；右侧档位闸刀、Agent 开关、编辑和更多操作，独立可操作。
  * 打开按钮铺满左侧，文字叠在它上面但不拦截点击，状态旁边的修复按钮因此不会嵌套在按钮里
  */
-function RowShell({ asset, current, fresh, stateWords, children, menu }: { asset: Asset; current: boolean; fresh: boolean; stateWords: string; children: ReactNode; menu: ReactNode }) {
+function RowShell({ asset, current, fresh, stateWords, children, actions }: { asset: Asset; current: boolean; fresh: boolean; stateWords: string; children: ReactNode; actions: RowAction[] }) {
   const { known, agents } = useAgentOptions()
   const handle = handleOf(asset)
   return (
@@ -64,7 +128,7 @@ function RowShell({ asset, current, fresh, stateWords, children, menu }: { asset
           render={
             <Item
               className={cn(
-                "min-h-11.5 flex-nowrap gap-3 rounded-none border-0 py-1.5 has-[[data-grid-cell]:hover]:bg-muted/50 has-[[data-grid-cell]:focus-visible]:ring-2 has-[[data-grid-cell]:focus-visible]:ring-ring has-[[data-grid-cell]:focus-visible]:ring-inset",
+                "group/row min-h-11.5 flex-nowrap gap-3 rounded-none border-0 py-1.5 pr-2 has-[[data-grid-cell]:hover]:bg-muted/50 has-[[data-grid-cell]:focus-visible]:ring-2 has-[[data-grid-cell]:focus-visible]:ring-ring has-[[data-grid-cell]:focus-visible]:ring-inset",
                 current && "bg-muted"
               )}
             />
@@ -85,9 +149,14 @@ function RowShell({ asset, current, fresh, stateWords, children, menu }: { asset
           <div className="flex shrink-0 items-center gap-3">
             <ModeBreaker asset={asset} />
             {agents.length > 0 ? <AgentPicker asset={asset} agents={agents} compact /> : known ? <span className="text-xs text-muted-foreground">{copy.servers.noAgents}</span> : null}
+            <RowEnd asset={asset} actions={actions} />
           </div>
         </ContextMenuTrigger>
-        <ContextMenuContent className="w-auto min-w-44">{menu}</ContextMenuContent>
+        <ContextMenuContent className="w-auto min-w-44">
+          {actions.map((a) => (
+            <RowMenuItem key={a.key} action={a} kind="context" />
+          ))}
+        </ContextMenuContent>
       </ContextMenu>
     </motion.div>
   )
@@ -108,33 +177,20 @@ export function ServerRow({ asset, current, fresh }: { asset: ServerAsset; curre
       current={current}
       fresh={fresh}
       stateWords={`${copy.connState[state]}，${copy.mode[asset.agent.mode]}`}
-      menu={
-        <>
-          <ContextMenuItem onClick={() => serverActions.test(asset)}>
-            <PlugIcon />
-            {copy.detail.test}
-          </ContextMenuItem>
-          {passwordOnly && (
-            <ContextMenuItem onClick={() => void serverActions.convertToKey(asset.id)}>
-              <KeyRoundIcon />
-              {copy.test.convertKey}
-            </ContextMenuItem>
-          )}
-          <ContextMenuItem onClick={() => (probing ? serverActions.cancelProbe(asset) : serverActions.probe(asset))}>
-            <RadarIcon />
-            {probing ? copy.detail.cancelProbe : copy.detail.probe}
-          </ContextMenuItem>
-          <ContextMenuItem onClick={() => serverActions.copyAlias(asset)}>
-            <CopyIcon />
-            {copy.detail.copyAlias}
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem variant="destructive" onClick={() => serverActions.requestDelete(asset)}>
-            <Trash2Icon />
-            {copy.detail.delete}
-          </ContextMenuItem>
-        </>
-      }
+      actions={[
+        { key: "edit", icon: PencilIcon, label: copy.servers.edit, onClick: () => openDetail(asset) },
+        { key: "edit-connection", icon: SquarePenIcon, label: copy.servers.editConnection, onClick: () => openDetail(asset, "connection") },
+        { key: "test", icon: PlugIcon, label: copy.detail.test, onClick: () => serverActions.test(asset), separated: true },
+        ...(passwordOnly ? [{ key: "convert", icon: KeyRoundIcon, label: copy.test.convertKey, onClick: () => void serverActions.convertToKey(asset.id) }] : []),
+        {
+          key: "probe",
+          icon: RadarIcon,
+          label: probing ? copy.detail.cancelProbe : copy.detail.probe,
+          onClick: () => (probing ? serverActions.cancelProbe(asset) : serverActions.probe(asset)),
+        },
+        { key: "copy", icon: CopyIcon, label: copy.detail.copyAlias, onClick: () => serverActions.copyAlias(asset) },
+        { key: "delete", icon: Trash2Icon, label: copy.detail.delete, onClick: () => serverActions.requestDelete(asset), destructive: true, separated: true },
+      ]}
     >
       <span aria-hidden className={cn("size-2 shrink-0 rounded-full", DOT[state])} />
       <span className="min-w-0 truncate text-sm font-medium">{asset.name}</span>
@@ -190,19 +246,11 @@ export function CliRow({ asset, current, fresh }: { asset: CliAsset; current: bo
       current={current}
       fresh={fresh}
       stateWords={`${word}，${copy.mode[asset.agent.mode]}`}
-      menu={
-        <>
-          <ContextMenuItem onClick={() => serverActions.recheckCli(asset)}>
-            <RefreshCwIcon />
-            {copy.cli.recheck}
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem variant="destructive" onClick={() => serverActions.requestDelete(asset)}>
-            <Trash2Icon />
-            {copy.cli.delete}
-          </ContextMenuItem>
-        </>
-      }
+      actions={[
+        { key: "edit", icon: PencilIcon, label: copy.servers.edit, onClick: () => openDetail(asset) },
+        { key: "recheck", icon: RefreshCwIcon, label: copy.cli.recheck, onClick: () => serverActions.recheckCli(asset), separated: true },
+        { key: "delete", icon: Trash2Icon, label: copy.cli.delete, onClick: () => serverActions.requestDelete(asset), destructive: true, separated: true },
+      ]}
     >
       <ProviderMark provider={asset.cliProvider} />
       <span className="shrink-0 text-sm font-medium">{asset.name}</span>

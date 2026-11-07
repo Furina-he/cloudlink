@@ -6,10 +6,11 @@ const WSL = "wsl:Ubuntu-24.04" as const
 
 export const targets: Target[] = [
   { id: "tgt_cc_win", envId: "windows", agent: "claude-code", agentKey: "claude-code", label: "Claude Code", path: "C:\\Users\\me\\.claude\\skills", enabled: true, detected: true },
-  { id: "tgt_agents_win", envId: "windows", agent: "universal", agentKey: "universal", label: "Codex", path: "C:\\Users\\me\\.agents\\skills", enabled: false, detected: false },
+  // 检测到了读取通用目录的 Agent，但用户停用了这个目录
+  { id: "tgt_agents_win", envId: "windows", agent: "universal", agentKey: "universal", label: "Agent Skills", path: "C:\\Users\\me\\.agents\\skills", enabled: false, detected: true },
   { id: "tgt_custom_win", envId: "windows", agent: "custom", agentKey: "custom:cursor", label: "Cursor", path: "C:\\Users\\me\\.cursor\\skills", enabled: true, detected: false },
   { id: "tgt_cc_wsl", envId: WSL, agent: "claude-code", agentKey: "claude-code", label: "Claude Code", path: "/home/me/.claude/skills", enabled: true, detected: true },
-  { id: "tgt_agents_wsl", envId: WSL, agent: "universal", agentKey: "universal", label: "Codex", path: "/home/me/.agents/skills", enabled: true, detected: true },
+  { id: "tgt_agents_wsl", envId: WSL, agent: "universal", agentKey: "universal", label: "Agent Skills", path: "/home/me/.agents/skills", enabled: true, detected: true },
 ]
 
 /** 副本状态覆盖 ok、missing、modified、conflict（PRD 7.8） */
@@ -22,8 +23,14 @@ export const deliveries: Delivery[] = [
 ]
 
 export const skillConfig: SkillConfig = {
-  relationships:
-    "hk-edge reverse-proxies api.example.com to the API containers on hk-edge; those containers use the PostgreSQL database on sg-db over the private network.",
+  // 软件推不出来的，由用户补充（2026-11-07 起关系由 CloudLink 维护，用户补充或改写）
+  relationNotes: [
+    {
+      id: "rel_api_db",
+      text: "The API containers on hk-edge use the PostgreSQL database on sg-db over the private network.",
+    },
+  ],
+  hiddenRelations: [],
   conventions: [
     { id: "c1", text: "Deploy with docker compose in /opt/apps/<name>; never edit containers by hand" },
     { id: "c2", text: "Tell the user before restarting anything on a production server" },

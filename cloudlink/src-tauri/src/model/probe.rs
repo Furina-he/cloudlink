@@ -40,6 +40,8 @@ pub enum SshErrorId {
     NeedsInteraction,
     KeyPermissions,
     KeyNotFound,
+    /// 私钥文件不是 OpenSSH 能用的私钥：PuTTY 格式、公钥或无法识别（params.reason）
+    KeyInvalid,
     Partial,
     Unknown,
 }

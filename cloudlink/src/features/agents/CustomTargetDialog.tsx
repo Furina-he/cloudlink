@@ -13,7 +13,6 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { copy, ipcErrorText } from "@/lib/copy"
 import { ipc } from "@/lib/ipc"
 import { toEnvPath } from "@/lib/paths"
@@ -23,23 +22,7 @@ import { useAvailableEnvs } from "@/features/servers/useServerForm"
 import { ValidationError } from "@/features/servers/ValidationError"
 import { useTargetStore } from "@/stores/targets"
 
-const PRESET_AGENTS: { label: string; relPath: string }[] = [
-  { label: "Cursor", relPath: ".cursor/skills" },
-  { label: "Windsurf", relPath: ".codeium/windsurf/skills" },
-  { label: "Gemini CLI", relPath: ".gemini/skills" },
-  { label: "GitHub Copilot", relPath: ".copilot/skills" },
-  { label: "OpenCode", relPath: ".config/opencode/skills" },
-  { label: "Cline", relPath: ".cline/skills" },
-  { label: "Roo Code", relPath: ".roo/skills" },
-  { label: "Trae", relPath: ".trae/skills" },
-]
-
-function joinHome(home: string, envId: EnvId, rel: string): string {
-  const sep = envId === "windows" ? "\\" : "/"
-  return `${home.replace(/[\\/]+$/, "")}${sep}${rel.replace(/\//g, sep)}`
-}
-
-/** 添加自定义目录（F-301 AC）：支持一键选择主流 Agent 预设自动带入官方图标与默认路径，也可手动指定任意目录 */
+/** 添加自定义目录（F-301 AC）：CloudLink 不认识的 Agent 才需要（2026-11-07 起常见 Agent 自动识别，不再提供快捷预设） */
 export function CustomTargetDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const envs = useAvailableEnvs()
   const [confirmDiscard, setConfirmDiscard] = useState(false)
@@ -48,7 +31,6 @@ export function CustomTargetDialog({ open, onOpenChange }: { open: boolean; onOp
     control,
     handleSubmit,
     setError,
-    setValue,
     reset,
     getValues,
     formState: { errors, isDirty, isSubmitting },
@@ -57,15 +39,9 @@ export function CustomTargetDialog({ open, onOpenChange }: { open: boolean; onOp
     defaultValues: { label: "", path: "", envId: envs[0]?.id ?? "windows" },
   })
   const currentLabel = useWatch({ control, name: "label" })
-  const matchedPreset = PRESET_AGENTS.find((p) => p.label.toLowerCase() === currentLabel.trim().toLowerCase())
   const close = () => {
     onOpenChange(false)
     reset()
-  }
-  const applyPreset = (preset: { label: string; relPath: string }, envId = getValues("envId") as EnvId) => {
-    const env = envs.find((e) => e.id === envId) ?? envs[0]
-    setValue("label", preset.label, { shouldDirty: true, shouldValidate: true })
-    if (env) setValue("path", joinHome(env.home, env.id, preset.relPath), { shouldDirty: true, shouldValidate: true })
   }
   const submit = handleSubmit(async (v) => {
     try {
@@ -94,31 +70,6 @@ export function CustomTargetDialog({ open, onOpenChange }: { open: boolean; onOp
         </DialogHeader>
         <form id="custom-target-form" noValidate onSubmit={submit}>
           <FieldGroup className="gap-4">
-            <Field>
-              <FieldLabel id="custom-presets-label">{copy.customTarget.presets}</FieldLabel>
-              <ToggleGroup
-                variant="outline"
-                size="sm"
-                spacing={1}
-                value={matchedPreset ? [matchedPreset.label] : []}
-                onValueChange={(next) => {
-                  const picked = PRESET_AGENTS.find((p) => p.label === next[0])
-                  if (picked) applyPreset(picked)
-                }}
-                aria-labelledby="custom-presets-label"
-                className="flex-wrap"
-              >
-                {PRESET_AGENTS.map((p) => {
-                  const active = matchedPreset?.label === p.label
-                  return (
-                    <ToggleGroupItem key={p.label} value={p.label} className={active ? "text-foreground" : "text-muted-foreground"}>
-                      <AgentMark agent="custom" label={p.label} lit={active} />
-                      {p.label}
-                    </ToggleGroupItem>
-                  )
-                })}
-              </ToggleGroup>
-            </Field>
             <Field data-invalid={!!errors.label || undefined}>
               <FieldLabel htmlFor="custom-name">
                 {copy.customTarget.name} <Required />
@@ -143,8 +94,6 @@ export function CustomTargetDialog({ open, onOpenChange }: { open: boolean; onOp
                     onValueChange={(v) => {
                       if (!v) return
                       field.onChange(v)
-                      const matched = PRESET_AGENTS.find((p) => p.label.toLowerCase() === getValues("label").trim().toLowerCase())
-                      if (matched) applyPreset(matched, v as EnvId)
                     }}
                   >
                     <SelectTrigger id="custom-env" className="w-56">

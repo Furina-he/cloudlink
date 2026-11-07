@@ -6,6 +6,7 @@ import type {
   ConnectionInput,
   ConnectionTestedEvent,
   ConnectionTestRequest,
+  HostKeyInfo,
   SshError,
 } from "@/bindings"
 import { ipc, toIpcError } from "@/lib/ipc"
@@ -25,7 +26,8 @@ export interface ConnectionTest {
   ms?: number
   remoteOs?: string
   error?: SshError
-  hostKey?: { fingerprint: string; known: "new" | "changed" }
+  /** host-key 时等待核对（new）或已阻断（changed）；信任之后为 trusted，沿用 known_hosts 时为 adopted */
+  hostKey?: HostKeyInfo
 }
 
 interface ConnectionState {
@@ -219,14 +221,16 @@ export const useConnectionStore = create<ConnectionState>()((
       const t = get().testsByKey[key]
       if (!t?.testId || !t.hostKey || t.status !== "host-key") return
       const request = requests.get(key)
+      // 指纹一经确认就写入 known_hosts（后端在认证前保存），界面上这一步随即完成
+      const trusted: HostKeyInfo = { fingerprint: t.hostKey.fingerprint, known: "trusted" }
       set((s) => ({
         testsByKey: {
           ...s.testsByKey,
-          [key]: { ...t, status: "running", hostKey: undefined },
+          [key]: { ...t, status: "running", hostKey: trusted },
         },
       }))
       try {
-        await ipc.trustHostKey(t.testId, t.hostKey.fingerprint)
+        await ipc.trustHostKey(t.testId, trusted.fingerprint)
       } catch (e) {
         const current = get().testsByKey[key]
         if (
@@ -242,6 +246,8 @@ export const useConnectionStore = create<ConnectionState>()((
             [key]: {
               ...current,
               status: "failed",
+              // 没能信任：这次的指纹没有写入 known_hosts
+              hostKey: undefined,
               error: { id: "unknown", params: err.params },
             },
           },

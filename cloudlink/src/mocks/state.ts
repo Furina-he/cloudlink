@@ -98,7 +98,7 @@ export function logActivity(item: Omit<ActivityItem, "id" | "at">) {
 /** 同一个 Agent 在各运行环境的目录共用一个 AgentKey：内置取 AgentId，自定义目录取 `custom:<名称>` */
 export const agentKeyOf = (agent: AgentId, label: string) => (agent === "custom" ? `custom:${label.trim().toLowerCase()}` : agent)
 
-const AGENT_ORDER: Record<AgentId, number> = { "claude-code": 0, universal: 1, custom: 2 }
+const AGENT_ORDER: Record<AgentId, number> = { "claude-code": 0, universal: 1, trae: 2, "trae-cn": 3, kiro: 4, continue: 5, custom: 6 }
 
 /** 编译单元：已启用目标里不同的「运行环境 × Agent」，每个编译一份总 Skill */
 export function compileUnits(): { envId: EnvId; agentKey: string; targets: Target[] }[] {

@@ -1,23 +1,25 @@
 // 回路行上可点选的 Agent，和每一份总 Skill（运行环境 × Agent）。都由已启用的目标推出来（2026-11-01 用户确认）
 import { useMemo } from "react"
 
-import type { AgentId, EnvId, Target } from "@/bindings"
+import type { AgentBrand, AgentId, EnvId, Environment, Target } from "@/bindings"
 import { copy } from "@/lib/copy"
 import { sortEnvs } from "@/features/servers/serverForm"
 import { selectSettingsKnown, useSettingsStore } from "@/stores/settings"
 import { compileKey } from "@/stores/skills"
 import { selectAvailableEnvs, selectTargetsKnown, useTargetStore } from "@/stores/targets"
 
-/** 内置目标在前（Claude Code、Codex），自定义目录在后 */
-export const AGENT_ORDER: Record<AgentId, number> = { "claude-code": 0, universal: 1, custom: 2 }
+/** 内置目标在前（Claude Code、通用目录、Trae、Kiro、Continue），自定义目录在后 */
+export const AGENT_ORDER: Record<AgentId, number> = { "claude-code": 0, universal: 1, trae: 2, "trae-cn": 3, kiro: 4, continue: 5, custom: 6 }
 
 export interface AgentOption {
   key: string
   agent: AgentId
   /** 完整名称，例如「Codex」 */
   label: string
-  /** 回路行按钮上的短名称，例如「Codex」 */
+  /** 回路行按钮上的短名称，例如「通用」 */
   short: string
+  /** 把它当作主要目录的、检测到的 Agent（通用目录下的 Codex、Cursor 等），各运行环境合并 */
+  readers: AgentBrand[]
 }
 
 /** 一份总 Skill：某个运行环境里某个 Agent 的那一份 */
@@ -45,10 +47,22 @@ function firstBy<T>(items: T[], key: (item: T) => string): T[] {
   })
 }
 
+/** 某个运行环境里把这个目标当作主要目录的 Agent（Claude Code 目标只有它自己，不列） */
+export function readersOf(environments: Environment[], envId: EnvId, agent: AgentId): AgentBrand[] {
+  if (agent === "claude-code" || agent === "custom") return []
+  return (environments.find((e) => e.id === envId)?.agents ?? []).filter((a) => a.reads[0] === agent).map((a) => a.brand)
+}
+
 /** 至少有一个已启用目标的 Agent，每个一项；同一个 Agent 在 Windows 和 WSL 的目录共用一项 */
-export function selectAgents(targets: Target[], envIds: EnvId[]): AgentOption[] {
+export function selectAgents(targets: Target[], envIds: EnvId[], environments: Environment[] = []): AgentOption[] {
   const enabled = targets.filter((t) => t.enabled && envIds.includes(t.envId)).sort(byAgent)
-  return firstBy(enabled, (t) => t.agentKey).map((t) => ({ key: t.agentKey, agent: t.agent, label: labelOf(t), short: shortOf(t) }))
+  return firstBy(enabled, (t) => t.agentKey).map((t) => ({
+    key: t.agentKey,
+    agent: t.agent,
+    label: labelOf(t),
+    short: shortOf(t),
+    readers: [...new Set(envIds.flatMap((envId) => readersOf(environments, envId, t.agent)))],
+  }))
 }
 
 /** 每一份总 Skill：已启用目标里不同的「运行环境 × Agent」，按运行环境、Agent 排序 */
@@ -64,7 +78,7 @@ export function selectCompileTargets(targets: Target[], envIds: EnvId[]): Compil
 export function compileLabel(list: CompileTarget[], s: { envId: EnvId; agentKey: string }): string {
   const found = list.find((t) => t.key === compileKey(s))
   if (found) return found.label
-  const agent = s.agentKey.startsWith("custom:") ? s.agentKey.slice("custom:".length) : (copy.agentShort[s.agentKey as "claude-code"] ?? s.agentKey)
+  const agent = s.agentKey.startsWith("custom:") ? s.agentKey.slice("custom:".length) : (copy.agentShort[s.agentKey as Exclude<AgentId, "custom">] ?? s.agentKey)
   return copy.agentInEnv(agent, copy.env.long(s.envId))
 }
 
@@ -78,6 +92,6 @@ export function useAgentOptions() {
   const known = targetsKnown && settingsKnown
   return useMemo(() => {
     const envIds = selectAvailableEnvs(environments, enabled).map((e) => e.id)
-    return { known, agents: selectAgents(targets, envIds), compileTargets: selectCompileTargets(targets, envIds) }
+    return { known, agents: selectAgents(targets, envIds, environments), compileTargets: selectCompileTargets(targets, envIds) }
   }, [known, targets, environments, enabled])
 }

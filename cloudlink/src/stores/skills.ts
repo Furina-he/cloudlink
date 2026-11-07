@@ -1,7 +1,7 @@
 // 总 Skill：全局内容（F-201 AC1）与每一份的编译状态（F-203）。每个「运行环境 × Agent」一份，只含分发给这个 Agent 的服务器
 import { create } from "zustand"
 
-import type { CompileStatus, IpcError, LintItem, SkillConfig } from "@/bindings"
+import type { CompileStatus, IpcError, LintItem, Relation, SkillConfig } from "@/bindings"
 import { ipc, toIpcError } from "@/lib/ipc"
 import type { LoadStatus } from "./assets"
 
@@ -10,12 +10,16 @@ export const compileKey = (s: { envId: string; agentKey: string }) => `${s.envId
 
 interface SkillState {
   config: SkillConfig | null
+  /** CloudLink 从资源推出的关系（2026-11-07）；hidden 按已保存的设置标出 */
+  relations: Relation[]
   /** 键是 compileKey */
   statusByKey: Record<string, CompileStatus>
   status: LoadStatus
   error: IpcError | null
 
   load: () => Promise<void>
+  /** 资源变化后重新推出关系；失败时保留上一次的结果 */
+  loadRelations: () => Promise<void>
   /** 保存后重新编译；失败时抛出 IpcError */
   saveConfig: (input: SkillConfig) => Promise<void>
   /** 后端每次都返回全部的编译状态：整体替换，停用的目标对应的那一份随之消失 */
@@ -24,6 +28,7 @@ interface SkillState {
 
 export const useSkillStore = create<SkillState>()((set, get) => ({
   config: null,
+  relations: [],
   statusByKey: {},
   status: "idle",
   error: null,
@@ -31,11 +36,19 @@ export const useSkillStore = create<SkillState>()((set, get) => ({
   load: async () => {
     set((s) => ({ status: s.status === "ready" ? "ready" : "loading", error: null }))
     try {
-      const [config, statuses] = await Promise.all([ipc.getSkillConfig(), ipc.getCompileStatus()])
-      set({ config, status: "ready" })
+      const [config, statuses, relations] = await Promise.all([ipc.getSkillConfig(), ipc.getCompileStatus(), ipc.listRelations()])
+      set({ config, relations, status: "ready" })
       get()._onCompiled(statuses)
     } catch (e) {
       set({ status: "error", error: toIpcError(e) })
+    }
+  },
+
+  loadRelations: async () => {
+    try {
+      set({ relations: await ipc.listRelations() })
+    } catch {
+      // 关系只是展示，失败时保留上一次的
     }
   },
 
@@ -48,6 +61,7 @@ export const useSkillStore = create<SkillState>()((set, get) => ({
     }
     set({ config: input })
     get()._onCompiled(statuses)
+    void get().loadRelations()
   },
 
   _onCompiled: (statuses) => set({ statusByKey: Object.fromEntries(statuses.map((x) => [compileKey(x), x])) }),

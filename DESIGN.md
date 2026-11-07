@@ -283,7 +283,8 @@ CloudLink 是开发者和终端并排打开、用来决定「Agent 能看见哪�
 ### Buttons, Chips & Cards
 
 - **Primary Button:** 钢墨底配 shell 色文字。每个面板只放一个主按钮（如新建面板底部的「连接并启用」）。
-- **Cards:** 只在两处使用 `Card`：新建资源面板中的「资源类型选择项」，以及 Agent 页的「分发目标卡片」。主列表统一使用紧凑对齐的回路行容器，卡片内部绝不嵌套卡片。
+- **Cards:** 只在新建资源面板中的「资源类型选择项」使用 `Card`。主列表、首次启动的入口、Agent 页的目录和资源关系统一使用「分组标题 + `rounded-xl border` + `divide-y`」的行容器（2026-11-07 起 Agent 页不再用卡片），卡片内部绝不嵌套卡片。
+- **Row End Actions（2026-11-07）:** 可以编辑的行在最右侧用竖线隔开，放铅笔「编辑」和「⋯」更多操作两个 `icon-sm` ghost 按钮。按钮常驻、占位固定（不在悬停时才出现，避免行内跳动和触屏找不到），平时 `text-muted-foreground/70`，悬停或键盘聚焦这一行时加深；都带 `Tooltip` 和读屏名称。「⋯」菜单与右键菜单共用一份动作列表。
 
 ### Iconography & Official Brand Logos
 
@@ -294,8 +295,8 @@ CloudLink 是开发者和终端并排打开、用来决定「Agent 能看见哪�
 
 1. **Agent 官方 Logo（封装于 `src/components/app/AgentMark.tsx`）**：
    - **Claude Code**：Claude 官方星芒 Logo（取自 `@lobehub/icons-static-svg/icons/claude.svg`）。
-   - **Codex**：OpenAI 官方花瓣 Logo（取自 `@lobehub/icons-static-svg/icons/openai.svg`）。
-   - **其他主流 Agent 与自定义目录**：内置匹配 Cursor、Windsurf、Gemini CLI、GitHub Copilot、OpenCode、Cline、Roo Code、Trae、Goose、Amp、Devin 的官方品牌 SVG Logo（均取自 `@lobehub/icons-static-svg`），并在添加自定义目录弹窗中提供主流 Agent 快捷填充；完全未知的自定义目录名称统一使用 `BotIcon` 兜底，禁止使用双字母文字缩写。
+   - **通用目录**（`~/.agents/skills`，多个 Agent 共用）：不冒用任何一家的 Logo，用 Lucide `BlocksIcon`；读取它的 Agent 在这一行下面用各自的官方 Logo + 名称列出（2026-11-07）。
+   - **其他 Agent 品牌与自定义目录**：Codex、Cursor、Windsurf、Gemini CLI、GitHub Copilot、OpenCode、Cline、Roo Code、Kilo Code、Goose、Amp、Qwen Code、Junie、Trae、Kiro 等使用 `@lobehub/icons-static-svg` 中的官方 Logo；包里没有 Logo 的品牌（如 Continue、Augment、Crush、Factory Droid、Warp）和完全未知的自定义目录名称统一使用 `BotIcon` 兜底，禁止使用双字母文字缩写。
 2. **云平台官方 Logo（封装于 `src/components/app/ProviderMark.tsx`）**：
    - **Cloudflare**：Cloudflare 官方双云彩色/单色 Logo（取自 `@lobehub/icons-static-svg/icons/cloudflare-color.svg` / `cloudflare.svg`）。
    - **Vercel**：Vercel 官方正三角 Logo（取自 `@lobehub/icons-static-svg/icons/vercel.svg`，墨色自适应浅深主题）。

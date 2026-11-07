@@ -25,10 +25,13 @@ import type {
   ImportHost,
   Inclusion,
   IpcError,
+  KeyCheck,
+  KeyCheckRequest,
   Mode,
   Operation,
   OperationQuery,
   PreviewRequest,
+  Relation,
   SaveResult,
   Settings,
   SkillConfig,
@@ -66,6 +69,11 @@ export const ipc = {
   /** F-108 AC4：复制到该发行版的 ~/.ssh/，600 权限，重名加后缀；返回副本路径（2026-10-31 补充） */
   copyKeyToWsl: (req: { source: string; envId: EnvId }) =>
     invoke<{ path: string }>("copy_key_to_wsl", { req }),
+  /** Windows：复制一份只有当前用户能读的副本到 ~/.ssh/；WSL 与 copyKeyToWsl 相同（F-108） */
+  copyKeyToSshDir: (req: { source: string; envId: EnvId }) =>
+    invoke<{ path: string }>("copy_key_to_ssh_dir", { req }),
+  /** 私钥预检：权限、格式、密码短语（F-108），只读 */
+  checkKey: (req: KeyCheckRequest) => invoke<KeyCheck>("check_key", { req }),
   getSshConfigStatus: () => invoke<SshConfigStatus[]>("get_ssh_config_status"),
   addSshInclude: (envId: EnvId) =>
     invoke<SshConfigStatus>("add_ssh_include", { envId }),
@@ -100,6 +108,8 @@ export const ipc = {
     invoke<SaveResult>("confirm_probe_items", { runId, changeIds }),
   undoProbe: (runId: string) => invoke<SaveResult>("undo_probe", { runId }),
   getSkillConfig: () => invoke<SkillConfig>("get_skill_config"),
+  /** CloudLink 从资源推出的关系，标出用户隐藏的（2026-11-07） */
+  listRelations: () => invoke<Relation[]>("list_relations"),
   saveSkillConfig: (input: SkillConfig) =>
     invoke<CompileStatus[]>("save_skill_config", { input }),
   /** 带草稿时预览草稿 */
