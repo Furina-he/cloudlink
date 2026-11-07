@@ -1,368 +1,345 @@
 ---
 name: CloudLink
-description: 把录入的服务器（SSH）与云平台（CLI）编译成一个总 Skill，分发给 Claude Code 等 Agent，并用护栏约束它们操作基础设施的桌面工具。视觉体系是 shadcn/ui Nova（base-nova）加上 Mist 冷钢中性色、Signal Cyan 信号色与「钢制配电盘（Steel Breaker Panel）」布局。
+description: 把录入的服务器（SSH）与云平台（CLI）编译成一个总 Skill，分发给 Claude Code 等 Agent，并用护栏约束它们操作基础设施的桌面工具。视觉体系是 shadcn/ui Nova（base-nova）加上「安静钢面」：灰底白卡、发丝线、状态圆点、弹出按钮式控件，唯一强调色 Signal Cyan。
 colors:
-  canvas: "oklch(1 0 0)"
-  canvas-dark: "oklch(0.148 0.004 228.8)"
-  ink: "oklch(0.148 0.004 228.8)"
-  ink-dark: "oklch(0.987 0.002 197.1)"
-  steel: "oklch(0.218 0.008 223.9)"
-  steel-dark: "oklch(0.925 0.005 214.3)"
-  frost: "oklch(0.963 0.002 197.1)"
-  frost-dark: "oklch(0.275 0.011 216.9)"
-  shell: "oklch(0.987 0.002 197.1)"
-  shell-dark: "oklch(0.218 0.008 223.9)"
-  note: "oklch(0.52 0.021 213.5)"
-  note-dark: "oklch(0.723 0.014 214.4)"
-  hairline: "oklch(0.925 0.005 214.3)"
-  hairline-dark: "oklch(1 0 0 / 10%)"
-  signal: "oklch(0.609 0.126 221.723)"
-  signal-dark: "oklch(0.715 0.143 215.221)"
-  danger: "oklch(0.577 0.245 27.325)"
-  danger-dark: "oklch(0.704 0.191 22.216)"
-  success: "oklch(0.508 0.118 165.612)"
-  success-dark: "oklch(0.765 0.177 163.223)"
-  warning: "oklch(0.555 0.163 48.998)"
-  warning-dark: "oklch(0.828 0.189 84.429)"
-  agent-claude: "oklch(0.56 0.15 40)"
-  agent-claude-dark: "oklch(0.72 0.14 42)"
-  agent-openai: "oklch(0.6 0.13 168)"
-  agent-openai-dark: "oklch(0.74 0.13 168)"
+  bg: "oklch(0.964 0.003 264.5)"
+  bg-dark: "oklch(0.213 0.007 258.4)"
+  card: "oklch(1 0 0)"
+  card-dark: "oklch(0.255 0.009 255.6)"
+  card-2: "oklch(0.982 0.002 247.8)"
+  card-2-dark: "oklch(0.237 0.007 248.1)"
+  pill: "oklch(0.954 0.003 247.9)"
+  pill-dark: "oklch(0.299 0.011 254.0)"
+  pill-hover: "oklch(0.930 0.005 247.9)"
+  pill-hover-dark: "oklch(0.338 0.013 253.0)"
+  seg-track: "oklch(0.923 0.005 247.9)"
+  seg-track-dark: "oklch(1 0 0 / 4%)"
+  line: "oklch(0.915 0.006 255.5)"
+  line-dark: "oklch(0.327 0.012 258.4)"
+  line-2: "oklch(0.942 0.005 258.3)"
+  line-2-dark: "oklch(0.299 0.011 254.0)"
+  fg: "oklch(0.208 0.009 255.6)"
+  fg-dark: "oklch(0.948 0.005 258.3)"
+  fg-2: "oklch(0.410 0.016 255.6)"
+  fg-2-dark: "oklch(0.793 0.012 252.1)"
+  ctl-fg: "oklch(0.507 0.015 251.7)"
+  ctl-fg-dark: "oklch(0.732 0.012 252.1)"
+  muted: "oklch(0.535 0.017 251.3)"
+  muted-dark: "oklch(0.706 0.014 251.6)"
+  faint: "oklch(0.787 0.013 255.5)"
+  faint-dark: "oklch(0.493 0.013 252.2)"
+  ink: "oklch(0.252 0.013 243.4)"
+  ink-dark: "oklch(0.933 0.005 247.9)"
+  signal: "oklch(0.530 0.103 229.3)"
+  signal-dark: "oklch(0.766 0.113 221.7)"
+  signal-soft: "oklch(0.951 0.019 222.2)"
+  signal-soft-dark: "oklch(0.310 0.038 230.5)"
+  green: "oklch(0.530 0.121 157.3)"
+  green-dark: "oklch(0.789 0.128 157.6)"
+  amber: "oklch(0.554 0.143 50.3)"
+  amber-dark: "oklch(0.807 0.139 78.5)"
+  red: "oklch(0.578 0.181 24.8)"
+  red-dark: "oklch(0.741 0.126 25.3)"
 typography:
-  title:
-    fontFamily: "system-ui, 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', 'Noto Sans CJK SC', sans-serif"
-    fontSize: "1rem"
-    fontWeight: 600
-    lineHeight: 1.4
-  section:
-    fontFamily: "system-ui, 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', 'Noto Sans CJK SC', sans-serif"
-    fontSize: "0.875rem"
-    fontWeight: 600
-    lineHeight: 1.4
-  body:
-    fontFamily: "system-ui, 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', 'Noto Sans CJK SC', sans-serif"
-    fontSize: "0.875rem"
+  base:
+    fontFamily: "'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif"
+    fontSize: "13px"
     fontWeight: 400
-    lineHeight: 1.5
-  meta:
-    fontFamily: "system-ui, 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', 'Noto Sans CJK SC', sans-serif"
-    fontSize: "0.8rem"
-    fontWeight: 400
-    lineHeight: 1.4
-  label:
-    fontFamily: "system-ui, 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', 'Noto Sans CJK SC', sans-serif"
-    fontSize: "0.75rem"
-    fontWeight: 500
+    lineHeight: 1.45
+  page-title:
+    fontSize: "18px"
+    fontWeight: 600
     lineHeight: 1.3
+  group-title:
+    fontSize: "13px"
+    fontWeight: 600
+  row-name:
+    fontSize: "13.5px"
+    fontWeight: 500
+  sub:
+    fontSize: "12px"
+    fontWeight: 400
   mono:
-    fontFamily: "'JetBrains Mono Variable', 'Cascadia Mono', 'SF Mono', ui-monospace, Menlo, Consolas, monospace"
-    fontSize: "0.8125rem"
-    fontWeight: 400
-    lineHeight: 1.5
-  prose:
-    fontFamily: "system-ui, 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', 'Noto Sans CJK SC', sans-serif"
-    fontSize: "0.875rem"
-    fontWeight: 400
-    lineHeight: 1.7
+    fontFamily: "'Cascadia Mono', Consolas, 'Microsoft YaHei UI', monospace"
+    fontSize: "12px"
 rounded:
-  sm: "0.27rem"
-  md: "0.36rem"
-  lg: "0.45rem"
-  xl: "0.63rem"
-  pill: "9999px"
+  control: "6px"
+  button: "7px"
+  tile: "8px"
+  popover: "11px"
+  list: "12px"
+  dialog: "14px"
 spacing:
   xs: "4px"
   sm: "8px"
   md: "12px"
   lg: "16px"
-  xl: "24px"
+  xl: "20px"
 components:
   button-primary:
-    backgroundColor: "{colors.steel}"
-    textColor: "{colors.shell}"
-    rounded: "{rounded.lg}"
-    height: "32px"
-    padding: "0 10px"
-  button-outline:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.lg}"
-    height: "32px"
-    padding: "0 10px"
-  button-destructive:
-    backgroundColor: "oklch(0.577 0.245 27.325 / 10%)"
-    textColor: "{colors.danger}"
-    rounded: "{rounded.lg}"
-    height: "32px"
-    padding: "0 10px"
-  input:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.lg}"
-    height: "32px"
-    padding: "4px 10px"
-  badge-state-success:
-    backgroundColor: "oklch(0.508 0.118 165.612 / 10%)"
-    textColor: "{colors.success}"
-    rounded: "{rounded.pill}"
-    height: "20px"
-    padding: "2px 8px"
-  badge-state-warning:
-    backgroundColor: "oklch(0.555 0.163 48.998 / 10%)"
-    textColor: "{colors.warning}"
-    rounded: "{rounded.pill}"
-    height: "20px"
-    padding: "2px 8px"
-  badge-state-danger:
-    backgroundColor: "oklch(0.577 0.245 27.325 / 10%)"
-    textColor: "{colors.danger}"
-    rounded: "{rounded.pill}"
-    height: "20px"
-    padding: "2px 8px"
-  badge-env:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.pill}"
-    height: "20px"
-    padding: "2px 8px"
-  list-item-current:
-    backgroundColor: "{colors.frost}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.md}"
-    padding: "10px 12px"
-  sidebar-item-active:
-    backgroundColor: "{colors.frost}"
-    textColor: "{colors.steel}"
-    rounded: "{rounded.md}"
-    height: "32px"
+    backgroundColor: "{colors.ink}"
+    textColor: "{colors.card}"
+    rounded: "{rounded.button}"
+    height: "28px"
+  button-secondary:
+    backgroundColor: "{colors.pill}"
+    textColor: "{colors.fg}"
+    rounded: "{rounded.button}"
+    height: "28px"
+  pop-up-field:
+    backgroundColor: "{colors.pill}"
+    textColor: "{colors.fg}"
+    rounded: "{rounded.control}"
+    height: "26px"
+  list:
+    backgroundColor: "{colors.card}"
+    border: "1px {colors.line}"
+    rounded: "{rounded.list}"
+  row:
+    minHeight: "56px"
+    divider: "1px {colors.line-2}"
+  target-toggle-on:
+    backgroundColor: "{colors.signal-soft}"
+    ring: "inset 1px {colors.signal} / 35%"
+    size: "28px"
 ---
 
-<!-- 令牌来源：在 2026-10-27 用 shadcn CLI 4.22.2 实际执行 `init --preset b1sArLArQ --base base` 生成，再加上本文标注为「覆盖」的四项（note、signal、success、warning）。全部前景/背景组合都按 WCAG 公式验算过。2026-11-02 更新为「钢制配电盘」单列双闸刀回路行架构与官方云厂商 Logo 规范。2026-11-05 补充应用图标与顶栏更新提醒。界面实现后请运行 `/impeccable document`，以实际代码重新校准本文件。 -->
+<!-- 2026-11-08 重设计（v4）：对标 CC Switch 与 magpie，从「钢制配电盘」改为「安静钢面」。决策过程与可点击原型见 docs/prototype/redesign/（静态 HTML），截图在 test-results/redesign/。色值从原型换算成 OKLCH，前景/背景组合已按 WCAG 公式验算（见 Colors）。实现完成后运行 `/impeccable document`，以实际代码重新校准本文件。 -->
 
 # Design System: CloudLink
 
 ## Overview
 
-**Creative North Star: "钢与信号（Steel & Signal）· 紧凑配电盘（Compact Breaker Panel）"**
+**Creative North Star: "安静钢面（Quiet Steel）"**：一块安静的表面、真实的品牌 Logo、像弹出按钮的控件，颜色只表达状态。
 
-CloudLink 是开发者和终端并排打开、用来决定「Agent 能看见哪些服务器与云平台、在上面能做什么」的轻量桌面工具（对标 CC Switch 的紧凑窗口与极简动线）。它的界面拒绝企业后台管理系统的「左大侧栏 + 顶面包屑 + 左列表 + 右分栏」套娃外壳：
-- **窗口紧凑（900×640）**：默认窗口尺寸对标 CC Switch（`900×640`，最小 `760×520`），在 1080p 缩放屏幕上与终端并排毫不局促。
-- **顶部一体栏（无左侧边栏、无面包屑栏）**：整个应用只有顶部一条 48px 导航与操作栏（左侧 `CloudLink` 与 `资源 / Agent / 设置` 分段切换，右侧搜索与 `+ 添加服务器`、`+ 云平台`；发现新版本时最右侧多一个中性色的更新提醒）。
-- **单行零噪点回路行（Single-Line Breaker Row）**：首屏只有「服务器」与「云平台」两组单行列表；每行只保留 4 个核心元素（状态圆点/官方 Logo + 名称与标识 + 权限档位闸刀 + Agent 品牌开关），砍掉一切第二行统计小字与重复命名，全屏零省略号。
-- **无分栏挤压（No Split-Screen Squeeze）**：彻底取消 `ResizablePanelGroup` 左右并排挤压。添加资源使用居中 `Dialog`（或独立聚焦视图），查看/编辑资源详情使用带 `← 返回` 的全宽视图。
+CloudLink 是和终端并排打开的小工具，用来决定「Agent 能看见哪些服务器与云平台、在上面能做什么」。它向两个参照学习：
 
-系统建立在 shadcn/ui 的 Nova 风格上，内边距和外边距紧凑，控件统一 32px 高。底色是带极轻青蓝倾向的 Mist 冷钢灰，用来承载结构。界面上只允许出现一种「信号色」Signal Cyan，标记两件事：键盘焦点、当前选中的资源回路行。红、琥珀、绿三种颜色只表达状态，从不拿来装饰（例外：Agent 标识与云厂商官方品牌 Logo，见 Iconography）。
+- **magpie** 的表面：灰色画布上放白色列表卡，行与行之间用发丝线分隔；状态用圆点表达；控件是灰色的「弹出按钮」；阴影只出现在浮层上。
+- **CC Switch** 的识别：品牌 Logo 统一装进同尺寸的圆角方块；一组 Agent 图标点亮或熄灭，就是这项资源给不给这个 Agent。
 
-这个系统明确拒绝以下几种外观：
+整个应用只有一种强调色 Signal Cyan，主按钮是钢墨色；红、琥珀、绿只表达状态。
 
-- 「左大侧栏 + 顶面包屑 + 左列表 + 右分栏」的三栏后台管理系统外壳（会把列表挤成满屏 `...` 省略号）。
-- 单行塞满 10 个字段、两行统计小字（如 `✓ 已连接 · Ubuntu 22.04 · 2 个服务`）或 `vercel Vercel · vercel` 这类重复命名。
-- 1Panel、宝塔那种仪表盘式的环形图和大数字。
-- 多列参差不齐的小卡片网格和多层嵌套手风琴。
-- AI 工具常见的紫色渐变、发光和闪烁星标。
-- 「黑客终端」式的满屏等宽绿字。
+这个系统明确拒绝：
+
+- 一行塞满胶囊：别名胶囊、笔记胶囊、档位胶囊、三个无标注图标、编辑、更多……徽章、按钮、开关长得一样，分不清什么能点。
+- 在列表行里写排错长段落，或者把编译、目录、运行环境这些内部机制直接摆给用户看。
+- 帮助文字讲提示词工程（「会写进 description……」）。说用户得到什么，不说实现。
+- 仪表盘式的环形图和大数字、AI 工具常见的紫色渐变和发光、满屏等宽绿字。
 
 **Key Characteristics:**
 
-- **紧凑窗口、全宽单视图**：默认窗口 `900×640`（最小 `760×520`），无左侧边栏、无左右分栏并排挤压；主列表、详情页（`← 返回`）与添加弹窗各自独享充裕横向空间。
-- **单行回路、正常即隐身**：每条资源行高 44–48px（单行），正常连接时仅用绿点 `●` 表达，不写多余文字；只有异常时才在该行就地亮起修复按钮（如 `[改用密钥登录]`、`[去登录]`）。
-- **冷钢中性色**（Mist，色相 197–229），浅色和深色两套主题同等完成度，默认跟随系统。
-- **主操作按钮一律是墨色（steel）**，信号色只有一种（cyan）。
-- **颜色就是状态**：绿表示已连接、已就绪、已同步或健康，琥珀表示登录过期、环境缺失、冲突或**生产环境正处于「标准运维（可写）」状态**，红表示失效、危险或生产环境圆点。
-- 使用系统原生 UI 字体，与中文无缝配对；技术字符串（别名、CLI 命令、路径）用 JetBrains Mono。
-- 层次靠边框和色阶表达，平时没有阴影。阴影只出现在浮层上。
+- **默认 1000×680 窗口**（最小 760×520）。默认是顶部 48px 一体栏导航，用户可以手动切换成左侧栏（`Ctrl+Shift+S` 或设置里切换，记住选择）。
+- **内容居中、最宽 760px**，一页一列，从上往下读。
+- **正常即隐身**：连接正常时只有一个绿点，不写「已连接」；出问题时才出现文字和修复按钮。
+- **两行的资源行**：第一行名称 + 别名 + 生产标记，第二行只有状态点和档位；右侧是对齐的 Agent 图标组。
+- 浅色、深色两套主题同等完成度，默认跟随系统。
 
 ## Colors
 
-整体是冷钢中性色加一个信号色。所有色值都用 OKLCH，CSS 变量写在 `src/index.css`，规则见 `docs/PRD.md` 第 7.6 节。
+色值以 OKLCH 写在 `src/index.css`，映射到 shadcn 变量的规则见 `docs/PRD.md` 7.6。
+
+### Surfaces（表面）
+
+- **bg 画布**：窗口底色。比卡片暗一档，让白色列表卡浮起来，不靠阴影。
+- **card 卡片**：所有列表卡、对话框的底色。
+- **card-2**：行悬停、卡片里的说明条（如红线的诚实说明）。
+- **pill / pill-hover**：弹出按钮、次要按钮、分段切换中的灰底。
+- **seg-track**：分段切换的轨道，比 pill 深一档，白色滑块才站得住。
+- **line / line-2**：line 是列表卡外框和顶栏分隔线；line-2 是卡内行与行之间更浅的分隔线。
+
+### Text（文字）
+
+- **fg**：正文、名称。
+- **fg-2**：说明正文、值。
+- **ctl-fg**：控件上的安静文字（未选中的分段、图标按钮）。对 pill 底 5.1:1。
+- **muted**：副行、时间、计数。浅色对卡片 5.2:1、对画布 4.7:1；深色对卡片 6.0:1。
+- **faint**：分隔点「·」、未连接的空心圈、行尾箭头。不承载文字信息。
 
 ### Primary
 
-- **Steel Ink 钢墨**（浅色 `steel` oklch(0.218 0.008 223.9) / 深色 `steel-dark` oklch(0.925 0.005 214.3)）：主操作按钮（连接并启用、保存、导入、探测）、侧栏激活图标、进度条指示。主按钮不用彩色，这是刻意的选择：彩色要留给状态。
+- **Steel Ink 钢墨**（`ink`）：主按钮（连接并启用、并入资源、允许一次）、开关打开时的轨道（浅色）、提示条底色。每个视图最多一个主按钮。
 
-### Secondary
+### Signal Cyan（唯一强调色）
 
-- **Signal Cyan 信号青**（浅色 `signal` oklch(0.609 0.126 221.723) / 深色 `signal-dark` oklch(0.715 0.143 215.221)，**覆盖** shadcn 默认的 `--ring`）：只用在键盘焦点环和当前选中资源回路行的描边上。它在浅色模式下对白底的对比度是 3.60:1，只满足非文本对比度的 3:1 要求，因此禁止用作文字颜色。
+- `signal` 浅色对卡片 5.2:1，可以作链接文字；`signal-soft` 是它的浅底。
+- 只用于四个地方：**键盘焦点环**、**点亮的 Agent 图标**（signal-soft 底 + 35% signal 内描边）、**「动态」导航上的待处理圆点**、**文字链接**。深色主题下开关打开时的轨道也用它。
 
-### Tertiary
+### State（状态色）
 
-- **State Green 状态绿**（`success` oklch(0.508 0.118 165.612) / `success-dark` oklch(0.765 0.177 163.223)，新增）：已连接、CLI 已就绪、副本已同步、护栏已生效、探测成功。浅色模式下对白底 5.37:1，对 10% 自身色底 4.67:1。
-- **State Amber 状态琥珀**（`warning` oklch(0.555 0.163 48.998) / `warning-dark` oklch(0.828 0.189 84.429)，新增）：**生产资源处于「标准运维」档位提醒**、CLI 未安装或登录过期、编译警告、副本被改动或冲突、待确认的探测项。浅色模式下对白底 5.05:1。
-- **State Red 状态红**（`danger` oklch(0.577 0.245 27.325) / `danger-dark` oklch(0.704 0.191 22.216)，即 shadcn 的 `--destructive`）：连接或探测失败、编译受阻、护栏未生效、检测到密钥或疑似注入、删除操作，以及生产环境色点。浅色模式下对白底 4.76:1。
-- **Agent Identity Agent 标识**（`agent-claude` oklch(0.56 0.15 40) / `agent-claude-dark` oklch(0.72 0.14 42)；`agent-openai` oklch(0.6 0.13 168) / `agent-openai-dark` oklch(0.74 0.13 168)）：只用于资源行和详情头部点亮的 Agent 按钮。Claude 的 Logo 用 `agent-claude`；OpenAI 的 Logo 用墨色，`agent-openai` 做 15% 底色和 40% 描边。
-
-### Neutral
-
-- **Canvas 画布**（`canvas` oklch(1 0 0) / `canvas-dark` oklch(0.148 0.004 228.8)）：主工作区背景。
-- **Ink 墨**（`ink` / `ink-dark`）：正文和标题。对画布的对比度约 19.7:1。
-- **Frost 霜**（`frost` oklch(0.963 0.002 197.1) / `frost-dark` oklch(0.275 0.011 216.9)）：shadcn 的 muted、secondary、accent 共用这一层，用于悬停、当前选中的回路行、代码块底色。
-- **Shell 外壳**（`shell` oklch(0.987 0.002 197.1) / `shell-dark` oklch(0.218 0.008 223.9)）：侧栏底色。深色模式下卡片和浮层也用这一层。
-- **Note 注记灰**（`note` oklch(0.52 0.021 213.5)，**覆盖** shadcn 生成的 0.56 / `note-dark` oklch(0.723 0.014 214.4)）：次要文字和描述。放在 frost 上是 4.91:1，放在 shell 上是 5.26:1。
-- **Hairline 发丝线**（`hairline` oklch(0.925 0.005 214.3) / `hairline-dark` 白色 10%）：所有边框和分隔线，以及输入框描边。
+- **green**：已连接、已登录、已同步、命令已执行。浅色对卡片 5.0:1。
+- **amber**：生产资源处于标准运维、未验证、某个运行环境未登录、同名冲突。浅色对卡片 5.0:1。
+- **red**：「生产」标记、连接失败、命令被拦截、删除。浅色对卡片 4.7:1。
+- 每个状态色都有 soft 变体（约 10% 亮度的同色底），用于状态点外圈的光晕和警示行底色。
 
 ### Named Rules
 
-**The Ink Primary Rule.** 主操作永远是钢墨色的实心按钮。整个应用中，彩色实心按钮只允许出现一种：`destructive` 变体（10% 红底配红字）。
+**The Ink Primary Rule.** 主操作永远是钢墨实心按钮。彩色实心按钮只允许一种：确认删除时的红色按钮。
 
-**The One Signal Rule.** Signal Cyan 只出现在焦点和当前选中的资源行两个场景。禁止用它做按钮底色、文字颜色、图标颜色或装饰。
+**The Signal Four Rule.** Signal Cyan 只出现在上面列出的四个地方。禁止用它做按钮底色、图标装饰或标题。
 
-**The State Owns Color Rule.** 红、琥珀、绿只能表达状态，并且必须同时带 Lucide 图标和中文状态词。没有状态含义的地方，不允许出现这三种颜色。Agent 标识色与云平台官方品牌彩色 Logo 不是状态色，只用于识别品牌身份。
+**The State Owns Color Rule.** 红、琥珀、绿只表达状态，并且必须同时有文字（悬停提示也算）。品牌 Logo 的颜色不是状态色。
+
+**The Dot Not Stripe Rule.** 状态用圆点（带 3px 同色 soft 光晕），不用彩色左侧竖条，也不给整行染色。唯一的例外是需要处理的警示行可以用 amber-soft 浅底。
 
 ## Typography
 
-**Body Font:** 系统 UI 字体栈：system-ui、Segoe UI Variable、Segoe UI、PingFang SC、Microsoft YaHei UI、Noto Sans CJK SC。
-**Label/Mono Font:** JetBrains Mono Variable（通过 `@fontsource-variable/jetbrains-mono` 自托管），回退依次为 Cascadia Mono、SF Mono、ui-monospace。
+**UI 字体：** Segoe UI Variable Text、Segoe UI，中文 Microsoft YaHei UI；不打包 Web 字体。
+**等宽：** Cascadia Mono、Consolas，中文回退 Microsoft YaHei UI（避免中文 Windows 上等宽回退到宋体）。
 
 ### Hierarchy
 
-- **Title**（600，1rem/16px，1.4）：视图标题、详情里的资源标识、对话框标题。
-- **Section**（600，0.875rem/14px，1.4）：列表分组标题（「服务器 (SSH)」「云平台 (CLI)」）、表单分组标题（FieldLegend）、面板标题。
-- **Body**（400，0.875rem/14px，1.5）：所有界面正文、输入框、列表主名称。
-- **Meta**（400，0.8rem/12.8px，1.4，颜色 note）：连接状态行、账号身份、关联摘要、时间等次要信息。
-- **Label**（500，0.75rem/12px，1.3）：徽章、列表列头（「权限档位」「授权 Agent」）、快捷键提示（Kbd）。中文不做大写，也不加字距。
-- **Mono**（400，0.8125rem/13px，1.5）：SSH 别名、CLI 命令名（`wrangler`、`vercel`、`oci`）、路径、命令、端口、指纹。
-- **Prose**（400，0.875rem/14px，1.7）：Markdown 渲染预览，用 shadcn typeset 的 `typeset` 容器承载。中文行高更松，一行不超过 72ch。
+- **Page title**（600，18px）：详情页的资源名称。
+- **Group title**（600，13px）：列表卡上方的分组标题（「服务器」「云平台」「Agent 权限」），右边跟一个 muted 计数。
+- **Row name**（500，13.5px）：列表行名称。
+- **Body**（400，13px，1.45）：正文、表单。
+- **Sub**（400，12px，muted）：副行、说明、时间。
+- **Mono**（400，12px）：SSH 别名、路径、命令、指纹、地址。
 
 ### Named Rules
 
-**The Mono Is Data Rule.** 等宽字体只用于机器能读的字符串：SSH 别名、CLI 名称与单行命令、路径、端口、镜像名、主机指纹。标题、按钮、说明文字禁止用等宽字体来营造「技术感」。
+**The Mono Is Data Rule.** 等宽字体只给机器能读的字符串。命令在列表里直接用等宽文字，不再套灰底胶囊。
 
-**The Tabular Numbers Rule.** 凡是会并排比较或会变化的数字，例如端口、耗时、字符数和行数、计数徽章，一律加 `tabular-nums`，避免数字变化时宽度抖动。
+**The Tabular Numbers Rule.** 计数、端口、耗时、时间一律 `tabular-nums`。
 
-**The No Eyebrow Rule.** 标题上方禁止加小号大写的英文眉标（eyebrow 标签），也禁止加 `01 / 02` 这类装饰性步骤编号。
+**The Copyable Text Rule.** 内容可以选中复制（地址、命令、笔记、错误），控件不能（按钮、标签、菜单）。
 
 ## Layout
 
-- **应用外壳（顶部极简一体栏，无左侧边栏）**：
-  - 窗口默认尺寸对标 CC Switch：**`900×640`**（最小尺寸 **`760×520`**）。
-  - **彻底取消左侧 `Sidebar` 和顶部面包屑栏**：整个应用只有顶部一条 **48px 一体栏**（左侧：`CloudLink` + `( 资源 ) ( Agent ) ( 设置 )` 分段切换；右侧：在资源列表页直接放置紧凑搜索框、`+ 添加服务器` / `+ 云平台` 操作按钮与命令面板图标按钮；最右侧：只在发现新版本时出现「新版本 x.y.z」提醒按钮，三个视图都显示，没有新版本时不显示也不占位，见 PRD 6.13）。
-- **无分栏并排挤压（No Split-Screen Squeeze）**：
-  - **彻底取消 `ResizablePanelGroup` 左右分栏**：绝不把资源列表与添加表单/详情面板左右并排挤在同一屏里（防止列表文字被挤成 `De... · 3 ...` 省略号）。
-  - **默认首屏（资源列表）**：单列全宽居中展示（`max-w-3xl mx-auto`），留白充足、一目了然。
-  - **添加资源（`+ 添加服务器` / `+ 云平台`）**：弹出居中模态对话框（`Dialog`，`max-w-lg`）或切入独立聚焦卡片视图；「连接并启用」成功后自动关闭并回到主列表。
-  - **查看/编辑资源详情**：点击某一行后，主工作区切换为带 **`← 返回`** 按钮的全宽详情视图（`max-w-3xl mx-auto`，按 `Esc` 或点顶部「资源」同样返回列表），内部采用「常驻控制头 + 3 个平铺 Tab（`画像与规则` / `连接配置` / `动态`）」。
-- **间距节奏**：4px 网格。主容器内边距 16–20px，回路行高 46px（单行），表单字段间距 12px。
+- **外壳**：
+  - **顶栏模式（默认）**：48px，左边文字 `CloudLink`，正中是分段切换 `资源 5 / Agent / 动态 / 设置`（「动态」有待确认事项时带信号青圆点），右边是搜索、切换导航位置、`+`（钢墨方块按钮），然后隔一条竖线是窗口控制按钮。窗口去掉系统标题栏，顶栏可拖动。
+  - **侧栏模式**：200px 侧栏，上面 `CloudLink`，中间导航（图标 + 文字 + 计数或圆点），底部是护栏状态「● 护栏运行中 · 今天拦截 2 条」。内容区顶部 48px 显示页面标题和同样的操作按钮。
+- **页面**：内容居中，最宽 760px，左右各 16px，顶部 20px。列表卡之间靠分组标题分隔（标题上方 18px）。
+- **详情**：点一行进入全宽详情页，左上 `‹ 资源` 返回（Esc 也返回）。没有 Tab，一路向下：标题行 → 状态行 → 分组的设置式列表。
+- **浮层**：添加用居中对话框（580px）；档位用锚定在文字下方的弹出菜单；提示条在窗口底部居中。
 
 ## Elevation & Depth
 
-整个系统是平面的。层次靠发丝线边框与色阶（canvas → frost → shell）区分。静止状态下任何元素都没有阴影；阴影只出现在 Popover、DropdownMenu、Dialog、Sheet、Toast、Tooltip 等浮层上。
+表面是平的。层次靠「画布比卡片暗一档」和发丝线。阴影只出现在浮层：弹出菜单、对话框、提示条、悬停提示、托盘菜单。
 
 ## Shapes
 
-- 圆角基准是 `--radius: 0.45rem`（small 档）。
-- 按钮和输入框用 lg 档（约 7px），回路列表外框与 Agent 目标卡片用 xl 档（约 10px），徽章用胶囊形。
-- 所有边框都是 1px。禁止在单侧使用超过 1px 的彩色侧边条纹。
+- 控件 6px，按钮 7px，品牌方块 8px（详情页 10px），弹出菜单 11px，列表卡 12px，对话框 14px。
+- 不用胶囊形（9999px）。开关和状态点是唯一的圆形。
+- 边框一律 1px。
 
 ## Components
 
-所有组件都来自 `src/components/ui`（由 shadcn CLI 生成，源码可以改）。业务组件只能组合这些组件，不能另起一套同类组件。
+所有组件来自 `src/components/ui`（shadcn CLI 生成）。业务组件只做组合。
 
-### Signature 1: Single-Line Breaker Row（单行零噪点双闸刀回路行）
+### Signature 1: Resource Row（资源行）
 
-资源主列表分为「服务器」与「云平台」两组，分组标题旁**不重复标注** `权限档位 / 授权 Agent` 列头。每组外包 1px 发丝线圆角边框，行与行之间以 `1px hairline` 分隔，**每一行严格保持单行高度（44–48px），砍掉一切第二行统计小字**：
+首页分「服务器」「云平台」两组，每组一张列表卡。行高至少 56px，两行文字：
 
-- **左侧身份区（单行水平排列，零省略号，点击进入该资源详情）**：
-  - **SSH 服务器行**：
-    1. **连接状态圆点**：已连接为实心绿点 `●`（`bg-success`），未验证为空心灰圈 `○`，连接已修改为琥珀点，失败为红点（配 `sr-only` 状态词供读屏器使用；**正常连接时绝不在行内再写「✓ 已连接 · Ubuntu 22.04 · 2 个服务」文字**，也不再放 `[U]`/`[D]` 方块）。
-    2. **服务器名称**：如 `香港边缘节点`（`text-sm font-medium`）。
-    3. **SSH 别名标签**：如 `hk-edge`（`font-mono text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded`）。
-    4. **按需出现的徽章或修复按钮**：有待处理笔记时显示 `笔记 3`；未验证或仅密码时就地显示 `[改用密钥登录]` 或 `[测试连接]`。正常连接且无笔记时不显示任何多余元素。
-  - **云平台 CLI 行**：
-    1. **官方品牌 Logo**：`ProviderMark`（Cloudflare、Vercel、Oracle Cloud 官方图标）。
-    2. **平台名称**：直接写 `Cloudflare` 或 `Vercel`（**严禁写 `vercel Vercel · vercel` 或 `cloudflare Cloudflare · wrangler` 这类重复文字**）。
-    3. **账号与范围简述**：如 `me@example.com · 2 个域名`（单行灰色小字 `text-xs text-muted-foreground`）。
-    4. **按需出现的异常修复按钮**：如某个运行环境未登录时就地显示 `⚠ WSL 未登录` + `[去登录]`；正常就绪时不写「✓ 已就绪」文字。
-- **右侧双闸刀控制区（靠右对齐，独立可点，点击不进入详情）**：
-  1. **权限档位闸刀**：点击直接在 `只读巡检`（`EyeIcon`）与 `标准运维`（`WrenchIcon`）之间切换（生产资源切往「标准运维」时弹二次确认框；切回「只读巡检」一键瞬时完成）。**当生产资源处于「标准运维」时，该按钮以琥珀色淡底与琥珀色图标文字（`bg-warning/12 text-warning border-warning/35`）高亮提醒**（左侧不再重复写「生产环境已开启写权限」）。
-  2. **Agent 通电开关**（`AgentPicker`，`ToggleGroup multiple`）：每个启用的 Agent 一个 28px 方块，点亮时显示品牌色官方 Logo、15% 品牌色底加 40% 描边；未点亮时为注记灰 Logo。
+- **左：品牌方块**（32px，8px 圆角）。SSH 服务器是 pill 底 + `ServerIcon`；云平台是白底 + 1px line 描边 + 官方 Logo（18px）。
+- **中：两行**
+  - 第一行：名称（row-name）+ 别名（mono，muted）+ 生产标记（11px、500、红色文字「生产」，不加底色）。非生产资源什么都不加。
+  - 第二行：状态 + 档位。连接正常时只有绿点（悬停显示「已连接」或「已登录 账号」）；有问题时是「状态点 + 问题文字 · 」，如「○ 未验证 · 」「● WSL 未登录 · 」。档位是可点的文字「只读巡检 ⌄」；生产资源在标准运维时变成琥珀色、500 字重。
+- **右**：按需出现的一个修复按钮（`测试连接`、`去登录`，次要按钮 sm）→ Agent 图标组 → 行尾 `ChevronRight`（faint，悬停变 muted）。
+- 整行可点，进入详情；档位文字、Agent 图标、修复按钮自己处理点击，不进入详情。右键菜单提供编辑、复制别名、删除。
+- 所有行的 Agent 图标组右边缘对齐，不随修复按钮移动位置。
 
-### Signature 2: Budget（预览上限占用）
+### Signature 2: Target Toggles（Agent 图标组）
 
-- 预览 Sheet（按需从更多菜单、Agent 页或 `Ctrl+\` 打开）顶部两条 `Progress` 显示硬上限：description 字符数（上限 1024）和 SKILL.md 正文行数（默认上限 100）。
+- 每个**已启用的分发目标**一个 28px 方块按钮，按目录而不是按品牌：Claude Code、通用目录（`BlocksIcon`，悬停提示列出读取它的 Agent）、Trae、Kiro 等各一个。同一个 Agent 的 Windows 和 WSL 合并成一个按钮。
+- 点亮：signal-soft 底 + 35% signal 内描边 + 彩色 Logo。熄灭：透明底 + 灰度 50% 透明的 Logo。
+- 资源未通过连接验证时，熄灭的按钮不能点亮（`cursor: not-allowed`，提示「先通过连接测试才能分发」）；已点亮的可以取消。
+- 点击立即生效，底部提示条「hk-edge 已同步给 Claude Code · 撤销」。
+- `aria-pressed` 表达状态，悬停提示写目标名称。
 
-### Buttons, Chips & Cards
+### Signature 3: Mode Pop-up（档位弹出菜单）
 
-- **Primary Button:** 钢墨底配 shell 色文字。每个面板只放一个主按钮（如新建面板底部的「连接并启用」）。
-- **Cards:** 只在新建资源面板中的「资源类型选择项」使用 `Card`。主列表、首次启动的入口、Agent 页的目录和资源关系统一使用「分组标题 + `rounded-xl border` + `divide-y`」的行容器（2026-11-07 起 Agent 页不再用卡片），卡片内部绝不嵌套卡片。
-- **Row End Actions（2026-11-07）:** 可以编辑的行在最右侧用竖线隔开，放铅笔「编辑」和「⋯」更多操作两个 `icon-sm` ghost 按钮。按钮常驻、占位固定（不在悬停时才出现，避免行内跳动和触屏找不到），平时 `text-muted-foreground/70`，悬停或键盘聚焦这一行时加深；都带 `Tooltip` 和读屏名称。「⋯」菜单与右键菜单共用一份动作列表。
+- 点副行里的档位文字，在文字下方弹出菜单（11px 圆角，浮层阴影，从文字处展开）：两个选项「只读巡检 / Agent 只能查看，写操作会被拦下」「标准运维 / 允许部署和重启，危险命令仍会拦下」，当前项前面打勾。
+- 生产资源切到标准运维时，菜单底部展开一段确认：「sg-db 是生产环境。切到标准运维后，Agent 可以部署和重启。」+「取消」「切换」。切回只读不需要确认。
+- 详情页里同一设置用分段切换（只读巡检 | 标准运维）。
+
+### Settings-style List（设置式列表）
+
+详情页、Agent 页、设置页共用。一张列表卡里一行一个设置：左边名称（500）+ 可选的一行说明（sub，可以换行，不截断），右边是控件或值。值用 mono，悬停时出现复制按钮。需要处理的问题作为同一卡片里的一行，用 amber-soft 浅底 + 琥珀色标题 + 右侧一个修复按钮，例如「WSL Ubuntu-24.04 还用不了这台服务器 / WSL 里没有这把私钥 / [复制到 WSL]」。
+
+### Controls（控件）
+
+- **按钮**：28px 高。主按钮钢墨；次要按钮 pill 底；ghost 按钮透明底、ctl-fg 文字；sm 24px。
+- **弹出按钮**：26px，pill 底 + 值 + `ChevronDown`，点开是弹出菜单。不用原生 `<select>`。
+- **分段切换**：seg-track 轨道 + 白色滑块（细阴影），26px。用于导航、档位、主题等 2–4 个互斥选项。
+- **开关**：32×19。打开时浅色主题用钢墨，深色主题用信号青。
+- **图标按钮**：30px，悬停 pill 底。顶栏的 `+` 是 28px 钢墨方块（深色主题下用 pill-hover 底，避免一块亮白）。
+- **标签输入**（承载的站点）：mono 小方块 + `×`，末尾一个虚线「+ 添加」。
+
+### Feed Row（动态行）
+
+Agent 头像（22px 方块 + Logo）→ 命令（mono，可复制）→ 资源名（固定列宽）→ 结果（固定列宽：「● 已执行」或红点「已拦截 · 只读档」）→ 时间（右对齐）。列宽固定，结果在各行同一条竖线上。
+
+### Ask Card（待确认）
+
+「动态」页顶部的「等你确认」列表卡，一项一块：第一行 Agent 头像 + 「Claude Code 记下了一条关于 hk-edge 的笔记」；下面缩进对齐正文；再下面一个主按钮（并入资源 / 允许一次）+ 一个次要按钮（忽略 / 拒绝）。处理后有撤销。
+
+### Empty State（空状态 = 首次使用引导）
+
+居中：品牌方块（52px）→ 标题「添加第一台服务器」→ 一句「添加之后，就可以直接对 Agent 说：」→ 一张可复制的示例话术卡 →「+ 添加服务器」（主）+「从 ~/.ssh/config 导入 · 6 台」（次）→ 最下面一行「检测到 [Logo] Claude Code、Codex、Cursor，添加后会自动同步给它们」。空状态时顶栏不显示 `+`，避免两个入口重复。
+
+### Add Dialog（添加）
+
+先选类型：分组「服务器」（SSH 服务器、从 ~/.ssh/config 导入）、「云平台」（Cloudflare、Vercel、Oracle Cloud）、「代码托管」（GitHub）。每项一张可点的选项块：品牌方块 + 名称 + 一句话 + 一行信号青状态（「发现 6 台」「已登录 · wrangler」「未安装 oci」）。SSH 表单的「连接并启用」在对话框内分步展示进度：连接服务器 → 核对主机指纹（就地展开指纹和「指纹一致，继续」）→ 安装免密密钥 → 同步给 Agent。
+
+### Toast（提示条）
+
+钢墨底、窗口底部居中、10px 圆角。可撤销的操作带「撤销」按钮，停留 6 秒；其他 2.6 秒。错误不用提示条，就地显示在出错的行或表单里。
+
+### Tray Menu（托盘菜单）
+
+标题「CloudLink」+ 右侧护栏状态；「档位」分组每台服务器一项，右边是当前档位（生产在标准运维时琥珀色），点开子菜单切换；「全部切回只读」（有生产在运维档时右边注明数量）；「打开 CloudLink」「退出」。
 
 ### Iconography & Official Brand Logos
 
-全部通用功能图标使用 `lucide-react`（带 `Icon` 后缀命名导入，默认 16px，徽章内 12px）。禁止使用 emoji。
+通用图标用 `lucide-react`，16px，描边 1.75。禁止 emoji。
 
-**官方品牌 Logo 规范（2026-11-02 用户明确要求）：**
-凡涉及具体的 AI Agent 与大厂云平台，**一律使用其官方品牌 SVG Logo**，禁止用通用云朵/三角等 Lucide 图标冒充，也禁止手写拼凑山寨图形：
+**官方品牌 Logo（2026-11-02 起的硬规则，保留）：** Agent 与云平台一律使用官方 SVG Logo，集中封装在 `AgentMark.tsx` 和 `ProviderMark.tsx`，ESLint 限制只有这两个组件能引入 `@lobehub/icons-static-svg` 和 `src/assets/brands/*`。
 
-1. **Agent 官方 Logo（封装于 `src/components/app/AgentMark.tsx`）**：
-   - **Claude Code**：Claude 官方星芒 Logo（取自 `@lobehub/icons-static-svg/icons/claude.svg`）。
-   - **通用目录**（`~/.agents/skills`，多个 Agent 共用）：不冒用任何一家的 Logo，用 Lucide `BlocksIcon`；读取它的 Agent 在这一行下面用各自的官方 Logo + 名称列出（2026-11-07）。
-   - **其他 Agent 品牌与自定义目录**：Codex、Cursor、Windsurf、Gemini CLI、GitHub Copilot、OpenCode、Cline、Roo Code、Kilo Code、Goose、Amp、Qwen Code、Junie、Trae、Kiro 等使用 `@lobehub/icons-static-svg` 中的官方 Logo；包里没有 Logo 的品牌（如 Continue、Augment、Crush、Factory Droid、Warp）和完全未知的自定义目录名称统一使用 `BotIcon` 兜底，禁止使用双字母文字缩写。
-2. **云平台官方 Logo（封装于 `src/components/app/ProviderMark.tsx`）**：
-   - **Cloudflare**：Cloudflare 官方双云彩色/单色 Logo（取自 `@lobehub/icons-static-svg/icons/cloudflare-color.svg` / `cloudflare.svg`）。
-   - **Vercel**：Vercel 官方正三角 Logo（取自 `@lobehub/icons-static-svg/icons/vercel.svg`，墨色自适应浅深主题）。
-   - **Oracle Cloud**：Oracle 官方椭圆环品牌标志（取自 `simple-icons` 官方收录的 Oracle SVG 路径或静态置于 `src/assets/brands/oracle.svg`，使用官方 Oracle 红 `#C74634` / OKLCH 等效色，仅在 `ProviderMark.tsx` 中引用）。
-   - ESLint 规则限定 `@lobehub/icons-static-svg` 与 `src/assets/brands/*` 只能在 `AgentMark.tsx` 和 `ProviderMark.tsx` 两个组件内引入，确保全局视觉克制统一。
+- **Agent**：Claude Code 用 Claude Logo；通用目录用 Lucide `BlocksIcon`（不冒用任何一家的 Logo）；Codex、Cursor、Windsurf、Gemini CLI、GitHub Copilot、OpenCode、Cline、Roo Code、Kilo Code、Goose、Amp、Qwen Code、Junie、Trae、Kiro 等用 `@lobehub/icons-static-svg` 的官方 Logo；包里没有的品牌和未知自定义目录用 `BotIcon`。
+- **云平台与代码托管**：Cloudflare（`cloudflare-color.svg`）、Vercel（`vercel.svg`）、Oracle Cloud（`src/assets/brands/oracle.svg`，官方红 #C74634）、GitHub（`github.svg`）。
+- 单色 Logo（Vercel、GitHub、Cursor、OpenCode、Windsurf、Copilot）在深色主题下反色。
 
 | 语义 | 图标 | 语义 | 图标 |
 | :--- | :--- | :--- | :--- |
-| 资源（导航） | `LayersIcon` 或 `ServerIcon` | 探测 | `RadarIcon` |
-| SSH 服务器 | `ServerIcon` | 云平台 CLI | 官方 Logo（`ProviderMark`） |
-| 测试连接 | `PlugIcon` | 导入 ssh config | `FileInputIcon` |
-| 添加资源 | `PlusIcon` | 编译 | `HammerIcon` |
-| Skill / 预览 Skill | `PackageIcon` | Agent | `BotIcon` |
-| 分发同步 | `FolderSyncIcon` | 移除分发 | `FolderMinusIcon` |
-| 护栏已生效 | `ShieldCheckIcon` | 护栏未安装 / 未生效 | `ShieldOffIcon` / `ShieldXIcon` |
-| 红线 | `ShieldAlertIcon` | 修复 | `WrenchIcon` |
-| 只读巡检档 | `EyeIcon` | 标准运维档 | `WrenchIcon` |
-| 敏感 / 只读锁定 | `LockIcon` | 私钥 | `KeyRoundIcon` |
-| 主机指纹 | `FingerprintIcon` | 拉起终端登录/安装 | `ExternalLinkIcon` / `SquareTerminalIcon` |
-| Agent 笔记 | `NotebookPenIcon` | Agent 操作记录 | `TerminalIcon` |
-| ssh 配置 / Include | `FileCogIcon` | 重新检测 / 检查 | `RefreshCwIcon` |
-| Windows 环境 | `MonitorIcon` | WSL / Linux 环境 | `SquareTerminalIcon` |
-| 成功 | `CircleCheckIcon` | 警告 / 冲突 / 生产可写提醒 | `TriangleAlertIcon` |
-| 失败 | `CircleXIcon` | 未验证 | `CircleDashedIcon` |
-| 过期 | `ClockIcon` | 拖拽排序手柄 | `GripVerticalIcon` |
-| 复制 | `CopyIcon` | 打开文件夹 | `FolderOpenIcon` |
-| 活动日志 | `HistoryIcon` | 设置 | `SettingsIcon` |
-| 删除 | `Trash2Icon` | 命令面板 | `CommandIcon` |
-| 有新版本 / 安装更新 | `CircleArrowUpIcon` | 应用图标 | 不在界面内使用（见 App Icon） |
-| Agent 标识 | Claude、OpenAI、Cursor、Windsurf 等官方 Logo（`AgentMark`） | 云平台标识 | Cloudflare、Vercel、Oracle 官方 Logo（`ProviderMark`） |
+| 资源 | `ServerIcon` | Agent | `BotIcon` |
+| 动态 | `ActivityIcon` | 设置 | `SettingsIcon` |
+| 添加 | `PlusIcon` | 搜索 | `SearchIcon` |
+| 切到侧栏 / 切到顶栏 | `PanelLeftIcon` / `PanelTopIcon` | 通用目录 | `BlocksIcon` |
+| 护栏已开启 | `ShieldCheckIcon` | 诚实说明 | `InfoIcon` |
+| 预览 Skill | `FileTextIcon` | 导入 ssh config | `DownloadIcon` |
+| 复制 | `CopyIcon` | 编辑 | `PencilIcon` |
+| 重新探测 | `RefreshCwIcon` | 主机指纹步骤 | `KeyRoundIcon` |
+| 返回 | `ChevronLeftIcon` | 进入详情 | `ChevronRightIcon` |
+| 弹出 | `ChevronDownIcon` | 更多 | `EllipsisIcon` |
 
-**更新提醒按钮（F-406，PRD 6.13）：** `Button variant="outline" size="sm"`，`CircleArrowUpIcon` 加「新版本 x.y.z」，下载中改为「下载中 42%」，窗口宽度不够时只留图标、文字进 `Tooltip`。它用中性色：有新版本不是状态告警，不用红、琥珀、绿，也不用 Signal Cyan；出现时不抢焦点、不弹 Toast。
+**更新提醒（F-406）：** 规则不变：只有发现新版本时顶栏才出现中性色按钮，不用状态色、不用信号青、不弹提示条。
 
 ### App Icon（应用图标）
 
-2026-11-05 选定「交汇 · 浅色」。源文件是 `docs/brand/cloudlink-icon.svg`（1024×1024，只用纯色填充的路径，不用蒙版、渐变和阴影）。`src-tauri/icons/` 下的全部尺寸都用 `tauri icon` 从它生成，不手工修改。
-
-- **构成**：白色圆角底板（896px 见方，圆角 200px，8px 发丝线描边，在白色背景上也有边界）上，一个钢墨圆角方块和一个钢墨圆相交，交集是一枚信号青透镜。透镜和两个形状之间各留 32px 间隙。
-- **含义**：方块是服务器与云平台，圆是 Agent，青色交集是授权给 Agent 的范围，间隙是护栏。
-- **颜色**：形状用钢墨 `#161b1d`（即 `steel` oklch(0.218 0.008 223.9)）；透镜 `#00a3cc`（oklch(0.665 0.125 224.0)，属于 Signal Cyan 色系，亮度介于浅色、深色两档之间）；描边 `#dfe5e7`（oklch(0.918 0.007 219.6)）。这三个色值只属于图标，不进入界面令牌。
-- **用法**：只用在系统层面，即安装程序、任务栏、开始菜单、窗口标题栏和「应用和功能」列表。界面内不放应用图标，顶栏只写文字 `CloudLink`；图标里的信号青一旦出现在界面上，就违反 The One Signal Rule。
-- **修改时**：用 `tauri icon` 重新生成，确认 16px 和 32px 下方块、圆和青色交点仍能分辨，深色和浅色任务栏各看一次。
+不变。2026-11-05 选定「交汇 · 浅色」，源文件 `docs/brand/cloudlink-icon.svg`，`src-tauri/icons/` 全部用 `tauri icon` 生成。只用于安装程序、任务栏、开始菜单、托盘和「应用和功能」列表，界面内顶栏只写文字 `CloudLink`。图标里的三个色值只属于图标，不进入界面令牌。
 
 ### Motion
 
-- 动效统一用 `motion/react`。根节点包一层 `<MotionConfig reducedMotion="user">`。
-- 时长 120–220ms，缓动 `[0.25, 1, 0.5, 1]`，禁止回弹或超调（`bounce: 0`）。
-- 允许动效的场景：右侧检视面板展开/收起过渡、Agent 笔记并入/忽略离场、测试连接与 CLI 环境检测状态刷新、探测步骤逐条出现、新增资源行淡入。
+- 用 `motion/react`，根节点 `<MotionConfig reducedMotion="user">`。缓动 `cubic-bezier(.2, .8, .2, 1)`，不回弹。
+- 页面切换：上移 5px 淡入，240ms。弹出菜单：从锚点缩放 0.96 → 1，160ms。对话框：缩放 0.97 + 上移 6px，220ms。提示条：上移 8px 淡入，250ms。悬停提示延迟 250ms 出现。主题切换背景过渡 350ms。
+- 原地更新（切档位、点亮图标、处理待确认）不重播页面入场动画，不改变滚动位置。点击永远不滚动页面。
 
 ## Do's and Don'ts
 
 ### Do:
 
-- **Do** 保持紧凑桌面工具尺寸（默认 `900×640`，最小 `760×520`）与顶部 48px 一体栏架构，无左侧边栏、无顶部面包屑栏。
-- **Do** 保持主列表每一行为**单行高度（44–48px）**，只留「状态圆点/官方 Logo + 名称与标识 + 权限档位 + Agent 开关」，正常连接时不写第二行统计小字，确保全屏零省略号（`...`）。
-- **Do** 添加资源使用居中 `Dialog`（或独立聚焦视图），查看/编辑详情使用带 `← 返回` 的全宽视图，绝不用左右分栏把主列表挤窄。
-- **Do** 对大厂云平台（Cloudflare、Vercel、Oracle Cloud）和 Agent（Claude、OpenAI）一律使用官方品牌 SVG Logo（集中封装在 `ProviderMark` 与 `AgentMark` 中）。
-- **Do** 正常状态隐身，异常状态在对应行内就地提供修复动作（如「改用密钥登录」「去登录」）。
+- **Do** 让正常状态隐身：一个绿点就够了，问题出现时才写字。
+- **Do** 让每个可点的东西长得像可点的：档位是带 `⌄` 的文字，修复是按钮，Agent 是图标按钮；只读信息不加边框。
+- **Do** 说明文字讲结果（「站点出问题时，Agent 能找到这台服务器」），不讲实现（「会写进 description」）。
+- **Do** 每个可撤销的操作都给撤销；覆盖或接管文件之前先备份。
+- **Do** 浅色、深色、顶栏、侧栏四种组合都检查一遍。
 
 ### Don't:
 
-- **Don't** 使用「左侧大边栏 + 顶部面包屑栏 + 左列表 + 右面板」的三栏后台套娃外壳。
-- **Don't** 在主列表回路行底下塞第二行统计文字（如 `✓ 已连接 · Ubuntu 22.04 · 2 个服务`），或写出 `vercel Vercel · vercel`、`cloudflare Cloudflare · wrangler` 这类重复命名。
-- **Don't** 在每个分组上方重复写 `权限档位 / 授权 Agent` 列头，也不要在橙色 `[标准运维 ⚠]` 按钮旁再重复写一遍橙色 `生产环境已开启写权限`。
-- **Don't** 做「临时解锁 30 分钟」倒计时控件或解锁徽章（已全面取消，统一用行内档位切换替代）。
-- **Don't** 用通用图标、手绘图形或 emoji 代替大厂与 Agent 的官方 Logo。
-- **Don't** 用彩色实心主按钮（主按钮只能是钢墨色），也不要把 Signal Cyan 用在焦点和选中回路行描边以外的任何地方。
-- **Don't** 把应用图标放进界面（顶栏、设置页、空状态）；界面内的品牌只用文字 `CloudLink`。
-- **Don't** 给更新提醒用红、琥珀、绿或信号青，也不要用 Toast 或红点角标催促更新；没有新版本时不留任何占位。
+- **Don't** 在行里堆胶囊，或放没有文字说明的图标按钮。
+- **Don't** 在列表行里写多行排错说明；问题写成一行，修复放一个按钮。
+- **Don't** 给非生产资源加环境标记，也不要给「生产」加底色胶囊。
+- **Don't** 用彩色左侧竖条或整行染色表达状态。
+- **Don't** 用原生 `<select>`，也不要让点击滚动页面。
+- **Don't** 把信号青用在 The Signal Four Rule 之外的地方。
+- **Don't** 把应用图标放进界面。
