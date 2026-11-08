@@ -1,6 +1,5 @@
 import { FileInputIcon, ServerIcon } from "lucide-react"
 import { useRef, useState } from "react"
-import { useHotkeys } from "react-hotkeys-hook"
 import { useShallow } from "zustand/react/shallow"
 
 import type { CliProvider } from "@/bindings"
@@ -13,7 +12,6 @@ import { Dialog, DialogContent } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { CLI_BINARY, CLI_PROVIDERS } from "@/lib/cliProviders"
 import { copy } from "@/lib/copy"
-import { HOTKEYS, isModalOpen, SINGLE_KEY_OPTIONS } from "@/lib/hotkeys"
 import { useAssetStore } from "@/stores/assets"
 import { useUIStore, type CreateKind } from "@/stores/ui"
 import { CliDetail } from "./CliDetail"
@@ -136,7 +134,7 @@ export function ServersView({ focusTitle }: { focusTitle: boolean }) {
       {empty ? (
         <FirstLaunch focusTitle={focusTitle} />
       ) : asset ? (
-        <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
+        <div className="mx-auto flex min-h-0 w-full max-w-190 flex-1 flex-col">
           {asset.type === "vps" ? <ServerDetail key={asset.id} asset={asset} /> : <CliDetail key={asset.id} asset={asset} />}
         </div>
       ) : (
@@ -151,9 +149,7 @@ export function ServersView({ focusTitle }: { focusTitle: boolean }) {
 
 function ListView({ focusTitle, loading }: { focusTitle: boolean; loading: boolean }) {
   const titleRef = useRef<HTMLHeadingElement>(null)
-  const searchRef = useRef<HTMLInputElement>(null)
   useViewTitleFocus(titleRef, focusTitle)
   useScrollRestore("servers", () => document.querySelector<HTMLElement>("#server-list [data-slot=scroll-area-viewport]"), !loading)
-  useHotkeys(HOTKEYS.focusSearch, () => !isModalOpen() && searchRef.current?.focus(), SINGLE_KEY_OPTIONS)
-  return <ResourceList titleRef={titleRef} searchRef={searchRef} loading={loading} />
+  return <ResourceList titleRef={titleRef} loading={loading} />
 }

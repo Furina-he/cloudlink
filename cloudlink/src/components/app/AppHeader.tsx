@@ -1,88 +1,265 @@
-import { CommandIcon } from "lucide-react"
-import { useMemo } from "react"
+import { CopyIcon, MinusIcon, PanelLeftIcon, PanelTopIcon, PlusIcon, SearchIcon, XIcon } from "lucide-react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 
 import { Keys } from "@/components/app/Keys"
 import { UpdateReminder } from "@/components/app/UpdateReminder"
-import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { copy, type ViewId } from "@/lib/copy"
+import { ipc } from "@/lib/ipc"
 import { KEY_HINT } from "@/lib/hotkeys"
 import { cn } from "@/lib/utils"
 import { useAssetStore } from "@/stores/assets"
-import { useDeliveryStore } from "@/stores/deliveries"
 import { useGuardStore } from "@/stores/guard"
-import { selectHealth } from "@/stores/health"
-import { useSkillStore } from "@/stores/skills"
+import { useNotesStore } from "@/stores/notes"
 import { VIEWS, useUIStore } from "@/stores/ui"
 
-/** 导航计数（PRD 6.2）：资源总数，有编译受阻时改为红色受阻数；Agent 页需要处理的问题数（红色） */
-function useNavCounts(): Partial<Record<ViewId, { n: number; danger: boolean; label: string }>> {
-  const serverCount = useAssetStore((s) => (s.status === "ready" ? s.ids.length : null))
-  const deliveries = useDeliveryStore((s) => s.byId)
-  const guards = useGuardStore((s) => s.statusByEnv)
-  const statusByKey = useSkillStore((s) => s.statusByKey)
-  const health = useMemo(() => selectHealth(Object.values(deliveries), Object.values(guards), Object.values(statusByKey)), [deliveries, guards, statusByKey])
-  const problems = health.deliveryProblems + health.guardProblems
-  const blocked = health.blockedAssets
-
-  return {
-    ...(blocked > 0
-      ? { servers: { n: blocked, danger: true, label: copy.navBadge.blocked(blocked) } }
-      : serverCount !== null && { servers: { n: serverCount, danger: false, label: copy.navBadge.servers(serverCount) } }),
-    ...(problems > 0 && { agents: { n: problems, danger: true, label: copy.navBadge.agents(problems) } }),
-  }
+/** 资源数（muted）与「动态」的待确认圆点（PRD 6.2） */
+function useNavMarks() {
+  const count = useAssetStore((s) => (s.status === "ready" ? s.ids.length : null))
+  const pending = useNotesStore((s) => Object.values(s.byAsset).some((list) => list.length > 0))
+  return { count, pending }
 }
 
-/**
- * 顶部 48px 一体栏（PRD 6.2、DESIGN.md Layout）：左侧应用名和三项视图切换，右侧是当前视图的操作、命令面板和更新提醒。
- * 整个应用只有这一条导航，没有侧栏和面包屑
- */
-export function AppHeader() {
-  const view = useUIStore((s) => s.view)
-  const setCommandOpen = useUIStore((s) => s.setCommandOpen)
-  const counts = useNavCounts()
+function NavMark({ id }: { id: ViewId }) {
+  const { count, pending } = useNavMarks()
+  if (id === "servers" && count !== null)
+    return (
+      <>
+        <span aria-hidden className="text-xs text-muted-foreground tabular-nums">
+          {count}
+        </span>
+        <span className="sr-only">{copy.navBadge.servers(count)}</span>
+      </>
+    )
+  if (id === "activity" && pending)
+    return (
+      <>
+        <span aria-hidden className="size-1.5 rounded-full bg-signal" />
+        <span className="sr-only">{copy.shell.activityPending}</span>
+      </>
+    )
+  return null
+}
 
+function IconButton({ label, hint, onClick, children, className }: { label: string; hint?: readonly string[]; onClick: () => void; children: ReactNode; className?: string }) {
   return (
-    <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
-      <span className="text-sm font-semibold">{copy.app.name}</span>
-      <nav aria-label={copy.shell.nav} className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
-        {VIEWS.map((id) => {
-          const count = counts[id]
-          const active = view === id
-          return (
-            <Button
-              key={id}
-              variant="ghost"
-              size="xs"
-              aria-current={active ? "page" : undefined}
-              onClick={() => useUIStore.getState().goToView(id)}
-              className={cn("h-7 gap-1.5 px-2.5 text-muted-foreground hover:text-foreground", active && "bg-background text-foreground shadow-none hover:bg-background")}
-            >
-              {copy.nav[id]}
-              {count && (
-                <>
-                  <span aria-hidden className={cn("text-xs tabular-nums", count.danger ? "text-destructive" : "text-muted-foreground")}>
-                    {count.n}
-                  </span>
-                  <span className="sr-only">{count.label}</span>
-                </>
-              )}
-            </Button>
-          )
-        })}
-      </nav>
-      {/* 当前视图的操作区：各视图用 createPortal 渲染到这里 */}
-      <div id="view-actions" className="ml-auto flex min-w-0 items-center gap-1.5" />
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={label}
+            onClick={onClick}
+            className={cn(
+              "inline-flex size-7 shrink-0 items-center justify-center rounded-button text-ctl-fg outline-none hover:bg-pill-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4",
+              className
+            )}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent>
+        {label}
+        {hint && <Keys keys={hint} />}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** 顶栏搜索（PRD 6.3）：按钮或 Ctrl+F、/ 展开，过滤资源 */
+function SearchControl() {
+  const open = useUIStore((s) => s.searchOpen)
+  const query = useUIStore((s) => s.query)
+  const ref = useRef<HTMLInputElement>(null)
+  const ui = useUIStore.getState
+  useEffect(() => {
+    if (open) ref.current?.focus()
+  }, [open])
+  if (!open)
+    return (
+      <IconButton label={copy.shell.search} hint={KEY_HINT.focusSearch} onClick={() => ui().setSearchOpen(true)}>
+        <SearchIcon />
+      </IconButton>
+    )
+  return (
+    <div className="flex h-7 w-44 items-center gap-1.5 rounded-control bg-pill px-2 text-ctl-fg focus-within:ring-2 focus-within:ring-ring max-[859px]:w-36">
+      <SearchIcon className="size-3.5 shrink-0" aria-hidden />
+      <input
+        ref={ref}
+        id="resource-search"
+        value={query}
+        placeholder={copy.servers.searchPlaceholder}
+        aria-label={copy.servers.searchLabel}
+        className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
+        onChange={(e) => {
+          if (ui().view !== "servers") ui().setView("servers")
+          ui().setQuery(e.target.value)
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== "Escape") return
+          e.stopPropagation()
+          if (query) ui().setQuery("")
+          else ui().setSearchOpen(false)
+        }}
+        onBlur={() => !query && ui().setSearchOpen(false)}
+      />
+      {query && (
+        <button type="button" aria-label={copy.servers.clearSearch} className="rounded-sm hover:text-foreground" onMouseDown={(e) => e.preventDefault()} onClick={() => ui().setQuery("")}>
+          <XIcon className="size-3.5" />
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** 右侧操作：搜索、切换导航位置、+（钢墨方块） */
+function Actions() {
+  const side = useUIStore((s) => s.navPosition === "side")
+  const ui = useUIStore.getState
+  return (
+    <div className="flex items-center gap-1" data-no-drag>
+      <UpdateReminder />
+      <SearchControl />
+      <IconButton label={side ? copy.shell.navToTop : copy.shell.navToSide} hint={KEY_HINT.navPosition} onClick={() => ui().toggleNavPosition()}>
+        {side ? <PanelTopIcon /> : <PanelLeftIcon />}
+      </IconButton>
       <Tooltip>
-        <TooltipTrigger render={<Button variant="outline" size="icon-sm" className="shrink-0" aria-label={copy.shell.openCommand} onClick={() => setCommandOpen(true)} />}>
-          <CommandIcon />
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={copy.shell.add}
+              onClick={() => ui().startCreate()}
+              className="ml-0.5 inline-flex size-7 items-center justify-center rounded-button bg-ink text-primary-foreground outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 [&_svg]:size-4"
+            />
+          }
+        >
+          <PlusIcon />
         </TooltipTrigger>
         <TooltipContent>
-          {copy.shell.openCommand} <Keys keys={KEY_HINT.command} />
+          {copy.shell.add} <Keys keys={KEY_HINT.newServer} />
         </TooltipContent>
       </Tooltip>
-      {/* 最右侧：只在发现新版本时出现，不占位（F-406） */}
-      <UpdateReminder />
+    </div>
+  )
+}
+
+/** 自绘窗口按钮（decorations: false），浏览器 Mock 模式下点击无效果 */
+function WindowControls() {
+  const [, force] = useState(0)
+  const btn = "inline-flex h-12 w-11 items-center justify-center text-ctl-fg outline-none hover:bg-pill-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&_svg]:size-4"
+  return (
+    <div className="-mr-3 ml-2 flex items-center border-l border-line pl-0" data-no-drag>
+      <button type="button" aria-label={copy.shell.minimize} className={btn} onClick={() => void ipc.minimizeWindow().catch(() => {})}>
+        <MinusIcon />
+      </button>
+      <button type="button" aria-label={copy.shell.maximize} className={btn} onClick={() => void ipc.toggleMaximizeWindow().then(() => force((n) => n + 1)).catch(() => {})}>
+        <CopyIcon className="size-3.5! -scale-x-100" />
+      </button>
+      <button type="button" aria-label={copy.shell.close} className={cn(btn, "hover:bg-destructive hover:text-white")} onClick={() => void ipc.closeWindow().catch(() => {})}>
+        <XIcon />
+      </button>
+    </div>
+  )
+}
+
+function NavItemsTop() {
+  const view = useUIStore((s) => s.view)
+  return (
+    <nav aria-label={copy.shell.nav} className="flex items-center gap-0.5 rounded-tile bg-seg-track p-0.5" data-no-drag>
+      {VIEWS.map((id) => (
+        <button
+          key={id}
+          type="button"
+          aria-current={view === id ? "page" : undefined}
+          onClick={() => useUIStore.getState().goToView(id)}
+          className={cn(
+            "inline-flex h-6.5 items-center gap-1.5 rounded-control px-3 text-[13px] text-ctl-fg outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+            view === id && "bg-card font-medium text-foreground shadow-xs"
+          )}
+        >
+          {copy.nav[id]}
+          <NavMark id={id} />
+        </button>
+      ))}
+    </nav>
+  )
+}
+
+/** 顶栏模式（PRD 6.2）：左 CloudLink、正中分段导航、右操作和窗口按钮；空白处可拖动窗口 */
+export function AppHeader() {
+  const side = useUIStore((s) => s.navPosition === "side")
+  const view = useUIStore((s) => s.view)
+  return (
+    <header data-tauri-drag-region className="relative flex h-12 shrink-0 items-center gap-3 border-b border-line bg-background px-3 select-none">
+      {side ? (
+        <h2 data-tauri-drag-region className="text-[15px] font-semibold">
+          {copy.nav[view]}
+        </h2>
+      ) : (
+        <>
+          <span data-tauri-drag-region className="text-sm font-semibold">
+            {copy.app.name}
+          </span>
+          <div className="pointer-events-none absolute inset-x-0 flex justify-center">
+            <div className="pointer-events-auto">
+              <NavItemsTop />
+            </div>
+          </div>
+        </>
+      )}
+      <div data-tauri-drag-region className="h-full flex-1" />
+      <div className="relative">
+        <Actions />
+      </div>
+      <WindowControls />
     </header>
+  )
+}
+
+function GuardFooter() {
+  const guards = useGuardStore((s) => s.statusByEnv)
+  const list = useMemo(() => Object.values(guards).filter((g) => g !== undefined), [guards])
+  if (list.length === 0) return null
+  const active = list.some((g) => g.state === "active")
+  const denied = list.reduce((n, g) => n + g.deniedToday, 0)
+  return (
+    <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">
+      <span aria-hidden className={cn("size-1.5 rounded-full", active ? "bg-success" : "bg-warning")} />
+      {active ? copy.shell.guardOn(denied) : copy.shell.guardOff}
+    </div>
+  )
+}
+
+/** 侧栏模式（F-408）：200px，CloudLink、四个导航项、底部护栏状态 */
+export function AppSidebar() {
+  const view = useUIStore((s) => s.view)
+  return (
+    <aside className="flex w-50 shrink-0 flex-col border-r border-line bg-background">
+      <div data-tauri-drag-region className="flex h-12 items-center px-4 text-sm font-semibold select-none">
+        {copy.app.name}
+      </div>
+      <nav aria-label={copy.shell.nav} className="flex flex-col gap-0.5 px-2">
+        {VIEWS.map((id) => (
+          <button
+            key={id}
+            type="button"
+            aria-current={view === id ? "page" : undefined}
+            onClick={() => useUIStore.getState().goToView(id)}
+            className={cn(
+              "flex h-8 items-center gap-2 rounded-control px-2.5 text-left text-[13px] text-fg-2 outline-none hover:bg-pill-hover focus-visible:ring-2 focus-visible:ring-ring",
+              view === id && "bg-pill font-medium text-foreground"
+            )}
+          >
+            <span className="flex-1">{copy.nav[id]}</span>
+            <NavMark id={id} />
+          </button>
+        ))}
+      </nav>
+      <div className="mt-auto">
+        <GuardFooter />
+      </div>
+    </aside>
   )
 }

@@ -32,7 +32,7 @@ export function compileSkill(envId: EnvId, agentKey: string, assets: Asset[], co
       const rule = secretRule(line)
       if (rule) lint.push({ id: "secret-detected", level: "error", assetId: a.id, params: { alias, line: i + 1, rule }, file: path, line: i + 1 })
     })
-    if (a.envTag === "prod" && a.agent.mode === "standard" && a.guardrails.rules.length === 0) {
+    if (a.production && a.agent.mode === "standard" && a.guardrails.rules.length === 0) {
       lint.push({ id: "prod-standard-no-guardrails", level: "warning", assetId: a.id, params: { alias }, file: path })
     }
     if (a.type === "cli") continue

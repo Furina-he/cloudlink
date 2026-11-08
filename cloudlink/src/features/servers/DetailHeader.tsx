@@ -3,7 +3,7 @@ import type { RefObject } from "react"
 import { useFormContext, useWatch } from "react-hook-form"
 
 import type { ServerAsset } from "@/bindings"
-import { EnvBadge } from "@/components/app/EnvBadge"
+import { ProdMark } from "@/components/app/ProdMark"
 import { CONN_STATE, StateText, TONE_TEXT, PROBE_STATE } from "@/components/app/StateBadge"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -119,7 +119,7 @@ export function DetailHeader({
   onEdit: EditConnection
 }) {
   const { control, formState } = useFormContext<ServerFormValues>()
-  const [draftAlias, draftName, envTag] = useWatch({ control, name: ["alias", "name", "envTag"] })
+  const [draftAlias, draftName, production] = useWatch({ control, name: ["alias", "name", "production"] })
   const probing = useProbeStore((s) => isProbing(s, asset.id))
   const now = useMinuteTick()
   const alias = draftAlias.trim() || asset.connection.sshAlias
@@ -175,7 +175,7 @@ export function DetailHeader({
           {alias}
         </h2>
         <span className="min-w-0 truncate text-sm text-muted-foreground">{draftName.trim() || asset.name}</span>
-        <EnvBadge env={envTag} className="ml-auto shrink-0" />
+        <ProdMark production={production} className="ml-auto shrink-0" />
       </div>
       <div className="mt-1 flex min-h-5 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         <StateText tone={tone} icon={icon}>

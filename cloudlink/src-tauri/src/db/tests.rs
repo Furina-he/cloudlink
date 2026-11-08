@@ -199,3 +199,35 @@ fn migration_v4_turns_update_checks_on_for_older_settings() {
     let db = Db::open(&path).unwrap();
     assert!(!db.get_settings().unwrap().unwrap().auto_check_updates);
 }
+
+#[test]
+fn migration_v5_turns_env_tag_into_the_production_switch() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("data.db");
+    let db = Db::open(&path).unwrap();
+    let hk = Asset::Vps(testkit::hk_edge());
+    let dev = Asset::Vps(testkit::dev_box());
+    db.upsert_asset(&hk).unwrap();
+    db.upsert_asset(&dev).unwrap();
+    // 回到 v4 的存储形状：envTag 三档，没有 production
+    for (id, tag) in [(hk.id(), "prod"), (dev.id(), "staging")] {
+        db.conn
+            .execute(
+                "UPDATE assets SET json = json_set(json_remove(json, '$.production'), '$.envTag', ?2) WHERE id = ?1",
+                rusqlite::params![id, tag],
+            )
+            .unwrap();
+    }
+    db.conn.execute("UPDATE schema_version SET version = 4", []).unwrap();
+    drop(db);
+
+    let db = Db::open(&path).unwrap();
+    let raw: String = db
+        .conn
+        .query_row("SELECT json FROM assets WHERE id = ?1", [hk.id()], |r| r.get(0))
+        .unwrap();
+    assert!(!raw.contains("envTag"));
+    let by_id = |id: &str| db.get_asset(id).unwrap().unwrap();
+    assert!(by_id(hk.id()).production());
+    assert!(!by_id(dev.id()).production());
+}

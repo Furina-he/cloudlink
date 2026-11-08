@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use minijinja::{AutoEscape, Environment};
 use serde::Serialize;
 
-use crate::model::asset::{Asset, CliAsset, CliProvider, CliScopeKind, EnvTag, ServerAsset};
+use crate::model::asset::{Asset, CliAsset, CliProvider, CliScopeKind, ServerAsset};
 use crate::model::compile::{CompiledFile, SkillConfig};
 
 pub const TEMPLATE_VERSION: u32 = 1;
@@ -45,12 +45,9 @@ fn render(name: &str, ctx: serde_json::Value) -> String {
         .expect("built-in template renders")
 }
 
-pub fn env_word(tag: EnvTag) -> &'static str {
-    match tag {
-        EnvTag::Prod => "production",
-        EnvTag::Staging => "staging",
-        EnvTag::Dev => "development",
-    }
+/// F-109 AC3：只对生产资源写 production
+pub fn env_word(production: bool) -> &'static str {
+    if production { "production" } else { "-" }
 }
 
 fn title_case(s: &str) -> String {
@@ -192,7 +189,7 @@ pub fn description(assets: &[&Asset]) -> Description {
         } else {
             r
         };
-        let mut tail = vec![env_word(a.env_tag())];
+        let mut tail: Vec<&str> = a.production().then_some("production").into_iter().collect();
         if a.agent().mode == crate::model::asset::Mode::ReadOnly {
             tail.push("read-only");
         }
@@ -304,7 +301,7 @@ pub fn render_skill(input: &RenderInput) -> Rendered {
             .map(|c| c.cli.binary.as_str().to_string())
             .unwrap_or_default(),
         role: cell(&role(a)),
-        env: env_word(a.env_tag()),
+        env: env_word(a.production()),
         mode: a.agent().mode.as_str(),
         details: detail_paths[a.id()].clone(),
     };
@@ -503,7 +500,7 @@ pub fn render_server(a: &ServerAsset, snapshot_enabled: Option<&str>) -> String 
         serde_json::json!({
             "alias": alias,
             "name": one_line(&a.name),
-            "env_title": title_case(env_word(a.env_tag)),
+            "env_title": if a.production { title_case("production") } else { String::new() },
             "mode": a.agent.mode.as_str(),
             "snapshot": snapshot,
             "system": system.join(" | "),
@@ -579,7 +576,7 @@ pub fn render_cli(a: &CliAsset, all: &[Asset]) -> String {
         serde_json::json!({
             "handle": a.handle,
             "name": one_line(&a.name),
-            "env_title": title_case(env_word(a.env_tag)),
+            "env_title": if a.production { title_case("production") } else { String::new() },
             "mode": a.agent.mode.as_str(),
             "binary": a.cli.binary.as_str(),
             "account": account.as_deref().map(code),

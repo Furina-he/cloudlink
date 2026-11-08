@@ -1,19 +1,15 @@
-import { CircleIcon } from "lucide-react"
 import { useMemo } from "react"
 import { Controller, useFormContext, useWatch } from "react-hook-form"
 import { useShallow } from "zustand/react/shallow"
 
-import type { EnvTag } from "@/bindings"
 import { CreatableCombobox, CreatableMultiCombobox } from "@/components/app/CreatableCombobox"
-import { ENV_DOT } from "@/components/app/EnvBadge"
-import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field"
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { InputGroup, InputGroupAddon, InputGroupText, InputGroupTextarea } from "@/components/ui/input-group"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { copy } from "@/lib/copy"
 import { hostnameError, type ProfileFormValues, type ServerFormValues } from "@/lib/schemas"
-import { cn } from "@/lib/utils"
-import { collectValues, ENV_ORDER, isServer, useAssetStore } from "@/stores/assets"
+import { collectValues, isServer, useAssetStore } from "@/stores/assets"
 import { Required } from "../Required"
 import { ValidationError } from "../ValidationError"
 
@@ -45,35 +41,23 @@ export function NameField({ onChange, fallback }: { onChange?: (name: string) =>
   )
 }
 
-/** 环境标签：生产、预发、开发 */
-export function EnvTagField() {
+/** 生产环境开关（F-109）：生产资源新建时默认只读巡检，切到标准运维要确认 */
+export function ProductionField() {
   const { control } = useFormContext<ProfileFormValues>()
   return (
-    <FieldSet className="min-w-0 gap-2">
-      <FieldLegend variant="label" className="mb-0">
-        {copy.basic.env}
-      </FieldLegend>
-      <Controller
-        name="envTag"
-        control={control}
-        render={({ field }) => (
-          <ToggleGroup
-            variant="outline"
-            size="sm"
-            spacing={0}
-            value={[field.value]}
-            onValueChange={(next) => next[0] && field.onChange(next[0] as EnvTag)}
-          >
-            {ENV_ORDER.map((env) => (
-              <ToggleGroupItem key={env} value={env} className="px-3">
-                <CircleIcon className={cn("size-2! fill-current", ENV_DOT[env])} />
-                {copy.env.tag[env]}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-        )}
-      />
-    </FieldSet>
+    <Controller
+      name="production"
+      control={control}
+      render={({ field }) => (
+        <Field orientation="horizontal" className="items-center justify-between gap-4">
+          <div className="flex flex-col gap-0.5">
+            <FieldLabel htmlFor="asset-production">{copy.basic.production}</FieldLabel>
+            <FieldDescription className="text-xs">{copy.basic.productionHint}</FieldDescription>
+          </div>
+          <Switch id="asset-production" checked={field.value} onCheckedChange={(v) => field.onChange(v)} />
+        </Field>
+      )}
+    />
   )
 }
 

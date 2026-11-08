@@ -47,7 +47,7 @@ const VIEWS: { name: string; query?: string; empty?: boolean; open: (page: Page)
   {
     name: "settings",
     open: async (page) => {
-      await page.keyboard.press("Control+3")
+      await page.keyboard.press("Control+4")
       await expect(page.getByText("编译产物语言")).toBeVisible()
     },
   },

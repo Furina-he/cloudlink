@@ -10,7 +10,6 @@ import type {
   DeleteResult,
   DistributeBlockReason,
   EnvId,
-  EnvTag,
   ImportHost,
   IpcError,
   Mode,
@@ -183,7 +182,8 @@ export const useAssetStore = create<AssetState>()((set, get) => ({
 
 // ---------- selectors（派生数据不进 store） ----------
 
-export const ENV_ORDER: EnvTag[] = ["prod", "staging", "dev"]
+/** 组内顺序（PRD 6.3）：生产在前，再按名称 */
+const prodFirst = (a: Asset, b: Asset) => Number(b.production) - Number(a.production)
 
 const collator = new Intl.Collator("zh-CN", { numeric: true })
 
@@ -216,7 +216,7 @@ export function selectResourceGroups(state: Pick<AssetState, "byId" | "ids">, qu
   const list = state.ids
     .map((id) => state.byId[id])
     .filter((a) => a && matchesQuery(a, query))
-    .sort((a, b) => ENV_ORDER.indexOf(a.envTag) - ENV_ORDER.indexOf(b.envTag) || collator.compare(a.name, b.name))
+    .sort((a, b) => prodFirst(a, b) || collator.compare(a.name, b.name))
   return { servers: list.filter(isServer), clis: list.filter(isCli) }
 }
 
@@ -267,7 +267,7 @@ export function selectCanDistribute(asset: Asset): { ok: true } | { ok: false; r
 }
 
 /** 档位闸刀的琥珀色提醒（DESIGN.md Breaker Row）：生产资源处于标准运维 */
-export const isProdWritable = (a: Pick<Asset, "envTag" | "agent">) => a.envTag === "prod" && a.agent.mode === "standard"
+export const isProdWritable = (a: Pick<Asset, "production" | "agent">) => a.production && a.agent.mode === "standard"
 
 /** 回路行和详情的连接状态。分发时一定验证过，所以「分发给了 Agent 却没有验证结果」就是连接改过（F-106 AC4） */
 export type ConnState = "connected" | "unverified" | "failed" | "changed"

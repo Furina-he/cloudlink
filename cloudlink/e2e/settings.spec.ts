@@ -6,7 +6,7 @@ import { collectConsoleErrors, openServer, ready, shot, toastText } from "./help
 
 async function openSettings(page: Page, section?: string) {
   await ready(page)
-  await page.keyboard.press("Control+3")
+  await page.keyboard.press("Control+4")
   await expect(page.getByRole("heading", { level: 1, name: "设置" })).toBeVisible()
   if (section) await nav(page).getByRole("button", { name: new RegExp(`^${section}`) }).click()
 }

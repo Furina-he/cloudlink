@@ -1,7 +1,7 @@
 // Mock 后端的内存数据库与公共逻辑：列入计算、重新编译、同步副本（PRD 3.4、8.2、8.4）
 import { emit } from "@tauri-apps/api/event"
 
-import type { ActivityItem, AgentId, Asset, AssetInput, CliAsset, CompileStatus, EnvId, EnvTag, Inclusion, IpcError, ServerAsset, Target } from "@/bindings"
+import type { ActivityItem, AgentId, Asset, AssetInput, CliAsset, CompileStatus, EnvId, Inclusion, IpcError, ServerAsset, Target } from "@/bindings"
 import { cliEnvStatus, handleOf } from "@/stores/assets"
 import * as fx from "./fixtures"
 import { compileSkill, toStatus } from "./lint"
@@ -136,13 +136,12 @@ export function inclusionFor(a: Asset, envId: EnvId, agentKey: string): Inclusio
   return { ...base, included: true }
 }
 
-const ENV_ORDER: EnvTag[] = ["prod", "staging", "dev"]
 
 /** 总览表的顺序：生产、预发、开发，组内按别名 */
 export const includedIn = (envId: EnvId, agentKey: string) =>
   db.assets
     .filter((a) => inclusionFor(a, envId, agentKey).included)
-    .sort((a, b) => ENV_ORDER.indexOf(a.envTag) - ENV_ORDER.indexOf(b.envTag) || handleOf(a).localeCompare(handleOf(b)))
+    .sort((a, b) => Number(b.production) - Number(a.production) || handleOf(a).localeCompare(handleOf(b)))
 
 export function emitDeliveries() {
   void emit("deliveries://changed", { deliveries: db.deliveries, inclusions: db.inclusions })
@@ -204,7 +203,7 @@ export function emitCompiled() {
 /** 预览草稿（F-204）：用已保存的探测信息、档位补全表单之外的字段 */
 export function draftToAsset(input: AssetInput): Asset {
   const saved = input.id ? db.assets.find((a) => a.id === input.id) : undefined
-  const agent = saved?.agent ?? { agents: [], mode: input.envTag === "prod" ? "read-only" : db.settings.defaultMode }
+  const agent = saved?.agent ?? { agents: [], mode: input.production ? "read-only" : db.settings.defaultMode }
   if (input.type === "cli") {
     const rest = { ...input }
     delete rest.scope

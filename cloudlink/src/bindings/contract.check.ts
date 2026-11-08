@@ -61,7 +61,6 @@ export type ContractCheck = [
   Assert<Same<H.DeliveryStatus, GDelivery.DeliveryStatus>>,
   Assert<Same<H.DistributeBlockReason, GMisc.DistributeBlockReason>>,
   Assert<Same<H.EnvId, GEnv.EnvId>>,
-  Assert<Same<H.EnvTag, GAsset.EnvTag>>,
   Assert<Same<H.Environment, GEnv.Environment>>,
   Assert<Same<H.ExportFlags, GAsset.ExportFlags>>,
   Assert<Same<H.FieldSource, GAsset.FieldSource>>,

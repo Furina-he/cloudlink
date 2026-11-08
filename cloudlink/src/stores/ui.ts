@@ -4,7 +4,18 @@ import { create } from "zustand"
 import type { CliProvider } from "@/bindings"
 import type { ViewId } from "@/lib/copy"
 
-export const VIEWS: ViewId[] = ["servers", "agents", "settings"]
+export const VIEWS: ViewId[] = ["servers", "agents", "activity", "settings"]
+
+/** 导航位置（F-408）：顶栏或左侧栏，记在 localStorage */
+export type NavPosition = "top" | "side"
+const NAV_KEY = "cloudlink-nav-position"
+function readNav(): NavPosition {
+  try {
+    return localStorage.getItem(NAV_KEY) === "side" ? "side" : "top"
+  } catch {
+    return "top"
+  }
+}
 
 /** 详情视图的 3 个 Tab（PRD 6.4）：画像与规则、连接配置、动态 */
 export type DetailTab = "profile" | "connection" | "activity"
@@ -81,6 +92,9 @@ interface UIState {
   /** 探测 Sheet 打开时显示哪台服务器 */
   probeSheetAssetId: string | null
   commandOpen: boolean
+  navPosition: NavPosition
+  /** 顶栏搜索框展开（PRD 6.3） */
+  searchOpen: boolean
   importOpen: boolean
   settingsSection: SettingsSection
   /** 各视图主滚动区的位置，切回视图时恢复（PRD 6.3） */
@@ -103,6 +117,9 @@ interface UIState {
   openProbeSheet: (assetId: string) => void
   closeProbeSheet: () => void
   setCommandOpen: (open: boolean) => void
+  setNavPosition: (pos: NavPosition) => void
+  toggleNavPosition: () => void
+  setSearchOpen: (open: boolean) => void
   setImportOpen: (open: boolean) => void
   setSettingsSection: (section: SettingsSection) => void
   saveScroll: (view: ViewId, top: number) => void
@@ -122,6 +139,8 @@ export const useUIStore = create<UIState>()((set, get) => ({
       previewFocus: { seq: 0 },
       probeSheetAssetId: null,
       commandOpen: false,
+      navPosition: readNav(),
+      searchOpen: false,
       importOpen: false,
       settingsSection: "general",
       scrollByView: {},
@@ -182,6 +201,16 @@ export const useUIStore = create<UIState>()((set, get) => ({
       },
       closeProbeSheet: () => set({ probeSheetAssetId: null }),
       setCommandOpen: (commandOpen) => set({ commandOpen }),
+      setNavPosition: (navPosition) => {
+        try {
+          localStorage.setItem(NAV_KEY, navPosition)
+        } catch {
+          // 存不下就只在本次会话生效
+        }
+        set({ navPosition })
+      },
+      toggleNavPosition: () => get().setNavPosition(get().navPosition === "top" ? "side" : "top"),
+      setSearchOpen: (searchOpen) => set(searchOpen ? { searchOpen } : { searchOpen, query: "" }),
       setImportOpen: (importOpen) => set({ importOpen }),
       setSettingsSection: (settingsSection) => set({ settingsSection }),
       saveScroll: (view, top) => set((s) => ({ scrollByView: { ...s.scrollByView, [view]: top } })),
@@ -190,7 +219,7 @@ export const useUIStore = create<UIState>()((set, get) => ({
 /** 命令面板的「预览 Skill」：在当前视图打开预览；设置页没有预览，先切到 Agent 页再打开 */
 export function openPreviewHere() {
   const s = useUIStore.getState()
-  if (s.view === "settings") s.setView("agents", { then: () => useUIStore.getState().openPreview() })
+  if (s.view === "settings" || s.view === "activity") s.setView("agents", { then: () => useUIStore.getState().openPreview() })
   else s.openPreview()
 }
 

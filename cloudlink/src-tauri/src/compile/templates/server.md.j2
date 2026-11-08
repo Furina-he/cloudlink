@@ -1,6 +1,6 @@
 # {{ alias }} — {{ name }}
 
-> {{ env_title }} | Mode: {{ mode }}{% if snapshot %} | Snapshot: {{ snapshot }}{% endif +%}
+> {% if env_title %}{{ env_title }} | {% endif %}Mode: {{ mode }}{% if snapshot %} | Snapshot: {{ snapshot }}{% endif +%}
 
 ## Connect
 - `ssh {{ alias }} '<command>'`

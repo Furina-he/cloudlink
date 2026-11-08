@@ -80,7 +80,7 @@ export const serverActions = {
   /** 档位闸刀（PRD 6.4）：生产资源切到标准运维前确认（F-202 AC2）；切回只读巡检一键完成 */
   requestMode(asset: Asset, mode: Asset["agent"]["mode"]) {
     if (mode === asset.agent.mode) return
-    if (mode === "standard" && asset.envTag === "prod") {
+    if (mode === "standard" && asset.production) {
       usePendingAction.getState().set({ kind: "mode", assetId: asset.id })
       return
     }
@@ -88,9 +88,20 @@ export const serverActions = {
   },
 
   async setMode(asset: Asset, mode: Asset["agent"]["mode"]) {
+    const prev = asset.agent.mode
     try {
       await useAssetStore.getState().setMode(asset.id, mode)
-      toast.add({ title: copy.agentSection.modeChanged(alias(asset), copy.mode[mode]) })
+      // 切换后底部提示条带「撤销」（PRD 6.3）；撤销直接回到原档位，不再确认
+      const id: string = toast.add({
+        title: copy.agentSection.modeChanged(alias(asset), copy.mode[mode]),
+        actionProps: {
+          children: copy.common.undo,
+          onClick: () => {
+            toast.close(id)
+            useAssetStore.getState().setMode(asset.id, prev).catch(toastError)
+          },
+        },
+      })
     } catch (e) {
       toastError(e)
     }

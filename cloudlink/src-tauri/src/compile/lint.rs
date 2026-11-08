@@ -6,7 +6,7 @@ use regex::Regex;
 
 use super::render::{DESCRIPTION_LIMIT, Rendered};
 use super::secrets::Scanner;
-use crate::model::asset::{Asset, EnvTag, FieldSource, Mode};
+use crate::model::asset::{Asset, FieldSource, Mode};
 use crate::model::compile::{LintId, LintItem, LintLevel};
 use crate::params;
 use crate::time;
@@ -110,7 +110,7 @@ pub fn lint(input: &LintInput) -> Vec<LintItem> {
             .unwrap_or("");
         let alias = a.handle();
 
-        if a.env_tag() == EnvTag::Prod && a.agent().mode == Mode::Standard && a.guardrails().rules.is_empty() {
+        if a.production() && a.agent().mode == Mode::Standard && a.guardrails().rules.is_empty() {
             out.push(at(
                 item(
                     LintId::ProdStandardNoGuardrails,

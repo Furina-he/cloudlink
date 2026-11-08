@@ -20,23 +20,21 @@ test.describe("检测更新", () => {
     const errors = collectConsoleErrors(page)
     await ready(page)
     await expect(reminder(page)).toHaveCount(0)
-    await expect(page.getByRole("banner").getByRole("button").last()).toHaveAccessibleName("打开命令面板")
     await page.keyboard.press("Control+k")
     await page.getByRole("combobox").fill("安装更新")
     await expect(page.getByRole("option", { name: /安装更新/ })).toHaveCount(0)
     expect(errors).toEqual([])
   })
 
-  test("AC1：发现新版本后，三个视图的顶栏最右侧都有提醒；不抢焦点、不弹 Toast，只播报一次", async ({ page }) => {
+  test("AC1：发现新版本后，各视图的顶栏右侧都有提醒；不抢焦点、不弹 Toast，只播报一次", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page, "?update=available")
     await expect(reminder(page)).toHaveAccessibleName("有新版本 0.2.0，查看并更新")
     await expect(reminder(page)).toHaveText("新版本 0.2.0")
     await expect(reminder(page)).not.toBeFocused()
-    await expect(page.getByRole("banner").getByRole("button").last()).toHaveAccessibleName("有新版本 0.2.0，查看并更新")
     await expect(page.getByRole("banner").locator("[aria-live=polite]")).toHaveText("有新版本 0.2.0")
     await expect(page.locator("[data-slot=toast]")).toHaveCount(0)
-    for (const view of ["Control+2", "Control+3", "Control+1"]) {
+    for (const view of ["Control+2", "Control+3", "Control+4", "Control+1"]) {
       await page.keyboard.press(view)
       await expect(reminder(page)).toBeVisible()
     }
@@ -117,7 +115,7 @@ test.describe("检测更新", () => {
 
     await button(page, "稍后").click()
     await expect(reminder(page)).toHaveText("正在安装")
-    await page.keyboard.press("Control+3")
+    await page.keyboard.press("Control+4")
     await page.getByRole("button", { name: /^活动/ }).click()
     await expect(page.getByText("开始把 CloudLink 从 0.1.0 更新到 0.2.0")).toBeVisible()
   })
@@ -165,7 +163,7 @@ test.describe("检测更新", () => {
 
   test("AC6：关闭开关立即隐藏提醒，重新打开时立即检查一次；通用分区显示当前版本", async ({ page }) => {
     await ready(page, "?update=available")
-    await page.keyboard.press("Control+3")
+    await page.keyboard.press("Control+4")
     await expect(page.getByText("当前版本 0.1.0")).toBeVisible()
     const toggle = page.getByRole("switch", { name: "自动检查更新" })
     await expect(toggle).toBeChecked()

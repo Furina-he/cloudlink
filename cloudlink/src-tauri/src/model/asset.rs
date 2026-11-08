@@ -59,15 +59,6 @@ impl CliProvider {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "asset.ts")]
-pub enum EnvTag {
-    Prod,
-    Staging,
-    Dev,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "lowercase")]
-#[ts(export, export_to = "asset.ts")]
 pub enum FieldSource {
     Manual,
     Probe,
@@ -400,7 +391,8 @@ pub struct ServerAsset {
     pub tag: VpsTag,
     pub id: String,
     pub name: String,
-    pub env_tag: EnvTag,
+    /// F-109：生产环境开关（2026-11-08 取代 envTag 三档）
+    pub production: bool,
     pub summary: String,
     pub agent: AssetAgent,
     pub guardrails: Guardrails,
@@ -511,7 +503,8 @@ pub struct CliAsset {
     pub tag: CliTag,
     pub id: String,
     pub name: String,
-    pub env_tag: EnvTag,
+    /// F-109：生产环境开关（2026-11-08 取代 envTag 三档）
+    pub production: bool,
     pub summary: String,
     pub agent: AssetAgent,
     pub guardrails: Guardrails,
@@ -562,10 +555,10 @@ impl Asset {
             Asset::Cli(a) => &a.name,
         }
     }
-    pub fn env_tag(&self) -> EnvTag {
+    pub fn production(&self) -> bool {
         match self {
-            Asset::Vps(a) => a.env_tag,
-            Asset::Cli(a) => a.env_tag,
+            Asset::Vps(a) => a.production,
+            Asset::Cli(a) => a.production,
         }
     }
     pub fn summary(&self) -> &str {
@@ -666,7 +659,8 @@ pub struct ServerAssetInput {
     #[ts(optional)]
     pub id: Option<String>,
     pub name: String,
-    pub env_tag: EnvTag,
+    /// F-109：生产环境开关（2026-11-08 取代 envTag 三档）
+    pub production: bool,
     pub summary: String,
     pub guardrails: Guardrails,
     pub notes: String,
@@ -700,7 +694,8 @@ pub struct CliAssetInput {
     #[ts(optional)]
     pub id: Option<String>,
     pub name: String,
-    pub env_tag: EnvTag,
+    /// F-109：生产环境开关（2026-11-08 取代 envTag 三档）
+    pub production: bool,
     pub summary: String,
     pub guardrails: Guardrails,
     pub notes: String,
@@ -735,7 +730,7 @@ mod tests {
     #[test]
     fn untagged_asset_respects_type_literal() {
         let cli = serde_json::json!({
-            "type": "cli", "id": "ast_1", "name": "Cloudflare", "envTag": "prod", "summary": "",
+            "type": "cli", "id": "ast_1", "name": "Cloudflare", "production": true, "summary": "",
             "agent": { "agents": [], "mode": "read-only" }, "guardrails": { "rules": [] }, "notes": "",
             "createdAt": "2026-11-01T00:00:00Z", "updatedAt": "2026-11-01T00:00:00Z",
             "cliProvider": "cloudflare", "handle": "cloudflare", "account": null,

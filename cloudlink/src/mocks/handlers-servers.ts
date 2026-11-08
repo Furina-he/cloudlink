@@ -72,7 +72,7 @@ function saveCli(input: CliAssetInput) {
       envStates: Object.fromEntries(envs.map((e) => [e, db.cliMachine[input.cliProvider][e] ?? { installed: false, authenticated: false, expired: false, checkedAt: now() }])),
       scope: input.scope ?? [],
     },
-    agent: prev?.agent ?? { agents: [], mode: input.envTag === "prod" ? "read-only" : db.settings.defaultMode },
+    agent: prev?.agent ?? { agents: [], mode: input.production ? "read-only" : db.settings.defaultMode },
     createdAt: prev?.createdAt ?? now(),
     updatedAt: now(),
   }
@@ -96,7 +96,7 @@ function saveServer(input: ServerAssetInput) {
     id: saved?.id ?? newId("ast"),
     connection: buildConnection(input.connection, saved),
     // 新建时：生产为只读巡检，其他取设置中的默认档位（F-202 AC2）
-    agent: saved?.agent ?? { agents: [], mode: input.envTag === "prod" ? "read-only" : db.settings.defaultMode },
+    agent: saved?.agent ?? { agents: [], mode: input.production ? "read-only" : db.settings.defaultMode },
     probe: saved?.probe ?? { lastRunId: null, lastSuccessAt: null, status: "never" },
     createdAt: saved?.createdAt ?? now(),
     updatedAt: now(),
@@ -138,7 +138,7 @@ function importHosts(hosts: ImportHost[], probeAfter: boolean) {
       id: newId("ast"),
       type: "vps",
       name: h.alias,
-      envTag: "dev",
+      production: true,
       tags: [],
       summary: "",
       connection: {

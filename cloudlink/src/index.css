@@ -1,15 +1,35 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/jetbrains-mono";
 @import "./typeset.css";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
     --font-heading: var(--font-sans);
-    --font-sans: system-ui, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC", sans-serif;
-    --font-mono: "JetBrains Mono Variable", "Cascadia Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    --font-sans: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+    --font-mono: "Cascadia Mono", Consolas, "Microsoft YaHei UI", ui-monospace, monospace;
+    --color-card-2: var(--card-2);
+    --color-pill: var(--pill);
+    --color-pill-hover: var(--pill-hover);
+    --color-seg-track: var(--seg-track);
+    --color-line: var(--line);
+    --color-line-2: var(--line-2);
+    --color-fg-2: var(--fg-2);
+    --color-ctl-fg: var(--ctl-fg);
+    --color-faint: var(--faint);
+    --color-ink: var(--ink);
+    --color-signal: var(--signal);
+    --color-signal-soft: var(--signal-soft);
+    --color-success-soft: color-mix(in oklch, var(--success) 12%, transparent);
+    --color-warning-soft: color-mix(in oklch, var(--warning) 12%, transparent);
+    --color-destructive-soft: color-mix(in oklch, var(--destructive) 12%, transparent);
+    --radius-control: 6px;
+    --radius-button: 7px;
+    --radius-tile: 8px;
+    --radius-popover: 11px;
+    --radius-list: 12px;
+    --radius-dialog: 14px;
     --color-success: var(--success);
     --color-warning: var(--warning);
     --color-agent-claude: var(--agent-claude);
@@ -55,82 +75,105 @@
 }
 
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.148 0.004 228.8);
+    /* DESIGN.md「安静钢面」令牌（2026-11-08），shadcn 变量按 PRD 7.6 映射 */
+    --background: oklch(0.964 0.003 264.5);
+    --foreground: oklch(0.208 0.009 255.6);
     --card: oklch(1 0 0);
-    --card-foreground: oklch(0.148 0.004 228.8);
+    --card-foreground: oklch(0.208 0.009 255.6);
     --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.148 0.004 228.8);
-    --primary: oklch(0.218 0.008 223.9);
-    --primary-foreground: oklch(0.987 0.002 197.1);
-    --secondary: oklch(0.963 0.002 197.1);
-    --secondary-foreground: oklch(0.218 0.008 223.9);
-    --muted: oklch(0.963 0.002 197.1);
-    --muted-foreground: oklch(0.52 0.021 213.5);   /* 覆盖：0.56 改为 0.52，使它在 muted 底色上达到 4.91:1 */
-    --accent: oklch(0.963 0.002 197.1);
-    --accent-foreground: oklch(0.218 0.008 223.9);
-    --destructive: oklch(0.577 0.245 27.325);
-    --success: oklch(0.508 0.118 165.612);
-    --warning: oklch(0.555 0.163 48.998);
-    /* Agent 标识色（DESIGN.md 例外，只用于资源回路行和检视面板上点亮的 Agent 按钮）：Claude 橙压暗到 0.56，Logo 在 15% 自身色底上 4.04:1、在 frost 上 3.66:1；OpenAI 绿只做底色，Logo 用墨色 */
+    --popover-foreground: oklch(0.208 0.009 255.6);
+    --primary: oklch(0.252 0.013 243.4);
+    --primary-foreground: oklch(1 0 0);
+    --secondary: oklch(0.954 0.003 247.9);
+    --secondary-foreground: oklch(0.208 0.009 255.6);
+    --muted: oklch(0.954 0.003 247.9);
+    --muted-foreground: oklch(0.535 0.017 251.3);
+    --accent: oklch(0.930 0.005 247.9);
+    --accent-foreground: oklch(0.208 0.009 255.6);
+    --destructive: oklch(0.578 0.181 24.8);
+    --success: oklch(0.530 0.121 157.3);
+    --warning: oklch(0.554 0.143 50.3);
     --agent-claude: oklch(0.56 0.15 40);
     --agent-openai: oklch(0.6 0.13 168);
-    --border: oklch(0.925 0.005 214.3);
-    --input: oklch(0.925 0.005 214.3);
-    --ring: oklch(0.609 0.126 221.723);            /* 覆盖：Signal Cyan */
+    --border: oklch(0.915 0.006 255.5);
+    --input: oklch(0.915 0.006 255.5);
+    --ring: oklch(0.530 0.103 229.3);
+    --card-2: oklch(0.982 0.002 247.8);
+    --pill: oklch(0.954 0.003 247.9);
+    --pill-hover: oklch(0.930 0.005 247.9);
+    --seg-track: oklch(0.923 0.005 247.9);
+    --line: oklch(0.915 0.006 255.5);
+    --line-2: oklch(0.942 0.005 258.3);
+    --fg-2: oklch(0.410 0.016 255.6);
+    --ctl-fg: oklch(0.507 0.015 251.7);
+    --faint: oklch(0.787 0.013 255.5);
+    --ink: oklch(0.252 0.013 243.4);
+    --signal: oklch(0.530 0.103 229.3);
+    --signal-soft: oklch(0.951 0.019 222.2);
     --chart-1: oklch(0.865 0.127 207.078);
     --chart-2: oklch(0.715 0.143 215.221);
     --chart-3: oklch(0.609 0.126 221.723);
     --chart-4: oklch(0.52 0.105 223.128);
     --chart-5: oklch(0.45 0.085 224.283);
-    --radius: 0.45rem;
-    --sidebar: oklch(0.987 0.002 197.1);
-    --sidebar-foreground: oklch(0.148 0.004 228.8);
-    --sidebar-primary: oklch(0.218 0.008 223.9);
-    --sidebar-primary-foreground: oklch(0.987 0.002 197.1);
-    --sidebar-accent: oklch(0.963 0.002 197.1);
-    --sidebar-accent-foreground: oklch(0.218 0.008 223.9);
-    --sidebar-border: oklch(0.925 0.005 214.3);
-    --sidebar-ring: oklch(0.609 0.126 221.723);
+    --sidebar: oklch(0.964 0.003 264.5);
+    --sidebar-foreground: oklch(0.208 0.009 255.6);
+    --sidebar-primary: oklch(0.252 0.013 243.4);
+    --sidebar-primary-foreground: oklch(1 0 0);
+    --sidebar-accent: oklch(0.930 0.005 247.9);
+    --sidebar-accent-foreground: oklch(0.208 0.009 255.6);
+    --sidebar-border: oklch(0.915 0.006 255.5);
+    --sidebar-ring: oklch(0.530 0.103 229.3);
+    --radius: 0.5rem;
 }
 
 .dark {
-    --background: oklch(0.148 0.004 228.8);
-    --foreground: oklch(0.987 0.002 197.1);
-    --card: oklch(0.218 0.008 223.9);
-    --card-foreground: oklch(0.987 0.002 197.1);
-    --popover: oklch(0.218 0.008 223.9);
-    --popover-foreground: oklch(0.987 0.002 197.1);
-    --primary: oklch(0.925 0.005 214.3);
-    --primary-foreground: oklch(0.218 0.008 223.9);
-    --secondary: oklch(0.275 0.011 216.9);
-    --secondary-foreground: oklch(0.987 0.002 197.1);
-    --muted: oklch(0.275 0.011 216.9);
-    --muted-foreground: oklch(0.723 0.014 214.4);
-    --accent: oklch(0.275 0.011 216.9);
-    --accent-foreground: oklch(0.987 0.002 197.1);
-    --destructive: oklch(0.704 0.191 22.216);
-    --success: oklch(0.765 0.177 163.223);
-    --warning: oklch(0.828 0.189 84.429);
-    /* Claude Logo 在 15% 自身色底上 5.26:1（card）、4.45:1（muted） */
+    --background: oklch(0.213 0.007 258.4);
+    --foreground: oklch(0.948 0.005 258.3);
+    --card: oklch(0.255 0.009 255.6);
+    --card-foreground: oklch(0.948 0.005 258.3);
+    --popover: oklch(0.255 0.009 255.6);
+    --popover-foreground: oklch(0.948 0.005 258.3);
+    --primary: oklch(0.933 0.005 247.9);
+    --primary-foreground: oklch(0.213 0.007 258.4);
+    --secondary: oklch(0.299 0.011 254.0);
+    --secondary-foreground: oklch(0.948 0.005 258.3);
+    --muted: oklch(0.299 0.011 254.0);
+    --muted-foreground: oklch(0.706 0.014 251.6);
+    --accent: oklch(0.338 0.013 253.0);
+    --accent-foreground: oklch(0.948 0.005 258.3);
+    --destructive: oklch(0.741 0.126 25.3);
+    --success: oklch(0.789 0.128 157.6);
+    --warning: oklch(0.807 0.139 78.5);
     --agent-claude: oklch(0.72 0.14 42);
     --agent-openai: oklch(0.74 0.13 168);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.715 0.143 215.221);
+    --border: oklch(0.327 0.012 258.4);
+    --input: oklch(0.327 0.012 258.4);
+    --ring: oklch(0.766 0.113 221.7);
+    --card-2: oklch(0.237 0.007 248.1);
+    --pill: oklch(0.299 0.011 254.0);
+    --pill-hover: oklch(0.338 0.013 253.0);
+    --seg-track: oklch(1 0 0 / 4%);
+    --line: oklch(0.327 0.012 258.4);
+    --line-2: oklch(0.299 0.011 254.0);
+    --fg-2: oklch(0.793 0.012 252.1);
+    --ctl-fg: oklch(0.732 0.012 252.1);
+    --faint: oklch(0.493 0.013 252.2);
+    --ink: oklch(0.933 0.005 247.9);
+    --signal: oklch(0.766 0.113 221.7);
+    --signal-soft: oklch(0.310 0.038 230.5);
     --chart-1: oklch(0.865 0.127 207.078);
     --chart-2: oklch(0.715 0.143 215.221);
     --chart-3: oklch(0.609 0.126 221.723);
     --chart-4: oklch(0.52 0.105 223.128);
     --chart-5: oklch(0.45 0.085 224.283);
-    --sidebar: oklch(0.218 0.008 223.9);
-    --sidebar-foreground: oklch(0.987 0.002 197.1);
-    --sidebar-primary: oklch(0.925 0.005 214.3);   /* 覆盖：去掉 preset 默认的蓝色，与 primary 保持一致 */
-    --sidebar-primary-foreground: oklch(0.987 0.002 197.1);
-    --sidebar-accent: oklch(0.275 0.011 216.9);
-    --sidebar-accent-foreground: oklch(0.987 0.002 197.1);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.715 0.143 215.221);
+    --sidebar: oklch(0.213 0.007 258.4);
+    --sidebar-foreground: oklch(0.948 0.005 258.3);
+    --sidebar-primary: oklch(0.933 0.005 247.9);
+    --sidebar-primary-foreground: oklch(0.213 0.007 258.4);
+    --sidebar-accent: oklch(0.338 0.013 253.0);
+    --sidebar-accent-foreground: oklch(0.948 0.005 258.3);
+    --sidebar-border: oklch(0.327 0.012 258.4);
+    --sidebar-ring: oklch(0.766 0.113 221.7);
 }
 
 @layer base {

@@ -71,22 +71,24 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     await expect(alert).toBeHidden()
   })
 
-  test("首屏：单列两组单行回路；生产标准运维琥珀色提醒；异常就地给出修复按钮；没有第二行统计和重复命名", async ({ page }) => {
+  test("首屏：两组两行资源行；生产标准运维琥珀色；异常就地给出修复按钮；正常即隐身", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
     await expect(page.locator("#detail-title")).toHaveCount(0)
-    await expect(page.getByRole("heading", { level: 2, name: "服务器", exact: true })).toBeVisible()
-    await expect(page.getByRole("heading", { level: 2, name: "云平台", exact: true })).toBeVisible()
+    await expect(page.getByRole("heading", { level: 2, name: /^服务器/ })).toBeVisible()
+    await expect(page.getByRole("heading", { level: 2, name: /^云平台/ })).toBeVisible()
     await expect(page.getByText("权限档位")).toHaveCount(0)
-    // sg-db 是生产服务器，开着标准运维：闸刀按钮带提醒文案（状态不只靠颜色）
-    await expect(page.getByRole("button", { name: /^sg-db 当前是标准运维.*生产环境已开启写权限/ })).toBeVisible()
-    await expect(page.getByRole("button", { name: /^hk-edge 当前是只读巡检/ })).toBeVisible()
+    // sg-db 是生产服务器，开着标准运维：档位文字带提醒文案（状态不只靠颜色）
+    await expect(page.getByRole("button", { name: /^sg-db 的档位：标准运维.*生产环境已开启写权限/ })).toHaveClass(/text-warning/)
+    await expect(page.getByRole("button", { name: /^hk-edge 的档位：只读巡检$/ })).toBeVisible()
     // dev-box 只用密码；vercel 在 WSL 未登录
     const list = page.locator("#server-list")
     await expect(list.getByRole("button", { name: "改用密钥登录" })).toBeVisible()
     await expect(list.getByText("WSL 未登录")).toBeVisible()
     await expect(list.getByRole("button", { name: "去登录" })).toBeVisible()
-    await expect(list.getByText("me@example.com · 2 个域名、1 个 Worker")).toBeVisible()
+    // 云平台不写账号和范围摘要，这些在详情里
+    await expect(list.getByText(/me@example.com|2 个域名/)).toHaveCount(0)
+    await expect(list.getByText("生产", { exact: true })).toHaveCount(4)
     // 正常连接不写「已连接 · Ubuntu …」，云平台不写「vercel Vercel · vercel」
     await expect(list.getByText(/已连接|Ubuntu|已就绪|生产环境已开启写权限/)).toHaveCount(0)
     await expect(list.getByText("wrangler")).toHaveCount(0)
@@ -165,26 +167,26 @@ test.describe("资源视图：PRD 6.10 状态", () => {
 })
 
 test.describe("回路行右侧的双闸刀（PRD 6.4）", () => {
-  test("档位闸刀：生产资源切到标准运维先确认，变成琥珀色；切回只读巡检一键完成", async ({ page }) => {
+  test("档位菜单：生产资源切到标准运维在菜单底部确认，变成琥珀色，提示条可撤销；切回只读不确认", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
-    await page.getByRole("button", { name: /^hk-edge 当前是只读巡检/ }).click()
-    const confirm = page.getByRole("alertdialog", { name: "把 hk-edge 切换为标准运维？" })
-    await expect(confirm).toBeVisible()
-    await shot(page, "breaker-01-confirm")
-    await confirm.getByRole("button", { name: "切换为标准运维" }).click()
-    const amber = page.getByRole("button", { name: /^hk-edge 当前是标准运维.*生产环境已开启写权限/ })
-    await expect(amber).toBeVisible()
+    await page.getByRole("button", { name: /^hk-edge 的档位：只读巡检/ }).click()
+    const menu = page.getByRole("menu")
+    await menu.getByRole("menuitemradio", { name: /^标准运维/ }).click()
+    await expect(menu.getByRole("alert")).toHaveText(/hk-edge 是生产环境/)
+    await shot(page, "mode-01-confirm")
+    await menu.getByRole("button", { name: "切换" }).click()
+    const amber = page.getByRole("button", { name: /^hk-edge 的档位：标准运维.*生产环境已开启写权限/ })
     await expect(amber).toHaveClass(/text-warning/)
-    // 点按钮不打开详情
     await expect(page.locator("#detail-title")).toHaveCount(0)
-    await shot(page, "breaker-02-amber")
-    await amber.click()
-    await expect(page.getByRole("alertdialog")).toHaveCount(0)
-    await expect(page.getByRole("button", { name: /^hk-edge 当前是只读巡检/ })).toBeVisible()
+    await shot(page, "mode-02-amber")
+    // 提示条「撤销」回到只读巡检
+    await page.locator("[data-slot=toast]").getByRole("button", { name: "撤销" }).click()
+    await expect(page.getByRole("button", { name: /^hk-edge 的档位：只读巡检/ })).toBeVisible()
     // 非生产资源切到标准运维不用确认
-    await page.getByRole("button", { name: /^dev-box 当前是标准运维/ }).click()
-    await expect(page.getByRole("button", { name: /^dev-box 当前是只读巡检/ })).toBeVisible()
+    await page.getByRole("button", { name: /^dev-box 的档位：标准运维/ }).click()
+    await page.getByRole("menu").getByRole("menuitemradio", { name: /^只读巡检/ }).click()
+    await expect(page.getByRole("button", { name: /^dev-box 的档位：只读巡检/ })).toBeVisible()
     expect(errors).toEqual([])
   })
 
@@ -312,7 +314,7 @@ test.describe("云平台 CLI（PRD 6.5 分支 B、F-104）", () => {
     await wizard.getByRole("button", { name: "保存并启用" }).click()
     await expect(toastText(page, "已接入 Oracle Cloud")).toBeVisible()
     await expect(wizard).toHaveCount(0)
-    await expect(row(page, "oracle")).toHaveAccessibleName(/已就绪/)
+    await expect(row(page, "oracle")).toHaveAccessibleName(/已登录/)
     await shot(page, "cli-03-oracle-enabled")
     expect(errors).toEqual([])
   })
@@ -352,8 +354,7 @@ test.describe("云平台 CLI（PRD 6.5 分支 B、F-104）", () => {
     await expect(panel.getByRole("button", { name: "打开终端切换账号" }).first()).toBeVisible()
     await shot(page, "cli-05-vercel-ready")
     await back(page)
-    await expect(row(page, "vercel")).toHaveAccessibleName(/已就绪/)
-    await expect(page.locator("#server-list").getByText("my-team · 3 个项目")).toBeVisible()
+    await expect(row(page, "vercel")).toHaveAccessibleName(/已登录/)
     expect(errors).toEqual([])
   })
 
@@ -459,6 +460,6 @@ test.describe("纯键盘流程", () => {
     await page.keyboard.press("Enter")
     await expect(toastText(page, "dev-box 已切换为「只读巡检」")).toBeVisible()
     await back(page)
-    await expect(page.getByRole("button", { name: /^dev-box 当前是只读巡检/ })).toBeVisible()
+    await expect(page.getByRole("button", { name: /^dev-box 的档位：只读巡检/ })).toBeVisible()
   })
 })

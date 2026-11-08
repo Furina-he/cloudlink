@@ -3,7 +3,8 @@ import type { Asset, CliAsset, EnvId, ServerAsset, Settings, SkillConfig } from 
 import { relationLines } from "./relations"
 import { handleOf, isCli, isServer } from "@/stores/assets"
 
-export const ENV_WORD = { prod: "production", staging: "staging", dev: "development" } as const
+/** F-109 AC3：只对生产资源写 production */
+export const envWord = (a: { production: boolean }) => (a.production ? "production" : "-")
 
 const BUILTIN_RULES = [
   "Never read or print credential files (`.env`, `*.pem`, `*.key`, `id_*`, `/etc/shadow`, `~/.ssh/`) and never use `docker inspect` to view environment variables.",
@@ -77,7 +78,7 @@ export function description(assets: Asset[]): { text: string; rawChars: number }
   const item = (a: Asset, withRole: boolean, short: boolean) => {
     const r = withRole ? role(a) : a.summary.trim()
     const text = short && r.length > 40 ? `${r.slice(0, 39)}…` : r
-    const tail = [ENV_WORD[a.envTag], a.agent.mode === "read-only" ? "read-only" : ""].filter(Boolean).join(", ")
+    const tail = [a.production ? "production" : "", a.agent.mode === "read-only" ? "read-only" : ""].filter(Boolean).join(", ")
     return `${handleOf(a)} (${[text, tail].filter(Boolean).join("; ")})`
   }
   const wrap = (list: string) =>
@@ -106,13 +107,12 @@ const ACCOUNT_FLAG: Record<CliAsset["cliProvider"], (account: string) => string>
 
 /** 云平台的详情文件（references/cloudflare.md）：只写勾选的范围和关联的服务器，不写凭据 */
 function renderCliDetails(a: CliAsset, aliasById: (id: string) => string | undefined): string {
-  const env = ENV_WORD[a.envTag]
   const account = a.account ?? Object.values(a.cli.envStates).find((s) => s?.account)?.account
   const scope = a.cli.scope.filter((x) => x.selected)
   return [
     `# ${a.handle} — ${a.name}`,
     "",
-    `> ${env[0].toUpperCase()}${env.slice(1)} | Mode: ${a.agent.mode}`,
+    `> ${a.production ? "Production | " : ""}Mode: ${a.agent.mode}`,
     "",
     "## Connect",
     `- Run \`${a.cli.binary} <command>\` in the local shell; it is already logged in. Never print or export its credentials.`,
@@ -146,11 +146,10 @@ export function renderDetails(a: ServerAsset, settings: Settings): string {
   ].filter(Boolean)
   const snapshot = settings.writeSnapshotTime && a.probe.lastSuccessAt ? ` | Snapshot: ${a.probe.lastSuccessAt.slice(0, 10)}` : ""
   const resolved = a.connection.resolved
-  const env = ENV_WORD[a.envTag]
   return [
     `# ${alias} — ${a.name}`,
     "",
-    `> ${env[0].toUpperCase()}${env.slice(1)} | Mode: ${a.agent.mode}${snapshot}`,
+    `> ${a.production ? "Production | " : ""}Mode: ${a.agent.mode}${snapshot}`,
     "",
     "## Connect",
     `- \`ssh ${alias} '<command>'\``,
@@ -212,7 +211,7 @@ export function renderSkill(envId: EnvId, assets: Asset[], config: SkillConfig, 
     "| Alias | Role | Env | Mode | Details |",
     "| --- | --- | --- | --- | --- |",
     ...assets.filter(isServer).map(
-      (a) => `| \`${a.connection.sshAlias}\` | ${role(a) || "-"} | ${ENV_WORD[a.envTag]} | ${a.agent.mode} | \`${detailPath.get(a.id)}\` |`
+      (a) => `| \`${a.connection.sshAlias}\` | ${role(a) || "-"} | ${envWord(a)} | ${a.agent.mode} | \`${detailPath.get(a.id)}\` |`
     ),
     ...(assets.some(isCli)
       ? [
@@ -223,7 +222,7 @@ export function renderSkill(envId: EnvId, assets: Asset[], config: SkillConfig, 
           "| Platform | CLI | Role | Env | Mode | Details |",
           "| --- | --- | --- | --- | --- | --- |",
           ...assets.filter(isCli).map(
-            (a) => `| ${a.handle} | \`${a.cli.binary}\` | ${role(a) || "-"} | ${ENV_WORD[a.envTag]} | ${a.agent.mode} | \`${detailPath.get(a.id)}\` |`
+            (a) => `| ${a.handle} | \`${a.cli.binary}\` | ${role(a) || "-"} | ${envWord(a)} | ${a.agent.mode} | \`${detailPath.get(a.id)}\` |`
           ),
         ]
       : []),

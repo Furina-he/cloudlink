@@ -112,7 +112,7 @@ export function NewCliForm({ provider }: { provider: CliProvider }) {
           bound.length === 0 || !account
             ? copy.cli.name[provider]
             : `${copy.cli.name[provider]} · ${account}`,
-        envTag: "prod",
+        production: true,
         summary: "",
         guardrails: { rules: [] },
         notes: "",

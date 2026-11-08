@@ -2,11 +2,12 @@ import { CircleXIcon } from "lucide-react"
 import { useEffect, type ComponentType } from "react"
 import { useHotkeys } from "react-hotkeys-hook"
 
-import { AppHeader } from "@/components/app/AppHeader"
+import { AppHeader, AppSidebar } from "@/components/app/AppHeader"
 import { CommandMenu } from "@/components/app/CommandMenu"
 import { UpdateDialog } from "@/components/app/UpdateDialog"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { ActivityView } from "@/features/activity/ActivityView"
 import { AgentsView } from "@/features/agents/AgentsView"
 import { GuardDialogs } from "@/features/agents/GuardDialogs"
 import { serverActions } from "@/features/servers/actions"
@@ -28,6 +29,7 @@ import { togglePreview, useUIStore } from "@/stores/ui"
 const VIEW_COMPONENT: Record<ViewId, ComponentType<{ focusTitle: boolean }>> = {
   servers: ServersView,
   agents: AgentsView,
+  activity: ActivityView,
   settings: SettingsView,
 }
 
@@ -105,6 +107,10 @@ function useGlobalHotkeys() {
     },
     HOTKEY_OPTIONS
   )
+  useHotkeys(HOTKEYS.navPosition, () => ui().toggleNavPosition(), HOTKEY_OPTIONS)
+  useHotkeys(HOTKEYS.settings, () => !isModalOpen() && ui().setView("settings"), HOTKEY_OPTIONS)
+  useHotkeys(HOTKEYS.search, () => !isModalOpen() && ui().setSearchOpen(true), HOTKEY_OPTIONS)
+  useHotkeys(HOTKEYS.focusSearch, () => !isModalOpen() && ui().setSearchOpen(true), SINGLE_KEY_OPTIONS)
   useHotkeys(HOTKEYS.newServer, () => !isModalOpen() && ui().startCreate(), HOTKEY_OPTIONS)
   // Esc 从详情返回列表（PRD 6.9）；浮层打开时交给浮层，输入框里的 Esc 留给输入框
   useHotkeys(HOTKEYS.escape, () => ui().view === "servers" && !isModalOpen() && ui().closeInspector(), SINGLE_KEY_OPTIONS)
@@ -117,6 +123,7 @@ export function App() {
   // 首次渲染不抢焦点；之后每次切换视图，焦点移到新视图标题（PRD 6.12）
   const switched = useUIStore((s) => s.viewSwitches > 0)
   const View = VIEW_COMPONENT[view]
+  const side = useUIStore((s) => s.navPosition === "side")
 
   useGlobalHotkeys()
   useRecheckOnFocus()
@@ -126,18 +133,21 @@ export function App() {
 
   return (
     // 紧凑窗口（PRD 6.2）：顶部一体栏，下面是单个视图，没有侧栏和左右分栏
-    <div className="flex h-svh min-w-0 flex-col overflow-hidden bg-background">
+    <div className="flex h-svh min-w-0 overflow-hidden bg-background">
       <a
         href="#view-title"
         className="sr-only z-50 rounded-lg bg-background px-3 py-2 text-sm ring-2 ring-ring focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
       >
         {copy.app.skipToMain}
       </a>
-      <AppHeader />
-      <main className="flex min-h-0 flex-1 flex-col">
-        <LoadErrorAlert />
-        <View key={view} focusTitle={switched} />
-      </main>
+      {side && <AppSidebar />}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <AppHeader />
+        <main className="flex min-h-0 flex-1 flex-col">
+          <LoadErrorAlert />
+          <View key={view} focusTitle={switched} />
+        </main>
+      </div>
       <CommandMenu />
       <ImportDialog />
       <HostKeyDialog />

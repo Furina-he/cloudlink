@@ -1,6 +1,6 @@
 # {{ handle }} — {{ name }}
 
-> {{ env_title }} | Mode: {{ mode }}
+> {% if env_title %}{{ env_title }} | {% endif %}Mode: {{ mode }}
 
 ## Connect
 - Run `{{ binary }} <command>` in the local shell; it is already logged in. Never print or export its credentials.

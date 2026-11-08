@@ -1,6 +1,6 @@
 ---
 name: cloudlink-servers
-description: The user's servers and cloud platforms and how to operate them — hk-edge (Public reverse proxy for api.example.com and blog.example.com, and host for the backend API containers; production, read-only), sg-db (PostgreSQL and Redis for the API; production), dev-box (Development machine; development), cloudflare (DNS for the main domains and the edge API gateway Worker; example.com, example.org, api-gateway; production, read-only). Use for any task on these servers, sites or cloud projects: deployments, logs, Docker containers, DNS, configuration, troubleshooting, or a health check of the servers.
+description: The user's servers and cloud platforms and how to operate them — hk-edge (Public reverse proxy for api.example.com and blog.example.com, and host for the backend API containers; production, read-only), sg-db (PostgreSQL and Redis for the API; production), dev-box (Development machine), cloudflare (DNS for the main domains and the edge API gateway Worker; example.com, example.org, api-gateway; production, read-only). Use for any task on these servers, sites or cloud projects: deployments, logs, Docker containers, DNS, configuration, troubleshooting, or a health check of the servers.
 ---
 
 # Servers
@@ -13,7 +13,7 @@ Connect only through the SSH aliases below: `ssh <alias> '<command>'`. Authentic
 | --- | --- | --- | --- | --- |
 | `hk-edge` | Public reverse proxy for api.example.com and blog.example.com, and host for the backend API containers | production | read-only | `references/hk-edge.md` |
 | `sg-db` | PostgreSQL and Redis for the API | production | standard | `references/sg-db.md` |
-| `dev-box` | Development machine | development | standard | `references/dev-box.md` |
+| `dev-box` | Development machine | - | standard | `references/dev-box.md` |
 
 ## Cloud platforms
 Use these CLIs from the local shell. They are already logged in; only touch the resources listed in each details file.

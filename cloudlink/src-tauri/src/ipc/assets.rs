@@ -148,11 +148,11 @@ impl Backend {
                     tag: VpsTag::Tag,
                     id,
                     name: input.name,
-                    env_tag: input.env_tag,
+                    production: input.production,
                     summary: input.summary,
                     agent: old.map(|s| s.agent.clone()).unwrap_or(AssetAgent {
                         agents: Vec::new(),
-                        mode: if input.env_tag == EnvTag::Prod {
+                        mode: if input.production {
                             Mode::ReadOnly
                         } else {
                             self.get_settings()?.default_mode
@@ -244,11 +244,11 @@ impl Backend {
                     tag: CliTag::Tag,
                     id: input.id.unwrap_or_else(|| crate::new_id("ast")),
                     name: input.name,
-                    env_tag: input.env_tag,
+                    production: input.production,
                     summary: input.summary,
                     agent: old.map(|a| a.agent.clone()).unwrap_or(AssetAgent {
                         agents: Vec::new(),
-                        mode: if input.env_tag == EnvTag::Prod {
+                        mode: if input.production {
                             Mode::ReadOnly
                         } else {
                             self.get_settings()?.default_mode
@@ -482,7 +482,7 @@ impl Backend {
                     tag: VpsTag::Tag,
                     id: crate::new_id("ast"),
                     name: actual.alias.clone(),
-                    env_tag: EnvTag::Prod,
+                    production: true,
                     summary: String::new(),
                     agent: AssetAgent {
                         agents: Vec::new(),

@@ -6,7 +6,7 @@ import { useHotkeys } from "react-hotkeys-hook"
 import { useShallow } from "zustand/react/shallow"
 
 import type { CliAsset, CliAssetInput, IpcError } from "@/bindings"
-import { EnvBadge } from "@/components/app/EnvBadge"
+import { ProdMark } from "@/components/app/ProdMark"
 import { PreviewSheet } from "@/components/app/PreviewSheet"
 import { ProviderMark } from "@/components/app/ProviderMark"
 import { CONN_STATE, StateText } from "@/components/app/StateBadge"
@@ -25,19 +25,19 @@ import { selectInclusionsByAsset, useDeliveryStore } from "@/stores/deliveries"
 import { useOperationStore } from "@/stores/operations"
 import { useUIStore } from "@/stores/ui"
 import { serverActions, toastError } from "./actions"
-import { scopeSummary, useLinkedAliases } from "./BreakerRow"
+import { scopeSummary, useLinkedAliases } from "./cliSummary"
 import { CliEnvList, CliScopeList, RecheckButton } from "./CliParts"
 import { SaveErrorAlert } from "./DraftPreview"
 import { BackButton, CompileSummary, ControlRows, Notice, useInclusionProblems } from "./InspectorParts"
 import { LeaveDialog, useLeaveGuard } from "./LeaveDialog"
 import { SaveBar } from "./SaveBar"
-import { EnvTagField, NameField, SummaryField } from "./sections/BasicSection"
+import { ProductionField, NameField, SummaryField } from "./sections/BasicSection"
 import { GuardrailsSection } from "./sections/GuardrailsSection"
 import { NotesSection } from "./sections/NotesSection"
 import { OperationsSection } from "./sections/OperationsSection"
 import { DetailGroup, DetailTabs } from "./ServerDetail"
 
-const valuesOf = (a: CliAsset): CliFormValues => ({ name: a.name, envTag: a.envTag, summary: a.summary, rules: a.guardrails.rules, notes: a.notes })
+const valuesOf = (a: CliAsset): CliFormValues => ({ name: a.name, production: a.production, summary: a.summary, rules: a.guardrails.rules, notes: a.notes })
 
 export const cliInputOf = (v: CliFormValues, a: Pick<CliAsset, "id" | "cliProvider" | "account">): CliAssetInput => ({
   id: a.id,
@@ -45,7 +45,7 @@ export const cliInputOf = (v: CliFormValues, a: Pick<CliAsset, "id" | "cliProvid
   cliProvider: a.cliProvider,
   account: a.account,
   name: v.name.trim(),
-  envTag: v.envTag,
+  production: v.production,
   summary: v.summary,
   guardrails: { rules: v.rules },
   notes: v.notes,
@@ -127,7 +127,7 @@ function CliHeader({ asset, dirty, titleRef }: { asset: CliAsset; dirty: boolean
           {asset.name}
         </h2>
         <span className="shrink-0 font-mono text-sm text-muted-foreground">{asset.cli.binary}</span>
-        <EnvBadge env={asset.envTag} className="ml-auto shrink-0" />
+        <ProdMark production={asset.production} className="ml-auto shrink-0" />
       </div>
       <div className="mt-1 flex min-h-5 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground" aria-live="polite">
         {detecting ? (
@@ -253,7 +253,7 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
               <>
                 <FieldGroup className="gap-4">
                   <NameField />
-                  <EnvTagField />
+                  <ProductionField />
                 </FieldGroup>
                 <DetailGroup title={copy.cli.envCheckTitle} action={<RecheckButton detecting={detecting} onClick={() => serverActions.recheckCli(asset)} />}>
                   <CliEnvList

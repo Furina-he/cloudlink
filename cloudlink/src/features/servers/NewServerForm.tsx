@@ -31,7 +31,7 @@ import { DraftPreview, SaveErrorAlert } from "./DraftPreview"
 import { forgetKeyCheck } from "./keyCheck"
 import { LeaveDialog, useLeaveGuard } from "./LeaveDialog"
 import { SaveFlowDialogs } from "./SaveFlowDialogs"
-import { EnvTagField, NameField } from "./sections/BasicSection"
+import { ProductionField, NameField } from "./sections/BasicSection"
 import { firstError, focusField } from "./serverForm"
 import { useAliasContext, useAliasFollow, useServerForm } from "./useServerForm"
 import { useSaveFlow, type RevealTarget } from "./useSaveFlow"
@@ -65,9 +65,9 @@ export function NewServerForm() {
   const granted = picked ?? agents.map((a) => a.key)
   const defaultMode = useSettingsStore((s) => s.settings?.defaultMode ?? "read-only")
   const [modeTouched, setModeTouched] = useState<Mode | null>(null)
-  const [envTag, aliasValue, nameValue, connection] = useWatch({ control: form.control, name: ["envTag", "alias", "name", "connection"] })
+  const [production, aliasValue, nameValue, connection] = useWatch({ control: form.control, name: ["production", "alias", "name", "connection"] })
   // 生产默认只读巡检（F-202 AC2），其他取设置里的默认档位；用户选过就不再跟随环境
-  const mode: Mode = modeTouched ?? (envTag === "prod" ? "read-only" : defaultMode)
+  const mode: Mode = modeTouched ?? (production ? "read-only" : defaultMode)
 
   const reveal = (target: RevealTarget) => {
     if (target.advanced) setAdvancedOpen(true)
@@ -247,7 +247,7 @@ export function NewServerForm() {
             <FieldGroup className="@container/field-group gap-4">
               <ConnectionFields onHostChange={alias.sync} />
               <NameField onChange={alias.sync} fallback={connection.host.trim()} />
-              <EnvTagField />
+              <ProductionField />
               <p className="text-sm text-muted-foreground" aria-live="polite">
                 {echo ? (
                   <>
@@ -294,7 +294,7 @@ export function NewServerForm() {
               onSelected={setGranted}
               mode={mode}
               onMode={setModeTouched}
-              prod={envTag === "prod"}
+              prod={production}
             />
           )}
           <div className="flex flex-wrap items-center justify-end gap-2">

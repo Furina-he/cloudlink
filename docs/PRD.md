@@ -901,7 +901,6 @@ CloudLink                  ● 护栏运行中
 | 代码高亮 | `shiki`（通过 shadcn `code-block` 安装，使用 JS 正则引擎） | 4.5 |
 | Markdown 渲染 | `streamdown`，样式用 shadcn typeset（一个 CSS 文件，不是 npm 包） | 2.7 |
 | 快捷键 | `react-hotkeys-hook` | 5.3 |
-| 等宽字体 | `@fontsource-variable/jetbrains-mono` | 5.x |
 | Tauri 前端 API | `@tauri-apps/api`、`@tauri-apps/plugin-dialog`、`@tauri-apps/plugin-opener`（检测更新由 Rust 侧的 `tauri-plugin-updater` 完成，前端不引入 `@tauri-apps/plugin-updater`，见 7.3、8.1） | 2.x |
 | 测试 | `vitest`、`@playwright/test` | 5.x / 1.6x |
 
@@ -924,7 +923,7 @@ pnpm dlx shadcn@4 add sidebar resizable command tabs field input input-group tex
 # 3. 安装业务依赖：锁定主版本，白名单之外的依赖一律不装
 pnpm add motion@^14 zustand@^5 @dnd-kit/core@^6 @dnd-kit/sortable@^10 @dnd-kit/utilities@^3 @dnd-kit/modifiers@^9 \
   react-hook-form@^7 zod@^4 @hookform/resolvers@^6 streamdown@^2 react-hotkeys-hook@^5 \
-  @fontsource-variable/jetbrains-mono@^5 @tauri-apps/api@^2 @tauri-apps/plugin-dialog@^2 @tauri-apps/plugin-opener@^2
+  @tauri-apps/api@^2 @tauri-apps/plugin-dialog@^2 @tauri-apps/plugin-opener@^2
 pnpm add @lobehub/icons-static-svg@1.101.0   # 2026-11-01：服务器卡片上的 Agent 标识（Claude、OpenAI 的 Logo）
 pnpm remove @fontsource-variable/inter      # 改用系统 UI 字体栈，见 7.6
 pnpm add -D vitest@^5 @playwright/test@^1 @tauri-apps/cli@^2
@@ -1090,7 +1089,7 @@ export default [
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/jetbrains-mono";   /* 替换生成时的 @fontsource-variable/inter */
+/* 2026-11-08：不再打包 Web 字体（移除 @fontsource-variable/jetbrains-mono），等宽用系统 Cascadia Mono */
 @import "./typeset.css";
 
 @custom-variant dark (&:is(.dark *));

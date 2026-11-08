@@ -11,7 +11,7 @@ import type { AliasContext } from "@/lib/schemas"
 import { AdvancedFields } from "../AdvancedFields"
 import { ConnectionFields } from "../ConnectionFields"
 import { ExportSwitch } from "../ExportSwitch"
-import { EnvTagField, NameField } from "./BasicSection"
+import { NameField, ProductionField } from "./BasicSection"
 import { sortEnvs } from "../serverForm"
 
 const envList = (ids: string[]) => sortEnvs(ids).map(copy.env.long).join("、")
@@ -125,7 +125,7 @@ export function ConnectionSection({
   const identity = (
     <FieldGroup className="gap-4">
       <NameField />
-      <EnvTagField />
+      <ProductionField />
     </FieldGroup>
   )
   if (asset.connection.source === "imported") {

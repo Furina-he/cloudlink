@@ -1,4 +1,5 @@
 import {
+  ActivityIcon,
   BotIcon,
   CircleArrowUpIcon,
   EyeIcon,
@@ -36,6 +37,7 @@ import { ProviderMark } from "./ProviderMark"
 const VIEW_ICON: Record<ViewId, LucideIcon> = {
   servers: ServerIcon,
   agents: BotIcon,
+  activity: ActivityIcon,
   settings: SettingsIcon,
 }
 

@@ -2,35 +2,41 @@ import { expect, test } from "@playwright/test"
 
 import { collectConsoleErrors, detailTitle, ready, row, shot } from "./helpers"
 
-// 应用外壳（PRD 6.2、6.3、6.9、6.12）：紧凑窗口的顶部一体栏、三项导航与计数、快捷键、命令面板
-const VIEWS = ["资源", "Agent", "设置"]
+// 应用外壳（PRD 6.2、6.11、6.12）：顶栏或侧栏、四项导航与标记、快捷键、命令面板
+const VIEWS = ["资源", "Agent", "动态", "设置"]
 
 test.describe("应用外壳", () => {
-  test("顶部一体栏：三项导航和计数；没有侧栏、面包屑，也不常驻运行环境列表", async ({ page }) => {
+  test("顶栏：四项导航、资源数和动态圆点；右侧搜索、导航位置、+ 和窗口按钮", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
     const nav = page.getByRole("navigation", { name: "主导航" })
     for (const v of VIEWS) await expect(nav.getByRole("button", { name: new RegExp(`^${v}`) })).toBeVisible()
     await expect(nav.getByRole("button", { name: /^资源/ })).toHaveAttribute("aria-current", "page")
     await expect(nav.getByText("共 5 项资源")).toBeAttached()
-    // 副本缺失、被改动、冲突各 1
-    await expect(nav.getByText("3 个问题需要处理")).toBeAttached()
-    await expect(page.locator("[data-slot=sidebar]")).toHaveCount(0)
+    await expect(nav.getByText("有待确认的事项")).toBeAttached()
+    await expect(page.locator("aside")).toHaveCount(0)
     await expect(page.getByRole("navigation", { name: "当前位置" })).toHaveCount(0)
     await expect(page.getByText("WSL Ubuntu-24.04")).toHaveCount(0)
-    // 资源页的操作在顶栏右侧
-    await expect(page.getByRole("button", { name: "添加服务器" })).toBeVisible()
-    await expect(page.getByRole("button", { name: "云平台" })).toBeVisible()
+    const banner = page.getByRole("banner")
+    for (const name of ["搜索资源", "导航移到左侧", "添加", "最小化", "最大化或还原", "关闭"]) await expect(banner.getByRole("button", { name, exact: true })).toBeVisible()
     await shot(page, "shell-01-header")
     expect(errors).toEqual([])
   })
 
-  test("编译受阻时，资源计数改为红色受阻数", async ({ page }) => {
-    await ready(page, "?mock=degraded")
-    await expect(page.getByRole("navigation", { name: "主导航" }).getByText("1 项资源导致编译受阻")).toBeAttached()
+  test("Ctrl+Shift+S 切到侧栏并记住；侧栏底部是护栏状态", async ({ page }) => {
+    await ready(page)
+    await page.keyboard.press("Control+Shift+S")
+    const aside = page.locator("aside")
+    await expect(aside.getByRole("navigation", { name: "主导航" })).toBeVisible()
+    await expect(aside.getByText(/^护栏运行中/)).toBeVisible()
+    await expect(page.getByRole("banner").getByRole("heading", { name: "资源" })).toBeVisible()
+    await page.reload()
+    await expect(page.locator("aside")).toBeVisible()
+    await page.getByRole("button", { name: "导航移到顶部" }).click()
+    await expect(page.locator("aside")).toHaveCount(0)
   })
 
-  test("Ctrl+1 到 Ctrl+3 切换视图，焦点移到新视图标题", async ({ page }) => {
+  test("Ctrl+1 到 Ctrl+4 切换视图，焦点移到新视图标题", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
     for (const [i, v] of [...VIEWS.entries()].reverse()) {
@@ -80,7 +86,7 @@ test.describe("应用外壳", () => {
     await page.keyboard.press("Control+Backslash")
     await expect(sheet).toBeHidden()
 
-    await page.keyboard.press("Control+3")
+    await page.keyboard.press("Control+4")
     await page.keyboard.press("Control+Backslash")
     await expect(sheet).toBeVisible()
     // Sheet 是模态的，背后的页面不在无障碍树里，用 DOM 确认已切到 Agent 页
@@ -95,13 +101,14 @@ test.describe("应用外壳", () => {
     await expect(page.getByRole("heading", { level: 1, name: "资源" })).toBeFocused()
   })
 
-  test("最小窗口 760×520：回路行仍是单行，名称不被截断", async ({ page }) => {
+  test("最小窗口 760×520：资源行仍是两行，名称不被截断", async ({ page }) => {
     await page.setViewportSize({ width: 760, height: 520 })
     await ready(page)
     const rows = page.locator("[role=listitem]")
     await expect(rows).toHaveCount(5)
     for (const box of await rows.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height))) {
-      expect(box).toBeLessThanOrEqual(48)
+      expect(box).toBeGreaterThanOrEqual(56)
+      expect(box).toBeLessThanOrEqual(64)
     }
     // 名称都完整显示（没有省略号）
     const clipped = await page.locator("#server-list .truncate").evaluateAll((els) => els.filter((el) => el.scrollWidth > el.clientWidth).map((el) => el.textContent))
@@ -154,12 +161,12 @@ test.describe("键盘焦点（P6 无障碍复查）", () => {
     await expect(dialog).toHaveCount(0)
   })
 
-  test("从「添加服务器」按钮打开时焦点直接在地址上，关闭后回到按钮", async ({ page }) => {
+  test("从顶栏「+」打开时焦点在第一个类型上，关闭后回到「+」", async ({ page }) => {
     await ready(page)
-    const add = page.getByRole("button", { name: "添加服务器" })
+    const add = page.getByRole("banner").getByRole("button", { name: "添加", exact: true })
     await add.focus()
     await page.keyboard.press("Enter")
-    await expect(page.getByRole("dialog").getByLabel("地址")).toBeFocused()
+    await expect(page.getByRole("dialog").locator("[data-autofocus]")).toBeFocused()
     await expect(page.locator("[data-slot=tooltip-content]")).toHaveCount(0)
     await page.keyboard.press("Escape")
     await expect(page.getByRole("dialog")).toHaveCount(0)

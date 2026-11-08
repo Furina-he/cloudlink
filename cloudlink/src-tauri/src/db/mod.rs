@@ -94,6 +94,12 @@ const MIGRATIONS: &[&str] = &[
     UPDATE settings SET json = json_set(json, '$.autoCheckUpdates', json('true'))
     WHERE key = 'settings' AND json_type(json, '$.autoCheckUpdates') IS NULL;
     "#,
+    // v5: F-109 envTag (prod/staging/dev) becomes the boolean production switch.
+    r#"
+    UPDATE assets SET json = json_remove(json_set(json, '$.production',
+        json(CASE WHEN json_extract(json, '$.envTag') = 'prod' THEN 'true' ELSE 'false' END)), '$.envTag')
+    WHERE json_type(json, '$.envTag') IS NOT NULL;
+    "#,
 ];
 
 pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;

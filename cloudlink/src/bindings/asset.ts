@@ -4,7 +4,6 @@ import type { EnvId } from "./env"
 export type AssetType = "vps" | "cli"
 /** 云平台 CLI：cloudflare（wrangler）、vercel（vercel）、oracle（oci）。v0.1 每家一个资源，标识就是这个值（F-101 AC1） */
 export type CliProvider = "cloudflare" | "vercel" | "oracle"
-export type EnvTag = "prod" | "staging" | "dev"
 export type FieldSource = "manual" | "probe"
 export type ProbeState = "never" | "ok" | "stale" | "failed"
 export type Mode = "read-only" | "standard"
@@ -127,7 +126,8 @@ export interface AssetProbeInfo {
 interface AssetBase {
   id: string
   name: string
-  envTag: EnvTag
+  /** F-109：生产环境开关 */
+  production: boolean
   summary: string
   agent: AssetAgent
   guardrails: { rules: GuardrailRule[] }

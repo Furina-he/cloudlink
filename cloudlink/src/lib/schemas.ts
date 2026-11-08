@@ -110,7 +110,7 @@ export function serverFormSchema(ctx: AliasContext) {
         definedIn: z.array(z.string()),
       }),
       name: z.string().trim().min(1, "name-required"),
-      envTag: z.enum(["prod", "staging", "dev"]),
+      production: z.boolean(),
       summary: z.string(),
       tags: z.array(z.string()),
       provider: z.string().trim(),
@@ -159,7 +159,7 @@ export type ServerFormValues = z.infer<ReturnType<typeof serverFormSchema>>
 /** 云平台资源的表单（PRD 6.4）：范围勾选立即生效，不在表单里 */
 export const cliFormSchema = z.object({
   name: z.string().trim().min(1, "name-required"),
-  envTag: z.enum(["prod", "staging", "dev"]),
+  production: z.boolean(),
   summary: z.string(),
   rules: z.array(guardrailRuleSchema),
   notes: z.string(),

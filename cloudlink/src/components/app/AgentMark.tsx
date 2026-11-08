@@ -122,17 +122,18 @@ const LIT_GLYPH: Record<AgentId, string> = {
   custom: "text-foreground",
 }
 
-const NEUTRAL_TILE = "aria-pressed:border-foreground/25 aria-pressed:bg-foreground/10 aria-pressed:hover:bg-foreground/15"
+/** 点亮态（DESIGN.md target-toggle-on，Signal Four Rule）：signal-soft 底 + 35% signal 内描边，所有目标一致 */
+const SIGNAL_TILE = "aria-pressed:border-transparent aria-pressed:bg-signal-soft aria-pressed:shadow-[inset_0_0_0_1px_color-mix(in_oklch,var(--signal)_35%,transparent)] aria-pressed:hover:bg-signal-soft"
 
 /** 点亮时按钮的底色和描边（用在 aria-pressed 上，覆盖 Toggle 默认的 bg-muted） */
 export const AGENT_TILE_ON: Record<AgentId, string> = {
-  "claude-code": "aria-pressed:border-agent-claude/40 aria-pressed:bg-agent-claude/15 aria-pressed:hover:bg-agent-claude/20",
-  universal: NEUTRAL_TILE,
-  trae: NEUTRAL_TILE,
-  "trae-cn": NEUTRAL_TILE,
-  kiro: NEUTRAL_TILE,
-  continue: NEUTRAL_TILE,
-  custom: NEUTRAL_TILE,
+  "claude-code": SIGNAL_TILE,
+  universal: SIGNAL_TILE,
+  trae: SIGNAL_TILE,
+  "trae-cn": SIGNAL_TILE,
+  kiro: SIGNAL_TILE,
+  continue: SIGNAL_TILE,
+  custom: SIGNAL_TILE,
 }
 
 function Logo({ paths, className }: { paths: string[]; className?: string }) {

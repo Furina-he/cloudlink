@@ -9,14 +9,18 @@ export const HOTKEYS = {
   save: "mod+s",
   preview: "mod+backslash",
   focusSearch: "slash",
-  views: "mod+1, mod+2, mod+3",
+  views: "mod+1, mod+2, mod+3, mod+4",
+  search: "mod+f",
+  navPosition: "mod+shift+s",
+  settings: "mod+comma",
   escape: "escape",
 } as const
 
 export const VIEW_BY_DIGIT: Record<string, ViewId> = {
   "1": "servers",
   "2": "agents",
-  "3": "settings",
+  "3": "activity",
+  "4": "settings",
 }
 
 /** 全局快捷键在输入框里也生效，并阻止浏览器默认行为（如 Ctrl+S 保存网页） */
@@ -45,5 +49,6 @@ export const KEY_HINT = {
   save: [MOD, "S"],
   preview: [MOD, "\\"],
   focusSearch: ["/"],
+  navPosition: [MOD, "Shift", "S"],
   view: (n: number) => [MOD, String(n)],
 } as const

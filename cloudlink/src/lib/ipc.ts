@@ -1,5 +1,6 @@
 // 唯一允许调用 invoke 的地方（PRD 7.3、7.8）
 import { invoke } from "@tauri-apps/api/core"
+import { getCurrentWindow } from "@tauri-apps/api/window"
 import { open } from "@tauri-apps/plugin-dialog"
 import { revealItemInDir } from "@tauri-apps/plugin-opener"
 
@@ -161,6 +162,10 @@ export const ipc = {
   pickDirectory: () => open({ directory: true, multiple: false }),
   /** 选择私钥文件（PRD 6.5）；取消时返回 null */
   pickFile: () => open({ directory: false, multiple: false }),
+  /** 自绘窗口按钮（PRD 6.2，decorations: false） */
+  minimizeWindow: () => getCurrentWindow().minimize(),
+  toggleMaximizeWindow: () => getCurrentWindow().toggleMaximize(),
+  closeWindow: () => getCurrentWindow().close(),
 }
 
 /** 把 invoke 的拒绝值规整为 IpcError。后端约定抛出 { id, params } */

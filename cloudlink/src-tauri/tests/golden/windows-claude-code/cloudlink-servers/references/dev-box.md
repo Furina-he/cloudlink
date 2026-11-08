@@ -1,6 +1,6 @@
 # dev-box — Development machine
 
-> Development | Mode: standard
+> Mode: standard
 
 ## Connect
 - `ssh dev-box '<command>'`

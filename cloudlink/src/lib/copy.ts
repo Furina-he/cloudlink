@@ -11,7 +11,6 @@ import type {
   DeliveryStatus,
   DistributeBlockReason,
   EnvId,
-  EnvTag,
   GuardDetailId,
   GuardReasonId,
   GuardState,
@@ -225,12 +224,12 @@ const DISTRIBUTE_BLOCK: Record<DistributeBlockReason, string> = {
   "cli-not-ready": "CLI 还没有在任何运行环境里就绪；先安装并登录",
 }
 
-export type ViewId = "servers" | "agents" | "settings"
+export type ViewId = "servers" | "agents" | "activity" | "settings"
 
 export const copy = {
   app: { name: "CloudLink", skipToMain: "跳到主内容" },
 
-  nav: { servers: "资源", agents: "Agent", settings: "设置" } satisfies Record<
+  nav: { servers: "资源", agents: "Agent", activity: "动态", settings: "设置" } satisfies Record<
     ViewId,
     string
   >,
@@ -244,6 +243,16 @@ export const copy = {
   shell: {
     nav: "主导航",
     openCommand: "打开命令面板",
+    search: "搜索资源",
+    add: "添加",
+    navToSide: "导航移到左侧",
+    navToTop: "导航移到顶部",
+    activityPending: "有待确认的事项",
+    minimize: "最小化",
+    maximize: "最大化或还原",
+    close: "关闭",
+    guardOn: (n: number) => (n > 0 ? `护栏运行中 · 今天拦截 ${n} 条` : "护栏运行中"),
+    guardOff: "护栏未生效",
     starting: "正在打开 CloudLink…",
     startFailed: "暂时无法打开 CloudLink",
     startFailedHint: "未能连接应用服务。请重试；若仍无法打开，请重启 CloudLink。",
@@ -289,10 +298,6 @@ export const copy = {
   },
 
   env: {
-    tag: { prod: "生产", staging: "预发", dev: "开发" } satisfies Record<
-      EnvTag,
-      string
-    >,
     short: envShort,
     long: envLong,
   },
@@ -508,6 +513,7 @@ export const copy = {
 
   common: {
     cancel: "取消",
+    undo: "撤销",
     close: "关闭",
     clear: "清除",
     showOptions: "展开选项",
@@ -525,6 +531,19 @@ export const copy = {
   },
 
   /** 资源配电盘（PRD 6.4） */
+  /** 资源行（PRD 6.3，2026-11-08 重设计） */
+  row: {
+    prod: "生产",
+    loggedIn: (account: string | null) => (account ? `已登录 ${account}` : "已登录"),
+    modeShort: {
+      "read-only": "只能查看，不能改动",
+      standard: "可以部署和重启，危险操作先问你",
+    } satisfies Record<Mode, string>,
+    modeMenuLabel: (alias: string) => `${alias} 的档位`,
+    prodConfirm: (alias: string) => `${alias} 是生产环境。切到标准运维后，Agent 可以部署和重启。`,
+    switch: "切换",
+  },
+
   servers: {
     add: "添加资源",
     addServer: "添加服务器",
@@ -881,6 +900,7 @@ export const copy = {
     envsHint:
       "托管配置写进这些运行环境的 ~/.ssh/cloudlink.conf，Agent 在其中才能连上。",
     cancel: "取消",
+    undo: "撤销",
     save: "保存",
     saveAndProbe: "保存并探测",
     saving: "正在保存",
@@ -895,6 +915,7 @@ export const copy = {
   test: {
     button: "测试连接",
     cancel: "取消",
+    undo: "撤销",
     running: "正在连接…",
     ok: (ms: string, os?: string) =>
       os ? `已连接 · ${ms} · ${os}` : `已连接 · ${ms}`,
@@ -1013,6 +1034,8 @@ export const copy = {
   basic: {
     name: "名称",
     nameFallback: (host: string) => (host ? `留空则用 ${host}` : "留空则用地址"),
+    production: "生产环境",
+    productionHint: "新建时默认只读巡检，切到标准运维前会再确认",
     env: "环境",
     summary: "用途",
     summaryHint: "写进总览表和 description，帮助 Agent 判断任务涉及哪项资源。",

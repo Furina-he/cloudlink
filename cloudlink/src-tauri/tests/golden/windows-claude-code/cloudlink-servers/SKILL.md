@@ -1,6 +1,6 @@
 ---
 name: cloudlink-servers
-description: The user's servers and how to operate them — hk-edge (Public reverse proxy for api.example.com and blog.example.com, and host for the backend API containers; production, read-only), sg-db (PostgreSQL and Redis for the API; production), dev-box (Development machine; development). Use for any task on these servers or sites: deployments, logs, Docker containers, configuration, troubleshooting, or a health check of the servers.
+description: The user's servers and how to operate them — hk-edge (Public reverse proxy for api.example.com and blog.example.com, and host for the backend API containers; production, read-only), sg-db (PostgreSQL and Redis for the API; production), dev-box (Development machine). Use for any task on these servers or sites: deployments, logs, Docker containers, configuration, troubleshooting, or a health check of the servers.
 ---
 
 # Servers
@@ -13,7 +13,7 @@ Connect only through the SSH aliases below: `ssh <alias> '<command>'`. Authentic
 | --- | --- | --- | --- | --- |
 | `hk-edge` | Public reverse proxy for api.example.com and blog.example.com, and host for the backend API containers | production | read-only | `references/hk-edge.md` |
 | `sg-db` | PostgreSQL and Redis for the API | production | standard | `references/sg-db.md` |
-| `dev-box` | Development machine | development | standard | `references/dev-box.md` |
+| `dev-box` | Development machine | - | standard | `references/dev-box.md` |
 
 ## How they fit together
 - hk-edge reverse-proxies api.example.com to the API containers on hk-edge; those containers use the PostgreSQL database on sg-db over the private network.
