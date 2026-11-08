@@ -37,6 +37,8 @@ pub enum CliProvider {
     Cloudflare,
     Vercel,
     Oracle,
+    /// F-110（2026-11-08）：GitHub 作为云平台 CLI 接入，开放范围是仓库
+    Github,
 }
 
 impl CliProvider {
@@ -45,6 +47,7 @@ impl CliProvider {
             CliProvider::Cloudflare => "cloudflare",
             CliProvider::Vercel => "vercel",
             CliProvider::Oracle => "oracle",
+            CliProvider::Github => "github",
         }
     }
     pub fn binary(self) -> CliBinary {
@@ -52,6 +55,7 @@ impl CliProvider {
             CliProvider::Cloudflare => CliBinary::Wrangler,
             CliProvider::Vercel => CliBinary::Vercel,
             CliProvider::Oracle => CliBinary::Oci,
+            CliProvider::Github => CliBinary::Gh,
         }
     }
 }
@@ -447,6 +451,28 @@ pub enum CliScopeKind {
     Pages,
     Project,
     Instance,
+    /// GitHub 仓库（F-110 AC1）
+    Repo,
+}
+
+/// GitHub 仓库的可见性（F-110 AC1）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "asset.ts")]
+pub enum RepoVisibility {
+    Public,
+    Private,
+    Internal,
+}
+
+impl RepoVisibility {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RepoVisibility::Public => "public",
+            RepoVisibility::Private => "private",
+            RepoVisibility::Internal => "internal",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -463,6 +489,14 @@ pub struct CliScopeItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub address: Option<String>,
+    /// 仓库的默认分支（只有 repo）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub default_branch: Option<String>,
+    /// 仓库的可见性（只有 repo）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub visibility: Option<RepoVisibility>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -472,6 +506,7 @@ pub enum CliBinary {
     Wrangler,
     Vercel,
     Oci,
+    Gh,
 }
 
 impl CliBinary {
@@ -480,6 +515,7 @@ impl CliBinary {
             CliBinary::Wrangler => "wrangler",
             CliBinary::Vercel => "vercel",
             CliBinary::Oci => "oci",
+            CliBinary::Gh => "gh",
         }
     }
 }

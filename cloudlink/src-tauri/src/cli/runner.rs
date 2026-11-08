@@ -78,7 +78,11 @@ impl Runner for SystemRunner {
             .env("VERCEL_TELEMETRY_DISABLED", "1")
             .env("DO_NOT_TRACK", "1")
             .env("NO_COLOR", "1")
-            .env("CI", "1");
+            .env("CI", "1")
+            .env("GH_PROMPT_DISABLED", "1")
+            .env("GH_NO_UPDATE_NOTIFIER", "1")
+            .env("GH_NO_EXTENSION_UPDATE_NOTIFIER", "1")
+            .env("GH_SPINNER_DISABLED", "1");
         let output = proc::run(
             command,
             RunOpts {
@@ -219,6 +223,9 @@ pub(crate) fn script_for(env: &EnvContext, query: &Query) -> Result<String> {
         );
         let body = if provider == CliProvider::Oracle && matches!(operation, "profiles" | "identity" | "scope") {
             format!("python3 -c {} {args}", sh_quote(include_str!("oracle.py")))
+        } else if provider == CliProvider::Github && matches!(operation, "identity" | "scope") {
+            // gh 是单个 Go 程序，WSL 里不一定装了 Node；和 OCI 一样用系统自带的 python3 做桥
+            format!("python3 -c {} {args}", sh_quote(include_str!("github.py")))
         } else if matches!(operation, "scope" | "identity") {
             format!("node -e {} {args}", sh_quote(include_str!("metadata.js")))
         } else {
@@ -244,9 +251,13 @@ $env:VERCEL_TELEMETRY_DISABLED='1'
 $env:DO_NOT_TRACK='1'
 $env:NO_COLOR='1'
 $env:CI='1'
+$env:GH_PROMPT_DISABLED='1'
+$env:GH_NO_UPDATE_NOTIFIER='1'
+$env:GH_NO_EXTENSION_UPDATE_NOTIFIER='1'
+$env:GH_SPINNER_DISABLED='1'
 foreach ($clProfile in @($PROFILE.AllUsersAllHosts,$PROFILE.AllUsersCurrentHost,$PROFILE.CurrentUserAllHosts,$PROFILE.CurrentUserCurrentHost)) {
   if ($clProfile -and (Test-Path -LiteralPath $clProfile -PathType Leaf)) { try { & { . $clProfile } *> $null } catch {} }
 }
 "#;
 
-const SH_ENV: &str = "export WRANGLER_SEND_METRICS=false WRANGLER_WRITE_LOGS=false WRANGLER_LOG_SANITIZE=true VERCEL_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 NO_COLOR=1 CI=1";
+const SH_ENV: &str = "export WRANGLER_SEND_METRICS=false WRANGLER_WRITE_LOGS=false WRANGLER_LOG_SANITIZE=true VERCEL_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 NO_COLOR=1 CI=1 GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 GH_NO_EXTENSION_UPDATE_NOTIFIER=1 GH_SPINNER_DISABLED=1";

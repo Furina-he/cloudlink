@@ -31,7 +31,7 @@ describe("资源配电盘（PRD 6.4）", () => {
     const { servers: s, clis } = selectResourceGroups({ byId, ids }, "")
     // 中文名称按拼音：香港（xiang）在新加坡（xin）之前
     expect(s.map((a) => a.id)).toEqual(["ast_hk_edge", "ast_sg_db", "ast_dev_box"])
-    expect(clis.map((a) => a.id)).toEqual(["ast_cloudflare", "ast_vercel"])
+    expect(clis.map((a) => a.id)).toEqual(["ast_cloudflare", "ast_vercel", "ast_github"])
   })
 
   it("搜索匹配名称、别名、标签、站点名，云平台还匹配 CLI 名、账号和已选范围，不区分大小写", () => {

@@ -1,190 +1,157 @@
-import { useEffect, useRef, useState, type ReactNode } from "react"
-import { FormProvider, type UseFormReturn } from "react-hook-form"
+import { PencilIcon, RadarIcon } from "lucide-react"
+import { useRef, useState } from "react"
+import { FormProvider, useWatch, type FieldPath } from "react-hook-form"
 import { useHotkeys } from "react-hotkeys-hook"
 
 import type { ServerAsset } from "@/bindings"
+import { CopyValue, ListGroup, PrefRow } from "@/components/app/SettingsList"
 import { Button } from "@/components/ui/button"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { copy } from "@/lib/copy"
 import { HOTKEY_OPTIONS, HOTKEYS, isModalOpen } from "@/lib/hotkeys"
-import type { AliasContext, ServerFormValues } from "@/lib/schemas"
-import { selectPendingCount, useNotesStore } from "@/stores/notes"
-import { useOperationStore } from "@/stores/operations"
+import type { ServerFormValues } from "@/lib/schemas"
+import { useAssetStore } from "@/stores/assets"
 import { isProbing, useProbeStore } from "@/stores/probe"
-import { useUIStore, type DetailTab } from "@/stores/ui"
-import { RadarIcon } from "lucide-react"
 import { serverActions } from "./actions"
-import { useConnectionTest } from "./ConnectionTest"
-import { DetailHeader, type EditConnection } from "./DetailHeader"
+import { ConnectionDialog } from "./ConnectionDialog"
+import { TestResult, useConnectionTest } from "./ConnectionTest"
+import { DetailHeader, ServerProblems } from "./DetailHeader"
+import { DetailPage, NameRow, NotesRow, PermissionGroup, RecentActivityGroup, RulesGroup, SummaryRow } from "./DetailParts"
 import { DraftPreview, SaveErrorAlert } from "./DraftPreview"
-import { LeaveDialog, useLeaveGuard } from "./LeaveDialog"
-import { SaveBar } from "./SaveBar"
-import { SaveFlowDialogs } from "./SaveFlowDialogs"
-import { OtherFields, SitesField, SummaryField } from "./sections/BasicSection"
-import { ConnectionSection } from "./sections/ConnectionSection"
-import { GuardrailsSection } from "./sections/GuardrailsSection"
-import { NotesSection } from "./sections/NotesSection"
-import { OperationsSection } from "./sections/OperationsSection"
+import { CompileSummary } from "./InspectorParts"
+import { OtherFields, SitesField } from "./sections/BasicSection"
+import { ListeningPorts } from "./sections/ConnectionSection"
 import { PathsSection } from "./sections/PathsSection"
 import { ServicesSection } from "./sections/ServicesSection"
-import { firstError, focusField } from "./serverForm"
+import { sortEnvs, toAssetInput } from "./serverForm"
+import { useAutoSave } from "./useAutoSave"
 import { useAliasContext, useServerForm } from "./useServerForm"
-import { useSaveFlow, type RevealTarget } from "./useSaveFlow"
 
-/** Tab 里的一组内容：标题是 h3（详情标题是 h2），层级不跳级 */
-export function DetailGroup({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
-  return (
-    <section className="flex flex-col gap-2">
-      <div className="flex min-h-7 items-center gap-2">
-        <h3 className="text-sm font-semibold">{title}</h3>
-        {action && <span className="ml-auto">{action}</span>}
-      </div>
-      {children}
-    </section>
-  )
-}
+/** 页面上能直接改的字段：编辑即保存；连接参数在连接编辑里改，不在这里 */
+const PAGE_FIELDS: FieldPath<ServerFormValues>[] = ["name", "production", "summary", "servedHostnames", "tags", "provider", "region", "notes", "rules", "services", "paths"]
 
-/** 3 个平铺 Tab（PRD 6.4）：有待处理笔记时第三个显示「动态 (N)」 */
-export function DetailTabs({ assetId, children }: { assetId: string; children: Record<DetailTab, ReactNode> }) {
-  const tab = useUIStore((s) => s.detailTab)
-  const pending = useNotesStore((s) => selectPendingCount(s.byAsset, assetId))
-  const label: Record<DetailTab, string> = {
-    profile: copy.detail.tabs.profile,
-    connection: copy.detail.tabs.connection,
-    activity: pending ? copy.detail.activityCount(pending) : copy.detail.tabs.activity,
-  }
-  return (
-    <Tabs value={tab} onValueChange={(v) => useUIStore.getState().setDetailTab(v as DetailTab)} className="min-h-0 flex-1 gap-0">
-      <TabsList variant="line" aria-label={copy.detail.tabsLabel} className="w-full shrink-0 justify-start border-b px-4">
-        {(["profile", "connection", "activity"] as const).map((t) => (
-          <TabsTrigger key={t} value={t} className="flex-none tabular-nums">
-            {label[t]}
-          </TabsTrigger>
-        ))}
-      </TabsList>
-      <ScrollArea className="min-h-0 flex-1">
-        {/* 面板本身不进 Tab 序列：它没有焦点样式，键盘用户会以为焦点丢了；内容能滚动时外层的滚动区域已经是一个带焦点环的停靠点 */}
-        {(["profile", "connection", "activity"] as const).map((t) => (
-          <TabsContent key={t} value={t} tabIndex={-1} className="flex flex-col gap-6 p-4 pb-8">
-            {children[t]}
-          </TabsContent>
-        ))}
-      </ScrollArea>
-    </Tabs>
-  )
-}
-
-function ProbeNowButton({ asset }: { asset: ServerAsset }) {
+function ProbeButton({ asset }: { asset: ServerAsset }) {
   const probing = useProbeStore((s) => isProbing(s, asset.id))
   return (
-    <Button variant="outline" size="xs" onClick={() => (probing ? serverActions.cancelProbe(asset) : serverActions.probe(asset))}>
+    <Button variant="ghost" size="sm" onClick={() => (probing ? serverActions.cancelProbe(asset) : serverActions.probe(asset))}>
       {probing ? <Spinner data-icon="inline-start" aria-hidden /> : <RadarIcon data-icon="inline-start" />}
       {probing ? copy.detail.cancelProbe : copy.detail.probe}
     </Button>
   )
 }
 
-function DetailBody({ asset, form, ctx }: { asset: ServerAsset; form: UseFormReturn<ServerFormValues>; ctx: AliasContext }) {
-  const titleRef = useRef<HTMLHeadingElement>(null)
-  // 从列表进入详情：焦点移到标题，读屏和键盘都从这里开始
-  useEffect(() => titleRef.current?.focus({ preventScroll: true }), [])
-  const [advancedOpen, setAdvancedOpen] = useState(false)
-  const conn = useConnectionTest(form, asset.id, asset.id)
-
-  /** 切到出错字段所在的 Tab，必要时展开「高级」 */
-  const reveal = (target: RevealTarget) => {
-    useUIStore.getState().setDetailTab(target.tab)
-    if (target.advanced) setAdvancedOpen(true)
-    focusField(form, target.path)
-  }
-  const flow = useSaveFlow({ asset, form, testKey: asset.id, reveal })
-  const discard = () => {
-    // 必须关掉 keepDirtyValues：它只用于后台同步，RHF 的 reset() 也会带上 useForm 的 resetOptions
-    form.reset(undefined, { keepDirtyValues: false })
-    flow.clearError()
-  }
-  const guard = useLeaveGuard(form.formState.isDirty, discard)
-
-  useEffect(() => {
-    void useOperationStore.getState().load(asset.id)
-  }, [asset.id])
-  useHotkeys(HOTKEYS.save, () => !isModalOpen() && flow.submit(), HOTKEY_OPTIONS)
-
-  const runTest = async () => {
-    if (await conn.run()) return
-    const target = firstError(form.formState.errors)
-    if (target) reveal(target)
-  }
-  // 「改用密钥登录」用凭据库里的密码：草稿里改过密码时先保存
-  const convert = () => {
-    if (form.formState.isDirty) flow.submit({ after: (saved) => void serverActions.convertToKey(saved.id) })
-    else void serverActions.convertToKey(asset.id)
-  }
-  const editConnection: EditConnection = (path) => reveal({ tab: "connection", advanced: path === "connection.definedIn", path })
-
+/** 连接（SSH）：地址、登录方式、跳板机，值用等宽字、悬停可复制；「编辑」打开连接编辑 */
+function ConnectionGroup({ asset, onEdit }: { asset: ServerAsset; onEdit: () => void }) {
+  const c = asset.connection
+  const r = c.resolved
+  const imported = c.source === "imported"
+  const host = imported ? r?.hostname : c.host
+  const user = imported ? r?.user : c.user
+  const port = imported ? r?.port : c.port
+  const address = host ? `${user ? `${user}@` : ""}${host}${port && port !== 22 ? `:${port}` : ""}` : copy.common.none
+  const jump = (imported ? r?.proxyJump : c.proxyJump) ?? null
+  const method = c.auth?.method
+  const keyPath = c.auth ? (c.auth.identityFile.windows ?? Object.values(c.auth.identityFile)[0]) : undefined
   return (
-    <section aria-labelledby="detail-title" className="flex h-full min-h-0 flex-col">
-      <DetailHeader asset={asset} titleRef={titleRef} conn={conn} onTest={() => void runTest()} onConvert={convert} onEdit={editConnection} />
-      {flow.error && (
-        <div className="px-3 pt-3">
-          <SaveErrorAlert error={flow.error} onRetry={() => flow.submit()} />
-        </div>
+    <ListGroup
+      id="detail-connection"
+      title={copy.detail.groups.connection}
+      action={
+        <Button variant="ghost" size="sm" onClick={onEdit}>
+          <PencilIcon data-icon="inline-start" />
+          {copy.detail.edit}
+        </Button>
+      }
+    >
+      <PrefRow label={copy.detail.rows.address} hint={imported ? copy.connection.importedFrom(sortEnvs(c.definedIn).map(copy.env.long).join("、")) : undefined}>
+        <CopyValue value={address} label={copy.detail.rows.address} />
+      </PrefRow>
+      {method && (
+        <PrefRow label={copy.detail.rows.auth}>
+          {method === "key" && keyPath ? (
+            <CopyValue value={keyPath} label={copy.detail.rows.auth} />
+          ) : (
+            <span className="text-xs text-fg-2">{copy.detail.authMethod[method]}</span>
+          )}
+        </PrefRow>
       )}
-      <DetailTabs assetId={asset.id}>
-        {{
-          profile: (
-            <>
-              <div className="flex flex-col gap-4">
-                <SummaryField />
-                <SitesField />
-              </div>
-              <DetailGroup title={copy.detail.groups.guardrails}>
-                <GuardrailsSection />
-              </DetailGroup>
-              <DetailGroup title={copy.detail.groups.services} action={<ProbeNowButton asset={asset} />}>
-                <ServicesSection />
-              </DetailGroup>
-              <DetailGroup title={copy.detail.groups.paths}>
-                <PathsSection />
-              </DetailGroup>
-              <DetailGroup title={copy.detail.groups.other}>
-                <OtherFields />
-              </DetailGroup>
-            </>
-          ),
-          connection: <ConnectionSection asset={asset} ctx={ctx} advancedOpen={advancedOpen} onAdvancedChange={setAdvancedOpen} />,
-          activity: (
-            <>
-              <DetailGroup title={copy.detail.groups.notes}>
-                <NotesSection assetId={asset.id} />
-              </DetailGroup>
-              <DetailGroup title={copy.detail.groups.operations}>
-                <OperationsSection assetId={asset.id} />
-              </DetailGroup>
-            </>
-          ),
-        }}
-      </DetailTabs>
-      {form.formState.isDirty && <SaveBar saving={flow.saving} onDiscard={discard} onSave={() => flow.submit()} />}
-      <SaveFlowDialogs flow={flow} />
-      <LeaveDialog guard={guard} />
-      <DraftPreview control={form.control} asset={asset} dirty={form.formState.isDirty} />
-    </section>
+      <PrefRow label={copy.detail.rows.jump}>
+        {jump ? <CopyValue value={jump} label={copy.detail.rows.jump} /> : <span className="text-xs text-muted-foreground">{copy.common.none}</span>}
+      </PrefRow>
+    </ListGroup>
+  )
+}
+
+/** Agent 需要知道的（SSH）：名称、用途、承载的站点、其他信息、笔记；服务与关键目录（探测结果）在下面 */
+function KnowledgeGroup({ asset }: { asset: ServerAsset }) {
+  return (
+    <ListGroup id="detail-knowledge" title={copy.detail.groups.knowledge} action={<ProbeButton asset={asset} />}>
+      <NameRow placeholder={asset.connection.sshAlias} />
+      <SummaryRow />
+      <div className="px-3.5 py-3">
+        <SitesField />
+      </div>
+      <div className="px-3.5 py-3">
+        <OtherFields />
+      </div>
+      <NotesRow />
+      <PrefRow label={copy.detail.groups.services} block>
+        <ServicesSection />
+      </PrefRow>
+      <PrefRow label={copy.detail.groups.paths} block>
+        <PathsSection />
+      </PrefRow>
+      <PrefRow label={copy.connection.listening} block>
+        <ListeningPorts asset={asset} />
+      </PrefRow>
+    </ListGroup>
   )
 }
 
 /**
- * 服务器的详情视图（PRD 6.4）：带「← 返回」的常驻控制头加 3 个平铺 Tab，底部保存条。草稿只在 RHF 里（7.5）；
- * 分发、档位、笔记的并入和忽略立即生效，不经过保存
+ * 服务器的详情视图（PRD 6.4）：全宽一页，没有 Tab。编辑即保存：文本类字段失焦或停止输入 600ms 后保存，提示条「已保存」；
+ * 连接字段在「编辑」里改，走连接流程。档位、分发、笔记的并入和忽略立即生效
  */
 export function ServerDetail({ asset }: { asset: ServerAsset }) {
   const ctx = useAliasContext(asset.id)
   const form = useServerForm(asset, ctx)
+  const titleRef = useRef<HTMLHeadingElement>(null)
+  const conn = useConnectionTest(form, asset.id, asset.id)
+  const [editing, setEditing] = useState(false)
+  const auto = useAutoSave({
+    form,
+    fields: PAGE_FIELDS,
+    save: async (v) => {
+      await useAssetStore.getState().save(toAssetInput(v, asset))
+    },
+  })
+  const [name, production] = useWatch({ control: form.control, name: ["name", "production"] })
+  useHotkeys(HOTKEYS.save, () => !isModalOpen() && void auto.flush(), HOTKEY_OPTIONS)
+
+  const edit = () => {
+    void auto.flush()
+    setEditing(true)
+  }
+  const runTest = () => void conn.run()
+  const convert = () => void auto.flush().then(() => serverActions.convertToKey(asset.id))
+
   return (
     <FormProvider {...form}>
-      <DetailBody asset={asset} form={form} ctx={ctx} />
+      <DetailPage onBlurCapture={auto.onBlurCapture}>
+        <DetailHeader asset={asset} name={name.trim() || asset.name} production={production} titleRef={titleRef} conn={conn} onTest={runTest} />
+        <TestResult className="empty:hidden" test={conn.test} current={conn.current} method={conn.method} assetId={asset.id} onConvert={convert} />
+        <div className="empty:hidden">
+          <CompileSummary asset={asset} dirty={form.formState.isDirty} />
+        </div>
+        {auto.error && <SaveErrorAlert error={auto.error} onRetry={() => void auto.flush()} />}
+        <PermissionGroup asset={asset} problems={<ServerProblems asset={asset} onTest={runTest} onConvert={convert} onEdit={edit} />} />
+        <ConnectionGroup asset={asset} onEdit={edit} />
+        <KnowledgeGroup asset={asset} />
+        <RulesGroup />
+        <RecentActivityGroup assetId={asset.id} />
+      </DetailPage>
+      <ConnectionDialog asset={asset} open={editing} onOpenChange={setEditing} />
+      <DraftPreview control={form.control} asset={asset} dirty={form.formState.isDirty} />
     </FormProvider>
   )
 }

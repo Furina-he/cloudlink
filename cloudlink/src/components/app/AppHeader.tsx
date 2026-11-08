@@ -116,6 +116,9 @@ function SearchControl() {
 /** 右侧操作：搜索、切换导航位置、+（钢墨方块） */
 function Actions() {
   const side = useUIStore((s) => s.navPosition === "side")
+  // 资源页的空状态自己有「+ 添加服务器」，顶栏不再重复（PRD 6.9）
+  const onServers = useUIStore((s) => s.view === "servers")
+  const noAssets = useAssetStore((s) => s.status === "ready" && s.ids.length === 0)
   const ui = useUIStore.getState
   return (
     <div className="flex items-center gap-1" data-no-drag>
@@ -124,23 +127,25 @@ function Actions() {
       <IconButton label={side ? copy.shell.navToTop : copy.shell.navToSide} hint={KEY_HINT.navPosition} onClick={() => ui().toggleNavPosition()}>
         {side ? <PanelTopIcon /> : <PanelLeftIcon />}
       </IconButton>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              aria-label={copy.shell.add}
-              onClick={() => ui().startCreate()}
-              className="ml-0.5 inline-flex size-7 items-center justify-center rounded-button bg-ink text-primary-foreground outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 [&_svg]:size-4"
-            />
-          }
-        >
-          <PlusIcon />
-        </TooltipTrigger>
-        <TooltipContent>
-          {copy.shell.add} <Keys keys={KEY_HINT.newServer} />
-        </TooltipContent>
-      </Tooltip>
+      {!(onServers && noAssets) && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label={copy.shell.add}
+                onClick={() => ui().startCreate()}
+                className="ml-0.5 inline-flex size-7 items-center justify-center rounded-button bg-ink text-primary-foreground outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 [&_svg]:size-4"
+              />
+            }
+          >
+            <PlusIcon />
+          </TooltipTrigger>
+          <TooltipContent>
+            {copy.shell.add} <Keys keys={KEY_HINT.newServer} />
+          </TooltipContent>
+        </Tooltip>
+      )}
     </div>
   )
 }

@@ -3,7 +3,6 @@ import type { FieldErrors, FieldPath, UseFormReturn } from "react-hook-form"
 
 import type { ConnectionInput, EnvId, ServerAsset, ServerAssetInput } from "@/bindings"
 import type { ServerFormValues } from "@/lib/schemas"
-import type { DetailTab } from "@/stores/ui"
 
 export const EMPTY_EXPORT = { resolvedConnection: false, listeningPorts: false, image: true }
 
@@ -149,23 +148,23 @@ export function uniqueAlias(base: string, taken: string[]): string {
   return alias
 }
 
-// ---------- 保存校验失败：切到出错字段所在的 Tab，聚焦第一个出错字段（6.4） ----------
+// ---------- 保存校验失败：聚焦第一个出错字段，必要时展开「高级」（6.4） ----------
 
 /** 字段在界面上的顺序；连接配置里的别名、跳板机、运行环境在「高级」里 */
-const FIELD_ORDER: { path: string; tab: DetailTab; advanced?: boolean }[] = [
-  { path: "name", tab: "connection" },
-  { path: "connection.host", tab: "connection" },
-  { path: "connection.port", tab: "connection" },
-  { path: "connection.user", tab: "connection" },
-  { path: "connection.identityFile", tab: "connection" },
-  { path: "connection.password", tab: "connection" },
-  { path: "alias", tab: "connection", advanced: true },
-  { path: "connection.proxyJump", tab: "connection", advanced: true },
-  { path: "connection.definedIn", tab: "connection", advanced: true },
-  { path: "servedHostnames", tab: "profile" },
-  { path: "rules", tab: "profile" },
-  { path: "services", tab: "profile" },
-  { path: "paths", tab: "profile" },
+const FIELD_ORDER: { path: string; advanced?: boolean }[] = [
+  { path: "name" },
+  { path: "connection.host" },
+  { path: "connection.port" },
+  { path: "connection.user" },
+  { path: "connection.identityFile" },
+  { path: "connection.password" },
+  { path: "alias", advanced: true },
+  { path: "connection.proxyJump", advanced: true },
+  { path: "connection.definedIn", advanced: true },
+  { path: "servedHostnames" },
+  { path: "rules" },
+  { path: "services" },
+  { path: "paths" },
 ]
 
 const isLeaf = (node: unknown): boolean => !!node && typeof node === "object" && "message" in node && "type" in node
@@ -182,17 +181,17 @@ function firstLeaf(node: unknown, path: string): string | null {
   return null
 }
 
-/** 第一个出错的字段：所在 Tab、是否在「高级」里、聚焦用的路径 */
-export function firstError(errors: FieldErrors<ServerFormValues>): { tab: DetailTab; advanced: boolean; path: string } | null {
+/** 第一个出错的字段：是否在「高级」里、聚焦用的路径 */
+export function firstError(errors: FieldErrors<ServerFormValues>): { advanced: boolean; path: string } | null {
   for (const f of FIELD_ORDER) {
     const node = f.path.split(".").reduce<unknown>((n, k) => (n as Record<string, unknown> | undefined)?.[k], errors)
     const leaf = firstLeaf(node, f.path)
-    if (leaf) return { tab: f.tab, advanced: !!f.advanced, path: leaf }
+    if (leaf) return { advanced: !!f.advanced, path: leaf }
   }
   return null
 }
 
-/** 聚焦出错的字段：所在的 Tab 刚切换时字段还没挂载，等两帧再聚焦 */
+/** 聚焦出错的字段：字段刚展开时还没挂载，等两帧再聚焦 */
 export function focusField(form: UseFormReturn<ServerFormValues>, path: string) {
   requestAnimationFrame(() => requestAnimationFrame(() => form.setFocus(path as FieldPath<ServerFormValues>)))
 }

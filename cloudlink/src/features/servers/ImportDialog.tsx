@@ -220,13 +220,18 @@ export function ImportDialog() {
         </DialogHeader>
         {body}
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-muted-foreground">
-            {list && list.skippedPatterns.length > 0 &&
-              copy.importDialog.skipped(
-                list.skippedPatterns.length,
-                list.skippedPatterns.map((p) => `Host ${p}`).join("、")
-              )}
-          </p>
+          <div className="flex min-w-0 flex-col gap-0.5 text-sm text-muted-foreground">
+            {list && list.skippedPatterns.length > 0 && (
+              <p>
+                {copy.importDialog.skipped(
+                  list.skippedPatterns.length,
+                  list.skippedPatterns.map((p) => `Host ${p}`).join("、")
+                )}
+              </p>
+            )}
+            {/* F-102（2026-11-08）：代码托管主机不是服务器，从列表中排除并在底部注明 */}
+            {list && list.skippedCodeHosts.length > 0 && <p>{copy.importDialog.skippedCodeHosts(list.skippedCodeHosts.join("、"))}</p>}
+          </div>
           <Field orientation="horizontal" className="w-auto">
             <Switch id="import-probe-after" checked={probeAfter} onCheckedChange={setProbeAfter} />
             <FieldLabel htmlFor="import-probe-after" className="font-normal">

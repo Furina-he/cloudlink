@@ -261,6 +261,31 @@ export const assets: Asset[] = [
     createdAt: ago(2 * DAY),
     updatedAt: ago(2 * DAY),
   },
+  // F-110：gh 已登录，开放两个仓库；非生产，正常时行里只有一个绿点
+  {
+    id: "ast_github",
+    type: "cli",
+    cliProvider: "github",
+    handle: "github",
+    account: "octo-dev",
+    name: "GitHub",
+    production: false,
+    summary: "Source for the shop front end and the API",
+    cli: {
+      binary: "gh",
+      envStates: { windows: ready("2.102.0", "C:\\Program Files\\GitHub CLI\\gh.exe", "octo-dev"), [WSL]: ready("2.45.0", "/usr/bin/gh", "octo-dev") },
+      scope: [
+        { id: "repo:R_shop", kind: "repo", name: "octo-dev/shop-web", selected: true, defaultBranch: "main", visibility: "private" },
+        { id: "repo:R_api", kind: "repo", name: "octo-dev/api", selected: true, defaultBranch: "main", visibility: "private" },
+        { id: "repo:R_notes", kind: "repo", name: "octo-dev/notes", selected: false, defaultBranch: "master", visibility: "public" },
+      ],
+    },
+    agent: { agents: ["claude-code"], mode: "read-only" },
+    guardrails: { rules: [] },
+    notes: "",
+    createdAt: ago(1 * DAY),
+    updatedAt: ago(1 * DAY),
+  },
 ]
 
 /**
@@ -271,6 +296,7 @@ export const cliMachine: Record<CliProvider, Partial<Record<EnvId, CliEnvState>>
   cloudflare: { windows: ready("3.99.0", `${WIN_NPM}wrangler.cmd`, "me@example.com"), [WSL]: ready("3.99.0", "/home/me/.local/share/pnpm/wrangler", "me@example.com") },
   vercel: { windows: ready("39.1.0", `${WIN_NPM}vercel.cmd`, "my-team"), [WSL]: notLoggedIn("39.1.0", "/home/me/.local/share/pnpm/vercel") },
   oracle: { windows: { installed: false, authenticated: false, expired: false, checkedAt: ago(10 * MIN) }, [WSL]: ready("3.50.0", "/home/me/bin/oci", "tenancy-demo") },
+  github: { windows: ready("2.102.0", "C:\\Program Files\\GitHub CLI\\gh.exe", "octo-dev"), [WSL]: ready("2.45.0", "/usr/bin/gh", "octo-dev") },
 }
 
 /** 账号下的可选资源，refresh_cli_scope 读这张表。新出现的默认不勾选（F-104 AC3） */
@@ -290,6 +316,11 @@ export const cliCatalog: Record<CliProvider, CliScopeItem[]> = {
   oracle: [
     { id: "ocid_web1", kind: "instance", name: "oci-web-1", selected: false, address: "203.0.113.50" },
     { id: "ocid_arm1", kind: "instance", name: "oci-arm-1", selected: false, address: "203.0.113.51" },
+  ],
+  github: [
+    { id: "repo:R_shop", kind: "repo", name: "octo-dev/shop-web", selected: false, defaultBranch: "main", visibility: "private" },
+    { id: "repo:R_api", kind: "repo", name: "octo-dev/api", selected: false, defaultBranch: "main", visibility: "private" },
+    { id: "repo:R_notes", kind: "repo", name: "octo-dev/notes", selected: false, defaultBranch: "master", visibility: "public" },
   ],
 }
 
@@ -346,4 +377,6 @@ export const sshHosts: SshHostList = {
     { alias: "us-backup", definedIn: [WSL], hostname: "198.51.100.30", user: "backup", port: 22, imported: false },
   ],
   skippedPatterns: ["*", "*.internal"],
+  // F-102（2026-11-08）：Host github.com 是代码托管，不是服务器
+  skippedCodeHosts: ["github.com"],
 }

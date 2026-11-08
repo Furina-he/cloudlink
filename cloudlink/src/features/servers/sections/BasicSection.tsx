@@ -1,12 +1,11 @@
 import { useMemo } from "react"
-import { Controller, useFormContext, useWatch } from "react-hook-form"
+import { Controller, useFormContext } from "react-hook-form"
 import { useShallow } from "zustand/react/shallow"
 
 import { CreatableCombobox, CreatableMultiCombobox } from "@/components/app/CreatableCombobox"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
-import { InputGroup, InputGroupAddon, InputGroupText, InputGroupTextarea } from "@/components/ui/input-group"
 import { copy } from "@/lib/copy"
 import { hostnameError, type ProfileFormValues, type ServerFormValues } from "@/lib/schemas"
 import { collectValues, isServer, useAssetStore } from "@/stores/assets"
@@ -58,26 +57,6 @@ export function ProductionField() {
         </Field>
       )}
     />
-  )
-}
-
-/** 用途（两类资源共用）：写进总览表和 description */
-export function SummaryField() {
-  const { register, control } = useFormContext<ProfileFormValues>()
-  const summary = useWatch({ control, name: "summary" })
-  return (
-    <Field>
-      <FieldLabel htmlFor="server-summary">{copy.basic.summary}</FieldLabel>
-      <InputGroup>
-        <InputGroupTextarea id="server-summary" rows={2} aria-describedby="server-summary-hint server-summary-count" {...register("summary")} />
-        <InputGroupAddon align="block-end">
-          <InputGroupText id="server-summary-count" className="ml-auto text-xs tabular-nums">
-            {copy.basic.chars(summary.length)}
-          </InputGroupText>
-        </InputGroupAddon>
-      </InputGroup>
-      <FieldDescription id="server-summary-hint">{copy.basic.summaryHint}</FieldDescription>
-    </Field>
   )
 }
 

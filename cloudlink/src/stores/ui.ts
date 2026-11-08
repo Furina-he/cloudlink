@@ -18,7 +18,6 @@ function readNav(): NavPosition {
 }
 
 /** 详情视图的 3 个 Tab（PRD 6.4）：画像与规则、连接配置、动态 */
-export type DetailTab = "profile" | "connection" | "activity"
 
 /** 添加资源的弹窗（PRD 6.5）：选类型、SSH 表单或某个云平台的向导 */
 export type CreateKind = "pick" | "ssh" | CliProvider
@@ -81,7 +80,6 @@ interface UIState {
   /** 添加资源的弹窗（PRD 6.5）；null 表示没有打开 */
   creating: CreateKind | null
   createPrefill: CreatePrefill | null
-  detailTab: DetailTab
   /** 从详情返回列表后，焦点回到这一行 */
   returnFocusId: string | null
   query: string
@@ -107,7 +105,6 @@ interface UIState {
   startCreate: (kind?: CreateKind, opts?: NavOptions & { prefill?: CreatePrefill }) => void
   /** 回到资源列表（详情的「← 返回」、Esc、关闭添加弹窗） */
   closeInspector: (opts?: NavOptions) => void
-  setDetailTab: (tab: DetailTab) => void
   clearReturnFocus: () => void
   setQuery: (query: string) => void
   openPreview: (focus?: Omit<PreviewFocus, "seq">) => void
@@ -131,7 +128,6 @@ export const useUIStore = create<UIState>()((set, get) => ({
       selectedAssetId: null,
       creating: null,
       createPrefill: null,
-      detailTab: "profile",
       returnFocusId: null,
       query: "",
       previewOpen: false,
@@ -160,14 +156,13 @@ export const useUIStore = create<UIState>()((set, get) => ({
         const s = get()
         if (s.selectedAssetId === selectedAssetId && !s.creating) return
         // 切到另一项资源时回到默认 Tab；云平台和服务器的 Tab 内容不同，停在「动态」没有意义
-        guarded(opts, () => set({ selectedAssetId, creating: null, createPrefill: null, detailTab: "profile" }))
+        guarded(opts, () => set({ selectedAssetId, creating: null, createPrefill: null }))
       },
       closeInspector: (opts) => {
         const s = get()
         if (!s.selectedAssetId && !s.creating) return
         guarded(opts, () => set({ selectedAssetId: null, creating: null, createPrefill: null, returnFocusId: s.selectedAssetId }))
       },
-      setDetailTab: (detailTab) => set({ detailTab }),
       clearReturnFocus: () => set({ returnFocusId: null }),
       startCreate: (kind = "pick", opts) =>
         guarded(opts, () =>

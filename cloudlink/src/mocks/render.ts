@@ -81,8 +81,10 @@ export function description(assets: Asset[]): { text: string; rawChars: number }
     const tail = [a.production ? "production" : "", a.agent.mode === "read-only" ? "read-only" : ""].filter(Boolean).join(", ")
     return `${handleOf(a)} (${[text, tail].filter(Boolean).join("; ")})`
   }
+  // 接了 GitHub 时，仓库相关的任务也要能触发这份 Skill（F-110）
+  const targets = assets.some((a) => a.type === "cli" && a.cliProvider === "github") ? "servers, sites, cloud projects or repositories" : "servers, sites or cloud projects"
   const wrap = (list: string) =>
-    `The user's servers and cloud platforms and how to operate them — ${list}. Use for any task on these servers, sites or cloud projects: deployments, logs, Docker containers, DNS, configuration, troubleshooting, or a health check of the servers.`
+    `The user's servers and cloud platforms and how to operate them — ${list}. Use for any task on these ${targets}: deployments, logs, Docker containers, DNS, configuration, troubleshooting, or a health check of the servers.`
   const full = wrap(assets.map((a) => item(a, true, false)).join(", "))
   if (full.length <= 1024) return { text: full, rawChars: full.length }
   for (const [withRole, short] of [[false, false], [false, true]] as const) {
@@ -96,13 +98,14 @@ export function description(assets: Asset[]): { text: string; rawChars: number }
   return { text: wrap(`${assets.length} servers`), rawChars: full.length }
 }
 
-const SCOPE_WORD = { zone: "DNS zone", worker: "Worker", pages: "Pages project", project: "Project", instance: "Compute instance" } as const
+const SCOPE_WORD = { zone: "DNS zone", worker: "Worker", pages: "Pages project", project: "Project", instance: "Compute instance", repo: "Repository" } as const
 
 /** 同一家接了多个账号时，每条命令都要指明账号（不靠 CLI 当前登录的默认账号） */
 const ACCOUNT_FLAG: Record<CliAsset["cliProvider"], (account: string) => string> = {
   cloudflare: (x) => `Target this account on every command: set \`CLOUDFLARE_ACCOUNT_ID\` to the id of \`${x}\` from \`wrangler whoami\`.`,
   vercel: (x) => `Target this team on every command: append \`--scope ${x}\`.`,
   oracle: (x) => `Target this profile on every command: append \`--profile ${x}\`.`,
+  github: (x) => `Commands run as the active \`gh\` account. If \`gh auth status\` shows an active account other than \`${x}\`, stop and tell the user; never switch accounts.`,
 }
 
 /** 云平台的详情文件（references/cloudflare.md）：只写勾选的范围和关联的服务器，不写凭据 */
@@ -120,11 +123,22 @@ function renderCliDetails(a: CliAsset, aliasById: (id: string) => string | undef
     ...(a.summary.trim() ? [`- Role: ${a.summary.trim()}`] : []),
     ...(a.guardrails.rules.length ? ["", "## Guardrails (must follow)", ...a.guardrails.rules.map((r, i) => `${i + 1}. ${r.text}`)] : []),
     "",
-    "## Scope",
-    "Only operate on these resources; ask the user before touching anything else in the account.",
-    "| Kind | Name | Linked server |",
-    "| --- | --- | --- |",
-    ...scope.map((x) => `| ${SCOPE_WORD[x.kind]} | ${code(x.name)} | ${(x.linkedAssetId && aliasById(x.linkedAssetId)) || "-"} |`),
+    ...(a.cliProvider === "github"
+      ? [
+          "## Repositories",
+          "Only operate on these repositories; ask the user before touching any other repository on the account.",
+          "",
+          "| Repository | Default branch | Visibility |",
+          "| --- | --- | --- |",
+          ...scope.map((x) => `| ${code(x.name)} | ${x.defaultBranch ? code(x.defaultBranch) : "-"} | ${x.visibility ?? "-"} |`),
+        ]
+      : [
+          "## Scope",
+          "Only operate on these resources; ask the user before touching anything else in the account.",
+          "| Kind | Name | Linked server |",
+          "| --- | --- | --- |",
+          ...scope.map((x) => `| ${SCOPE_WORD[x.kind]} | ${code(x.name)} | ${(x.linkedAssetId && aliasById(x.linkedAssetId)) || "-"} |`),
+        ]),
     ...(a.notes.trim() ? ["", "## Notes", a.notes.trim()] : []),
     "",
   ].join("\n")

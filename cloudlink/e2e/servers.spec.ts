@@ -29,24 +29,18 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     await expect(row(page, "hk-edge")).toBeVisible({ timeout: 10_000 })
   })
 
-  test("列表为空：服务器、云平台两组入口，导入那一行报出 ssh config 里可导入的主机数", async ({ page }) => {
+  test("列表为空：居中引导、可复制的示例话术、添加和导入；顶栏不显示 +", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await page.goto("/?mock=empty")
-    await expect(page.getByRole("heading", { name: "接入第一个资源" })).toBeVisible()
-    const servers = page.getByRole("list", { name: "服务器" })
-    await expect(servers.getByRole("button", { name: /^添加 SSH 服务器/ })).toBeVisible()
-    await expect(servers.getByRole("button", { name: /^从 ssh config 导入/ })).toContainText("有 3 台主机可以导入")
-    const clis = page.getByRole("list", { name: "云平台" })
-    for (const name of ["连接 Cloudflare", "连接 Vercel", "连接 Oracle Cloud"]) {
-      await expect(clis.getByRole("button", { name: new RegExp(`^${name}`) })).toBeVisible()
-    }
-    // 方向键在两组入口之间移动，Enter 打开对应的添加弹窗
-    await servers.getByRole("button", { name: /^从 ssh config 导入/ }).focus()
-    await page.keyboard.press("ArrowDown")
-    await expect(clis.getByRole("button", { name: /^连接 Cloudflare/ })).toBeFocused()
+    await expect(page.getByRole("heading", { name: "添加第一台服务器" })).toBeVisible()
+    await expect(page.getByText("看看 hk-edge 的磁盘还剩多少")).toBeVisible()
+    await expect(page.getByRole("button", { name: "复制示例" })).toBeVisible()
+    await expect(page.getByRole("button", { name: "从 ~/.ssh/config 导入 · 3 台" })).toBeVisible()
+    await expect(page.getByText(/检测到.*添加后会自动同步给它们/)).toBeVisible()
+    await expect(page.getByRole("button", { name: "添加资源" })).toHaveCount(0)
     await shot(page, "state-02-empty")
-    await page.keyboard.press("Enter")
-    await expect(page.getByRole("dialog")).toBeVisible()
+    await page.getByRole("button", { name: "添加服务器" }).click()
+    await expect(sshForm(page)).toBeVisible()
     expect(errors).toEqual([])
   })
 
@@ -96,13 +90,17 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     expect(errors).toEqual([])
   })
 
-  test("点击回路行进入全宽详情，焦点在标题；Esc、「← 返回」都回到列表，焦点回到那一行", async ({ page }) => {
+  test("点击资源行进入全宽详情，焦点在标题；Esc、「‹ 资源」都回到列表，焦点回到那一行", async ({ page }) => {
     await ready(page)
     await openServer(page, "hk-edge")
     await expect(detailTitle(page)).toBeFocused()
+    await expect(detailTitle(page)).toHaveText("香港边缘节点")
     const panel = inspector(page)
-    await expect(panel.getByRole("tab", { name: "画像与规则" })).toHaveAttribute("aria-selected", "true")
-    await expect(panel.getByRole("tab", { name: "动态 (3)" })).toBeVisible()
+    // 没有 Tab：一路向下是分组的设置式列表
+    await expect(panel.getByRole("tab")).toHaveCount(0)
+    for (const g of ["Agent 权限", "连接", "Agent 需要知道的", "红线", "最近动态"]) {
+      await expect(panel.getByRole("heading", { level: 3, name: new RegExp(`^${g}`) })).toBeVisible()
+    }
     await page.keyboard.press("Escape")
     await expect(detailTitle(page)).toHaveCount(0)
     await expect(row(page, "hk-edge")).toBeFocused()
@@ -111,15 +109,15 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     await expect(row(page, "sg-db")).toBeFocused()
   })
 
-  test("检视面板：未列入时才浮现提示和处理入口；编译警告；动态 Tab 有笔记和操作记录", async ({ page }) => {
+  test("详情：未列入时才浮现问题行和修复入口；编译警告；最近动态有笔记和操作记录", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
     await openServer(page, "hk-edge")
     const panel = inspector(page)
     await expect(panel.getByText(/未列入：WSL Ubuntu-24.04 中没有配置私钥/)).toBeVisible()
     await expect(panel.getByRole("button", { name: "配置私钥" })).toBeVisible()
+    await expect(panel.getByText("红线写给 Agent 看。Claude Code 上护栏会强制拦截，能防手滑，防不了刻意绕过。")).toBeVisible()
     await shot(page, "state-06-detail-hk-edge")
-    await panel.getByRole("tab", { name: "动态 (3)" }).click()
     await expect(panel.getByText("待处理的 Agent 笔记")).toBeVisible()
     await expect(panel.getByRole("list", { name: "最近的操作记录" })).toBeVisible()
     await shot(page, "state-07-detail-activity")
@@ -149,20 +147,26 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     await shot(page, "state-11-preview-lint")
   })
 
-  test("未保存修改：底部保存条；切换资源时确认放弃", async ({ page }) => {
+  test("编辑即保存：停止输入 600ms 后保存，提示条「已保存」；连接字段在「编辑」里改", async ({ page }) => {
+    const errors = collectConsoleErrors(page)
     await ready(page)
     await openServer(page, "dev-box")
-    await inspector(page).getByRole("tab", { name: "连接配置" }).click()
-    await page.getByRole("textbox", { name: /^名称/ }).fill("开发机（改）")
-    await expect(page.getByText("未保存的修改")).toBeVisible()
-    await shot(page, "state-12-draft")
-    await page.getByRole("button", { name: "返回", exact: true }).click()
-    const leave = page.getByRole("alertdialog", { name: "放弃未保存的修改？" })
-    await expect(leave).toBeVisible()
-    await leave.getByRole("button", { name: "继续编辑" }).click()
-    await expect(detailTitle(page)).toHaveText("dev-box")
-    await page.getByRole("button", { name: "放弃", exact: true }).click()
-    await expect(page.getByText("未保存的修改")).toBeHidden()
+    const panel = inspector(page)
+    await panel.getByRole("textbox", { name: "名称" }).fill("开发机（改）")
+    await expect(toastText(page, "已保存")).toBeVisible()
+    await expect(detailTitle(page)).toHaveText("开发机（改）")
+    await expect(page.getByText("未保存的修改")).toHaveCount(0)
+    await shot(page, "state-12-autosave")
+    // 连接：编辑打开对话框，取消不保存
+    await panel.getByRole("button", { name: "编辑" }).first().click()
+    const dialog = page.getByRole("dialog", { name: "编辑连接" })
+    await expect(dialog.getByLabel("地址")).toBeVisible()
+    await shot(page, "state-13-edit-connection")
+    await dialog.getByRole("button", { name: "取消" }).click()
+    await expect(dialog).toHaveCount(0)
+    await back(page)
+    await expect(row(page, "dev-box")).toHaveAccessibleName(/开发机（改）/)
+    expect(errors).toEqual([])
   })
 })
 
@@ -273,8 +277,9 @@ test.describe("添加 SSH 服务器：连接并启用（PRD 6.5、F-106、F-108�
     await expect(toastText(page, "已启用 tokyo-relay，正在后台探测服务")).toBeVisible({ timeout: 10_000 })
     await expect(row(page, "tokyo-relay")).toHaveAccessibleName(/已连接/)
     await openServer(page, "tokyo-relay")
-    await inspector(page).getByRole("tab", { name: "连接配置" }).click()
-    await expect(inspector(page).getByRole("radio", { name: "私钥文件" }).or(inspector(page).getByRole("button", { name: "私钥文件", exact: true }))).toHaveAttribute("aria-pressed", "true")
+    await inspector(page).getByRole("button", { name: "编辑" }).first().click()
+    const edit = page.getByRole("dialog", { name: "编辑连接" })
+    await expect(edit.getByRole("radio", { name: "私钥文件" }).or(edit.getByRole("button", { name: "私钥文件", exact: true }))).toHaveAttribute("aria-pressed", "true")
     await shot(page, "ssh-07-enabled")
     expect(errors).toEqual([])
   })
@@ -286,9 +291,11 @@ test.describe("云平台 CLI（PRD 6.5 分支 B、F-104）", () => {
     await ready(page)
     await page.keyboard.press("Control+n")
     const picker = page.getByRole("region", { name: "添加资源" })
-    // 已经接入的云平台可以继续接入别的账号，卡片上标出已接入几个
-    await expect(picker.getByRole("button", { name: /Cloudflare/ })).toBeEnabled()
-    await expect(picker.getByRole("button", { name: /Cloudflare/ })).toContainText("已接入 1 个账号")
+    // 分组：服务器、云平台、代码托管；选项块上一行状态
+    for (const g of ["服务器", "云平台", "代码托管"]) await expect(picker.getByRole("heading", { level: 3, name: g })).toBeVisible()
+    await expect(picker.getByRole("button", { name: /Cloudflare/ })).toContainText("已登录 · wrangler")
+    await expect(picker.getByRole("button", { name: /GitHub/ })).toContainText("仓库，以及它们部署到哪里")
+    await expect(picker.getByRole("button", { name: /从 ~\/\.ssh\/config 导入/ })).toContainText("发现 2 台")
     await shot(page, "cli-01-picker")
     await picker.getByRole("button", { name: /Oracle Cloud/ }).click()
     const wizard = page.getByRole("region", { name: "添加 Oracle Cloud" })
@@ -347,10 +354,14 @@ test.describe("云平台 CLI（PRD 6.5 分支 B、F-104）", () => {
     await refocusWindow(page)
     await expect(panel.getByText(/还没有登录/)).toHaveCount(0)
 
-    const playground = panel.getByRole("checkbox", { name: "playground" })
-    await playground.check()
+    await panel.getByRole("button", { name: /^2 个项目/ }).click()
+    const scope = page.getByRole("dialog", { name: "选择开放范围" })
+    const playground = scope.getByRole("checkbox", { name: "playground" })
+    // 勾选立即生效：等后端回写后才显示勾上
+    await playground.click()
     await expect(playground).toBeChecked()
-    await panel.getByRole("tab", { name: "连接配置" }).click()
+    await shot(page, "cli-05-scope-dialog")
+    await scope.getByRole("button", { name: "完成" }).click()
     await expect(panel.getByRole("button", { name: "打开终端切换账号" }).first()).toBeVisible()
     await shot(page, "cli-05-vercel-ready")
     await back(page)
@@ -361,7 +372,8 @@ test.describe("云平台 CLI（PRD 6.5 分支 B、F-104）", () => {
   test("Cloudflare：域名自动关联 hk-edge", async ({ page }) => {
     await ready(page)
     await openServer(page, "cloudflare", "Cloudflare")
-    await expect(inspector(page).getByText("已关联服务器 hk-edge")).toBeVisible()
+    await inspector(page).getByRole("button", { name: /个域名/ }).click()
+    await expect(page.getByRole("dialog", { name: "选择开放范围" }).getByText("已关联服务器 hk-edge")).toBeVisible()
     await shot(page, "cli-06-cloudflare")
   })
 })
@@ -434,7 +446,7 @@ test.describe("纯键盘流程", () => {
     await page.keyboard.press("Home")
     await expect(row(page, "hk-edge")).toBeFocused()
     await page.keyboard.press("Enter")
-    await expect(detailTitle(page)).toHaveText("hk-edge")
+    await expect(detailTitle(page)).toHaveText("香港边缘节点")
     await page.keyboard.press("Escape")
 
     const list = page.locator("#server-list")

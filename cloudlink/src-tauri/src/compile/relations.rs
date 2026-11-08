@@ -276,6 +276,8 @@ mod tests {
             selected: true,
             linked_asset_id: linked.map(String::from),
             address: None,
+            default_branch: None,
+            visibility: None,
         }
     }
 
@@ -313,6 +315,8 @@ mod tests {
             selected: true,
             linked_asset_id: None,
             address: Some("198.51.100.7".into()),
+            default_branch: None,
+            visibility: None,
         }];
 
         let assets = vec![

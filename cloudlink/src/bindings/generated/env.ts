@@ -20,4 +20,8 @@ export type SshConfigStatus = { envId: EnvId, managedPath: string, userConfigPat
 
 export type SshHost = { alias: string, definedIn: Array<EnvId>, hostname: string | null, user: string | null, port: number | null, imported: boolean, };
 
-export type SshHostList = { hosts: Array<SshHost>, scanned: Array<ScannedConfig>, skippedPatterns: Array<string>, };
+export type SshHostList = { hosts: Array<SshHost>, scanned: Array<ScannedConfig>, skippedPatterns: Array<string>, 
+/**
+ * F-102（2026-11-08）：被排除的代码托管主机别名，导入对话框底部注明
+ */
+skippedCodeHosts: Array<string>, };

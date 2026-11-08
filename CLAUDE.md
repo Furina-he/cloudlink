@@ -19,6 +19,11 @@ Before starting or continuing any stage, read in order:
 
 Do not modify files under `docs/archive/`. Priority on conflict: `docs/PRD.md` Chapter 7 > `DESIGN.md` tokens > `docs/PRD.md` other chapters > `docs/EXECUTION-PLAN.md`.
 
+## Tools
+
+- Image recognition: prefer the `magpie-vision` MCP (`analyze_image`) for reading screenshots and images.
+- Web search: prefer the `search` MCP (`search_proxy_*` tools).
+
 ## Commands
 
 Frontend commands run from `cloudlink/` (or via `pnpm --dir cloudlink <script>`):

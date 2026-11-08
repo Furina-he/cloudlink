@@ -11,13 +11,12 @@ import type { AliasContext } from "@/lib/schemas"
 import { AdvancedFields } from "../AdvancedFields"
 import { ConnectionFields } from "../ConnectionFields"
 import { ExportSwitch } from "../ExportSwitch"
-import { NameField, ProductionField } from "./BasicSection"
 import { sortEnvs } from "../serverForm"
 
 const envList = (ids: string[]) => sortEnvs(ids).map(copy.env.long).join("、")
 
 /** 「导出到 Skill」的两个开关（F-105），默认都关 */
-function ExportSwitches() {
+export function ExportSwitches() {
   return (
     <div className="flex flex-col gap-3">
       <span className="text-sm font-medium">{copy.connection.exportTitle}</span>
@@ -28,7 +27,7 @@ function ExportSwitches() {
 }
 
 /** 探测得到的监听端口，只读 */
-function ListeningPorts({ asset }: { asset: ServerAsset }) {
+export function ListeningPorts({ asset }: { asset: ServerAsset }) {
   return (
     <div className="flex flex-col gap-1.5">
       <span className="text-sm font-medium">{copy.connection.listening}</span>
@@ -50,7 +49,7 @@ function ListeningPorts({ asset }: { asset: ServerAsset }) {
 }
 
 /** imported：ssh -G 的解析结果，只读，每行前有 LockIcon（PRD 6.4） */
-function ImportedConnection({ asset }: { asset: ServerAsset }) {
+export function ImportedConnection({ asset }: { asset: ServerAsset }) {
   const now = useMinuteTick()
   const r = asset.connection.resolved
   const rows: [string, string][] = r
@@ -87,7 +86,7 @@ function ImportedConnection({ asset }: { asset: ServerAsset }) {
 }
 
 /** F-107 AC4：写入后用 ssh -G 回读，生效值与录入值不一致（被用户 config 里更靠前的规则覆盖）时指出字段 */
-function ResolvedMismatch({ asset }: { asset: ServerAsset }) {
+export function ResolvedMismatch({ asset }: { asset: ServerAsset }) {
   const c = asset.connection
   const r = c.resolved
   if (!r) return null
@@ -108,10 +107,10 @@ function ResolvedMismatch({ asset }: { asset: ServerAsset }) {
 }
 
 /**
- * 「连接配置」Tab（PRD 6.4）：备注名称、环境标签，然后是连接。managed 用新建表单的同一组字段（6.5），
- * 别名、跳板机、写入的运行环境和「导出到 Skill」的开关（F-105）折叠在「高级」里；imported 只读展示 ssh -G 的解析结果
+ * 连接编辑（PRD 6.4）：managed 用新建表单的同一组字段（6.5），别名、跳板机、写入的运行环境和「导出到 Skill」的开关（F-105）
+ * 折叠在「高级」里；imported 只读展示 ssh -G 的解析结果，只能改导出开关
  */
-export function ConnectionSection({
+export function ConnectionEditor({
   asset,
   ctx,
   advancedOpen,
@@ -122,25 +121,16 @@ export function ConnectionSection({
   advancedOpen: boolean
   onAdvancedChange: (open: boolean) => void
 }) {
-  const identity = (
-    <FieldGroup className="gap-4">
-      <NameField />
-      <ProductionField />
-    </FieldGroup>
-  )
   if (asset.connection.source === "imported") {
     return (
       <div className="flex flex-col gap-4">
-        {identity}
         <ImportedConnection asset={asset} />
         <ExportSwitches />
-        <ListeningPorts asset={asset} />
       </div>
     )
   }
   return (
     <div className="flex flex-col gap-4">
-      {identity}
       <ResolvedMismatch asset={asset} />
       <FieldGroup className="@container/field-group gap-4">
         <ConnectionFields assetId={asset.id} />
@@ -148,7 +138,6 @@ export function ConnectionSection({
           <ExportSwitches />
         </AdvancedFields>
       </FieldGroup>
-      <ListeningPorts asset={asset} />
     </div>
   )
 }

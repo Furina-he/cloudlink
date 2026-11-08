@@ -19,7 +19,7 @@ import { loginCommand } from "@/lib/cliProviders"
 import { serverActions, toastError } from "./actions"
 import { CliEnvList, CliScopeList, RecheckButton } from "./CliParts"
 import { CreateHeader, GrantFields } from "./CreateParts"
-import { DetailGroup } from "./ServerDetail"
+import { DetailGroup } from "./DetailParts"
 
 /**
  * 添加云平台 CLI（PRD 6.5 分支 B）：只检测已启用 Agent 所在的运行环境，展示版本和 whoami 账号；

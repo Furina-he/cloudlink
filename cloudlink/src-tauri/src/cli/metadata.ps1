@@ -11,10 +11,15 @@ $env:VERCEL_TELEMETRY_DISABLED = '1'
 $env:DO_NOT_TRACK = '1'
 $env:NO_COLOR = '1'
 $env:CI = '1'
+$env:GH_PROMPT_DISABLED = '1'
+$env:GH_NO_UPDATE_NOTIFIER = '1'
+$env:GH_NO_EXTENSION_UPDATE_NOTIFIER = '1'
+$env:GH_SPINNER_DISABLED = '1'
 $clStarted = [DateTime]::UtcNow
 $clMaxItems = 500
 $clMaxPages = 10
 $clMaxBytes = 1048576
+$clGhOwner = '^[A-Za-z0-9][A-Za-z0-9-]{0,38}$'
 function Throw-Cl([string]$id) { throw $id }
 function Get-ClTimeout {
   $left = 25 - ([DateTime]::UtcNow - $clStarted).TotalSeconds
@@ -26,7 +31,7 @@ function Clean-Cl($text) {
   $text = $text -replace '[\x00-\x1f\x7f]',''
   return $text.Substring(0,[Math]::Min(128,$text.Length))
 }
-function Invoke-ClJson([string[]]$arguments, [bool]$allowUnavailable = $false) {
+function Invoke-ClCapture([string[]]$arguments) {
   Get-ClTimeout > $null
   $old = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
@@ -34,7 +39,9 @@ function Invoke-ClJson([string[]]$arguments, [bool]$allowUnavailable = $false) {
   $stderr = [Text.StringBuilder]::new()
   $size = 0
   try {
-    $LASTEXITCODE = 0
+    # Native commands set the global variable. Assigning the bare name here would create
+    # a function-local copy that hides every non-zero exit code.
+    $global:LASTEXITCODE = 0
     & $clBinary @arguments 2>&1 | ForEach-Object {
       # Windows PowerShell emits native stderr as ErrorRecord objects. Mixing those
       # into stdout breaks valid JSON whenever a successful CLI prints a diagnostic.
@@ -45,14 +52,23 @@ function Invoke-ClJson([string[]]$arguments, [bool]$allowUnavailable = $false) {
       else { [void]$stdout.AppendLine($line) }
       Get-ClTimeout > $null
     }
-    $code = $LASTEXITCODE
+    $code = $global:LASTEXITCODE
   }
   finally { $ErrorActionPreference = $old }
   $raw = $stdout.ToString()
-  $data = $null
-  try { $data = ConvertFrom-Json -InputObject $raw -ErrorAction Stop } catch {}
+  return @{code=$code; raw=$raw; diagnostic=($stderr.ToString() + $raw)}
+}
+function ConvertFrom-ClJson([string]$raw) {
+  if (-not $raw.Trim()) { return $null }
+  try { return ,(ConvertFrom-Json -InputObject $raw -ErrorAction Stop) } catch { return $null }
+}
+function Invoke-ClJson([string[]]$arguments, [bool]$allowUnavailable = $false) {
+  $run = Invoke-ClCapture $arguments
+  $code = $run.code
+  $raw = $run.raw
+  $data = ConvertFrom-ClJson $raw
   if ($code -ne 0) {
-    $diagnostic = $stderr.ToString() + $raw
+    $diagnostic = $run.diagnostic
     if ($clOperation -eq 'identity') {
       if ($data.loggedIn -eq $false -or $data.authenticated -eq $false) { return ,$data }
       if ($diagnostic -match 'not authenticated|not logged|log in|login|expired|401|invalid.*token|NotAuthenticated|config file|key file') {
@@ -176,7 +192,7 @@ function Get-ClCfList([string]$path, $query) {
 }
 try {
   if ($clOperation -eq 'discover') {
-    $name = switch ($clProvider) { 'cloudflare' { 'wrangler' } 'vercel' { 'vercel' } 'oracle' { 'oci' } default { Throw-Cl 'cli-command-unsupported' } }
+    $name = switch ($clProvider) { 'cloudflare' { 'wrangler' } 'vercel' { 'vercel' } 'oracle' { 'oci' } 'github' { 'gh' } default { Throw-Cl 'cli-command-unsupported' } }
     $found = Get-Command -Name $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     $clResult = if ($found) { @{ installed=$true; path=$found.Source } } else { @{ installed=$false } }
   } elseif ($clOperation -eq 'version') {
@@ -196,6 +212,26 @@ try {
         $checked=Invoke-ClJson (Get-ClOciArgs @('iam','region','list','--query','data[].name'))
         $clResult=if ($checked.authenticated -eq $false) { $checked } else { @{authenticated=$true; expired=$false} }
       } catch { $clResult=@{authenticated=$false; expired=$false} }
+    } elseif ($clProvider -eq 'github') {
+      # `--json` exits 0 whatever the auth state and never includes the token (only
+      # `--show-token` would). gh always acts as the active account, so only it counts.
+      $run=Invoke-ClCapture @('auth','status','--json','hosts')
+      $data=ConvertFrom-ClJson $run.raw
+      if ($run.code -eq 0 -and $null -ne $data) {
+        $active=@($data.hosts.'github.com' | Where-Object { $_.active -eq $true }) | Select-Object -First 1
+        if ($null -eq $active) { $clResult=@{loggedIn=$false} }
+        elseif ($active.state -in @('success','timeout') -and $active.login -is [string] -and $active.login -cmatch $clGhOwner) { $clResult=@{loggedIn=$true;login=$active.login} }
+        else { $clResult=@{loggedIn=$false;expired=($active.state -eq 'refresh_expired')} }
+      } elseif ($run.diagnostic -match 'unknown flag') {
+        # Older gh without `auth status --json`: ask the API whose token is active.
+        $run=Invoke-ClCapture @('api','user','--jq','.login')
+        $login=$run.raw.Trim()
+        if ($run.code -eq 0 -and $login -cmatch $clGhOwner) { $clResult=@{loggedIn=$true;login=$login} }
+        elseif ($run.diagnostic -match '401|Bad credentials') { $clResult=@{loggedIn=$false;expired=$true} }
+        elseif ($run.diagnostic -match 'gh auth login|not logged') { $clResult=@{loggedIn=$false} }
+        else { Throw-Cl 'cli-scope-failed' }
+      } elseif ($run.diagnostic -match 'gh auth login|not logged') { $clResult=@{loggedIn=$false} }
+      else { Throw-Cl 'cli-command-unsupported' }
     } else {
       try {
         $data=if ($clProvider -eq 'cloudflare') { Invoke-ClJson @('whoami','--json') } else { Invoke-ClJson @('whoami','--format=json') }
@@ -297,6 +333,42 @@ try {
         $pages=Get-ClCfList ('/accounts/'+$clAccount+'/pages/projects') @{}
         foreach ($project in $pages) { Add-ClItem @{id=('pages:'+$project.name);kind='pages';name=(Clean-Cl $project.name)} }
       } finally { $clAuthHeaders=$null }
+    } elseif ($clProvider -eq 'github') {
+      if ($clAccount -cnotmatch $clGhOwner) { Throw-Cl 'cli-account-unavailable' }
+      $owners=[Collections.Generic.List[string]]::new(); $owners.Add($clAccount)
+      # Organisation membership needs read:org; without it only the user's own repositories are listed.
+      $run=Invoke-ClCapture @('api','--method','GET','user/orgs','-f','per_page=100','--jq','[.[].login]')
+      if ($run.code -eq 0) {
+        # Assign first: @() around the call would wrap the returned array instead of unrolling it.
+        $orgs=ConvertFrom-ClJson $run.raw
+        foreach ($org in @($orgs)) {
+          if ($org -is [string] -and $org -cmatch $clGhOwner -and -not $owners.Contains($org) -and $owners.Count -lt 20) { $owners.Add($org) }
+        }
+      }
+      $seen=[Collections.Generic.HashSet[string]]::new()
+      foreach ($owner in $owners) {
+        $run=Invoke-ClCapture @('repo','list',$owner,'--limit','200','--json','id,nameWithOwner,defaultBranchRef,visibility,isArchived')
+        if ($run.code -ne 0) {
+          # An organisation can hide its repositories (SSO, removed membership); keep the others.
+          if ($owner -ne $clAccount -and $run.diagnostic -match '403|404|not found|Could not resolve|SAML') { continue }
+          if ($run.diagnostic -match '401|Bad credentials|gh auth login') { Throw-Cl 'cli-scope-permission' }
+          Throw-Cl 'cli-command-unsupported'
+        }
+        $repos=ConvertFrom-ClJson $run.raw
+        if ($repos -isnot [array]) { Throw-Cl 'cli-command-unsupported' }
+        foreach ($repo in $repos) {
+          if ($repo.isArchived -eq $true) { continue }
+          if ($repo.id -isnot [string] -or $repo.id -cnotmatch '^[A-Za-z0-9_=-]{1,64}$' -or $repo.nameWithOwner -isnot [string] -or $repo.nameWithOwner -cnotmatch '^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$') { Throw-Cl 'cli-scope-failed' }
+          if (-not $seen.Add($repo.id)) { continue }
+          if ($clItems.Count -ge $clMaxItems) { break }
+          $item=@{id=('repo:'+$repo.id);kind='repo';name=$repo.nameWithOwner}
+          $branch=$repo.defaultBranchRef.name
+          if ($branch -is [string] -and $branch) { $branch=$branch -replace '[\x00-\x1f\x7f]',''; $item.defaultBranch=$branch.Substring(0,[Math]::Min(255,$branch.Length)) }
+          if ($repo.visibility -cin @('PUBLIC','PRIVATE','INTERNAL')) { $item.visibility=$repo.visibility.ToLowerInvariant() }
+          Add-ClItem $item
+        }
+        if ($clItems.Count -ge $clMaxItems) { break }
+      }
     } else { Throw-Cl 'cli-command-unsupported' }
     $clResult=@{items=@($clItems.ToArray())}
   } else { Throw-Cl 'cli-command-unsupported' }

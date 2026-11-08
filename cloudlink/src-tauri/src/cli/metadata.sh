@@ -4,6 +4,7 @@ case "$cl_provider" in
   cloudflare) cl_name=wrangler ;;
   vercel) cl_name=vercel ;;
   oracle) cl_name=oci ;;
+  github) cl_name=gh ;;
   *) cl_emit '{"error":"cli-command-unsupported"}'; exit 1 ;;
 esac
 if [ "$cl_operation" = discover ]; then

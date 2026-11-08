@@ -3,7 +3,7 @@ import type { EnvId } from "./env"
 
 export type AssetType = "vps" | "cli"
 /** 云平台 CLI：cloudflare（wrangler）、vercel（vercel）、oracle（oci）。v0.1 每家一个资源，标识就是这个值（F-101 AC1） */
-export type CliProvider = "cloudflare" | "vercel" | "oracle"
+export type CliProvider = "cloudflare" | "vercel" | "oracle" | "github"
 export type FieldSource = "manual" | "probe"
 export type ProbeState = "never" | "ok" | "stale" | "failed"
 export type Mode = "read-only" | "standard"
@@ -162,12 +162,15 @@ export interface CliEnvState {
   expired: boolean
   /** whoami 回显的账号或团队名，防止登错团队 */
   account?: string
-  /** 这次登录能操作的全部账号：Cloudflare 的 Account、Vercel 的 Team、OCI 的 Profile；第一个是默认 */
+  /** 这次登录能操作的全部账号：Cloudflare 的 Account、Vercel 的 Team、OCI 的 Profile、gh 的活动账号；第一个是默认 */
   accounts?: string[]
   checkedAt: string
 }
 
-export type CliScopeKind = "zone" | "worker" | "pages" | "project" | "instance"
+export type CliScopeKind = "zone" | "worker" | "pages" | "project" | "instance" | "repo"
+
+/** GitHub 仓库的可见性（F-110 AC1） */
+export type RepoVisibility = "public" | "private" | "internal"
 
 /** 云平台账号下的一项资源（F-104 AC3）；未勾选的不进入编译产物 */
 export interface CliScopeItem {
@@ -179,10 +182,14 @@ export interface CliScopeItem {
   linkedAssetId?: string
   /** 仅 OCI 实例：公网地址，「同时加为 SSH 服务器」时预填 */
   address?: string
+  /** 仅 GitHub 仓库：默认分支 */
+  defaultBranch?: string
+  /** 仅 GitHub 仓库 */
+  visibility?: RepoVisibility
 }
 
 export interface CliInfo {
-  binary: "wrangler" | "vercel" | "oci"
+  binary: "wrangler" | "vercel" | "oci" | "gh"
   /** 按已启用 Agent 所在的运行环境记录 */
   envStates: Partial<Record<EnvId, CliEnvState>>
   scope: CliScopeItem[]

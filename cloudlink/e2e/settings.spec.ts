@@ -68,12 +68,11 @@ test.describe("设置视图", () => {
     expect(errors).toEqual([])
   })
 
-  test("检视面板「动态」的「在活动中查看全部」跳到活动并按资源、Agent 操作筛选", async ({ page }) => {
+  test("详情「最近动态」的「查看全部」跳到动态页并按资源、Agent 操作筛选", async ({ page }) => {
     await ready(page)
     await openServer(page, "hk-edge")
-    await page.getByRole("tab", { name: /^动态/ }).click()
-    await page.getByRole("button", { name: "在活动中查看全部" }).click()
-    await expect(page.getByRole("heading", { level: 1, name: "设置" })).toBeVisible()
+    await page.getByRole("button", { name: "查看全部" }).click()
+    await expect(page.getByRole("heading", { level: 1, name: "动态" })).toBeAttached()
     await expect(page.getByRole("combobox", { name: "资源" })).toHaveValue("hk-edge")
     await expect(page.getByRole("button", { name: "Agent 操作", exact: true })).toHaveAttribute("aria-pressed", "true")
     await expect(activityList(page).getByText(/在 hk-edge 上执行/).first()).toBeVisible()
@@ -101,6 +100,6 @@ test.describe("设置视图", () => {
     await dialog.getByRole("button", { name: "清空数据", exact: true }).click()
     await expect(toastText(page, "已清空数据")).toBeVisible()
     await page.keyboard.press("Control+1")
-    await expect(page.getByRole("button", { name: "添加 SSH 服务器" })).toBeVisible()
+    await expect(page.getByRole("heading", { name: "添加第一台服务器" })).toBeVisible()
   })
 })

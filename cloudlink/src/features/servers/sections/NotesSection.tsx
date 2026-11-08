@@ -6,7 +6,6 @@ import { useFormContext } from "react-hook-form"
 import type { AgentNote } from "@/bindings"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Item, ItemContent, ItemDescription, ItemFooter, ItemGroup, ItemTitle } from "@/components/ui/item"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
@@ -107,7 +106,6 @@ function NoteItem({ note, dirty, busy, onMerge, onDismiss }: {
  */
 export function NotesSection({ assetId }: { assetId: string }) {
   const {
-    register,
     formState: { isDirty },
   } = useFormContext<ProfileFormValues>()
   const notes = useNotesStore((s) => s.byAsset[assetId] ?? EMPTY)
@@ -135,8 +133,9 @@ export function NotesSection({ assetId }: { assetId: string }) {
       .then(() => toast.add({ title: copy.notes.dismissed(ids.length) }))
       .catch(toastError)
 
+  if (notes.length === 0) return null
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 px-3.5 py-3">
       {notes.length > 0 ? (
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -169,15 +168,7 @@ export function NotesSection({ assetId }: { assetId: string }) {
             </AnimatePresence>
           </ItemGroup>
         </div>
-      ) : (
-        <p className="text-xs text-muted-foreground">{copy.notes.none}</p>
-      )}
-
-      <Field>
-        <FieldLabel htmlFor="server-notes">{copy.notes.field}</FieldLabel>
-        <Textarea id="server-notes" rows={4} aria-describedby="server-notes-hint" {...register("notes")} />
-        <FieldDescription id="server-notes-hint">{copy.notes.fieldHint}</FieldDescription>
-      </Field>
+      ) : null}
     </div>
   )
 }

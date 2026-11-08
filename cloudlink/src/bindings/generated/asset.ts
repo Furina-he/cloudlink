@@ -38,17 +38,25 @@ export type CliAssetInput = { type: "cli", id?: string, name: string,
  */
 production: boolean, summary: string, guardrails: Guardrails, notes: string, cliProvider: CliProvider, account: string | null, scope?: Array<CliScopeItem>, };
 
-export type CliBinary = "wrangler" | "vercel" | "oci";
+export type CliBinary = "wrangler" | "vercel" | "oci" | "gh";
 
 export type CliEnvState = { installed: boolean, version?: string, path?: string, authenticated: boolean, expired: boolean, account?: string, accounts?: Array<string>, checkedAt: string, };
 
 export type CliInfo = { binary: CliBinary, envStates: Partial<Record<EnvId, CliEnvState>>, scope: Array<CliScopeItem>, };
 
-export type CliProvider = "cloudflare" | "vercel" | "oracle";
+export type CliProvider = "cloudflare" | "vercel" | "oracle" | "github";
 
-export type CliScopeItem = { id: string, kind: CliScopeKind, name: string, selected: boolean, linkedAssetId?: string, address?: string, };
+export type CliScopeItem = { id: string, kind: CliScopeKind, name: string, selected: boolean, linkedAssetId?: string, address?: string, 
+/**
+ * 仓库的默认分支（只有 repo）
+ */
+defaultBranch?: string, 
+/**
+ * 仓库的可见性（只有 repo）
+ */
+visibility?: RepoVisibility, };
 
-export type CliScopeKind = "zone" | "worker" | "pages" | "project" | "instance";
+export type CliScopeKind = "zone" | "worker" | "pages" | "project" | "instance" | "repo";
 
 /**
  * 录入的连接（save_asset）。imported 只有别名，连接信息由用户的 ssh config 维护
@@ -82,6 +90,11 @@ export type PortMapping = { hostIp: string, hostPort: number, containerPort: num
 export type ProbeState = "never" | "ok" | "stale" | "failed";
 
 export type Proto = "tcp" | "udp";
+
+/**
+ * GitHub 仓库的可见性（F-110 AC1）
+ */
+export type RepoVisibility = "public" | "private" | "internal";
 
 export type ResolvedConnection = { hostname: string, user: string, port: number, proxyJump: string | null, resolvedAt: string, };
 

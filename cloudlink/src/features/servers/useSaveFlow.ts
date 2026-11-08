@@ -98,7 +98,7 @@ export function useSaveFlow({
       const err = e as IpcError
       if (err.id === "alias-conflict" || err.id === "alias-taken") {
         form.setError("alias", { message: err.id })
-        reveal({ tab: "connection", advanced: true, path: "alias" })
+        reveal({ advanced: true, path: "alias" })
       } else {
         setError(err)
       }

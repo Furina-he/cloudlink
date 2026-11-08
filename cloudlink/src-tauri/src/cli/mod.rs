@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::env::EnvContext;
 use crate::error::{AppError, Result};
-use crate::model::asset::{Asset, CliEnvState, CliProvider, CliScopeItem, CliScopeKind};
+use crate::model::asset::{Asset, CliEnvState, CliProvider, CliScopeItem, CliScopeKind, RepoVisibility};
 use crate::model::env::EnvId;
 use crate::model::misc::IpcErrorId;
 use crate::params;
@@ -368,13 +368,18 @@ pub fn terminal_command_allowed(env: &EnvContext, command: &str) -> bool {
         "vercel login",
         "pip install oci-cli",
         "oci setup config",
+        "gh auth login",
     ];
     COMMON.contains(&command)
         || if env.is_windows() {
-            command == "winget install Oracle.OCICLI"
+            matches!(
+                command,
+                "winget install Oracle.OCICLI" | "winget install --id GitHub.cli"
+            )
         } else {
             command
                 == r#"bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)""#
+                || command == "sudo apt install gh"
         }
 }
 
@@ -382,12 +387,48 @@ pub(crate) fn valid_account(provider: CliProvider, account: &str) -> bool {
     if provider == CliProvider::Cloudflare {
         return account.len() == 32 && account.bytes().all(|b| b.is_ascii_hexdigit());
     }
+    if provider == CliProvider::Github {
+        return valid_github_owner(account);
+    }
     !account.is_empty()
         && account.len() <= MAX_TEXT
         && !account.starts_with(['-', '.'])
         && account
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+}
+
+/// GitHub 用户名和组织名：字母、数字、连字符，最长 39，不以连字符开头
+pub(crate) fn valid_github_owner(login: &str) -> bool {
+    !login.is_empty()
+        && login.len() <= 39
+        && !login.starts_with('-')
+        && login.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+/// `owner/name`：仓库名是字母、数字和 `.` `_` `-`，最长 100，不能是 `.` 或 `..`
+fn valid_repo_name(full: &str) -> bool {
+    let Some((owner, name)) = full.split_once('/') else {
+        return false;
+    };
+    valid_github_owner(owner)
+        && !name.is_empty()
+        && name.len() <= 100
+        && name != "."
+        && name != ".."
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+}
+
+/// 分支名写进 Skill 的表格：git 不允许空白和控制字符，这里再排除表格和代码块会用到的符号
+fn valid_branch(branch: &str) -> bool {
+    !branch.is_empty()
+        && branch.len() <= 255
+        && !branch.starts_with('-')
+        && !branch.chars().any(|c| {
+            c.is_control() || c.is_whitespace() || matches!(c, '`' | '|' | '\\' | '~' | '^' | ':' | '?' | '*' | '[')
+        })
 }
 
 pub(crate) fn valid_path(path: &str, env: &EnvContext) -> bool {
@@ -520,6 +561,17 @@ fn parse_identity(provider: CliProvider, value: &Value) -> (Option<String>, Vec<
                 .map(clean_text)
         }
         CliProvider::Oracle => None,
+        // 命令总是以 gh 当前的活动账号执行，没有按命令指定账号的参数，所以只认活动账号
+        CliProvider::Github => {
+            let login = value
+                .get("login")
+                .and_then(Value::as_str)
+                .filter(|login| valid_github_owner(login));
+            if let Some(login) = login {
+                accounts.push(login.to_string());
+            }
+            login.map(clean_text)
+        }
     };
     let mut seen = BTreeSet::new();
     accounts.retain(|id| seen.insert(id.clone()));
@@ -552,7 +604,29 @@ fn parse_scope(provider: CliProvider, value: &Value, assets: &[Asset]) -> Result
             (CliProvider::Cloudflare, Some("pages")) => CliScopeKind::Pages,
             (CliProvider::Vercel, Some("project")) => CliScopeKind::Project,
             (CliProvider::Oracle, Some("instance")) => CliScopeKind::Instance,
+            (CliProvider::Github, Some("repo")) => CliScopeKind::Repo,
             _ => return Err(AppError::ipc(IpcErrorId::CliScopeFailed)),
+        };
+        // 仓库名是 owner/name，Skill 里原样写出，只接受 GitHub 允许的字符
+        if kind == CliScopeKind::Repo && !valid_repo_name(name) {
+            return Err(AppError::ipc(IpcErrorId::CliScopeFailed));
+        }
+        let (default_branch, visibility) = if kind == CliScopeKind::Repo {
+            (
+                value
+                    .get("defaultBranch")
+                    .and_then(Value::as_str)
+                    .filter(|b| valid_branch(b))
+                    .map(String::from),
+                match value.get("visibility").and_then(Value::as_str) {
+                    Some("public") => Some(RepoVisibility::Public),
+                    Some("private") => Some(RepoVisibility::Private),
+                    Some("internal") => Some(RepoVisibility::Internal),
+                    _ => None,
+                },
+            )
+        } else {
+            (None, None)
         };
         let addresses: Vec<IpAddr> = value
             .get("addresses")
@@ -603,6 +677,8 @@ fn parse_scope(provider: CliProvider, value: &Value, assets: &[Asset]) -> Result
                 selected: false,
                 linked_asset_id: linked,
                 address,
+                default_branch,
+                visibility,
             },
         );
     }

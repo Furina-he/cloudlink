@@ -141,10 +141,34 @@ pub fn alias_conflicts(env: &EnvContext, alias: &str) -> bool {
 }
 
 /// F-102：按运行环境分别扫描，同名合并为一行；`existing` 是已有资源的别名（小写），标为已导入
+/// F-102（2026-11-08）：代码托管平台的 git 入口，含 `ssh.github.com`、`altssh.gitlab.com` 这类子域
+const CODE_HOSTS: &[&str] = &[
+    "github.com",
+    "gitlab.com",
+    "bitbucket.org",
+    "gitee.com",
+    "ssh.dev.azure.com",
+];
+
+/// 没写 `HostName` 时 ssh 直接连别名本身；`User git` 是代码托管的惯用登录名
+fn is_code_host(host: &config::HostEntry) -> bool {
+    let target = host
+        .hostname
+        .as_deref()
+        .unwrap_or(&host.alias)
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    host.user.as_deref() == Some("git")
+        || CODE_HOSTS
+            .iter()
+            .any(|domain| target == *domain || target.strip_suffix(domain).is_some_and(|rest| rest.ends_with('.')))
+}
+
 pub fn list_hosts(envs: &[EnvContext], existing: &BTreeSet<String>) -> SshHostList {
     let mut merged: BTreeMap<String, SshHost> = BTreeMap::new();
     let mut scanned = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
+    let mut code_hosts: Vec<String> = Vec::new();
     for env in envs.iter().filter(|e| e.available) {
         scanned.push(ScannedConfig {
             env_id: env.id.clone(),
@@ -157,6 +181,12 @@ pub fn list_hosts(envs: &[EnvContext], existing: &BTreeSet<String>) -> SshHostLi
             }
         }
         for h in r.hosts {
+            if is_code_host(&h) {
+                if !code_hosts.iter().any(|c| c.eq_ignore_ascii_case(&h.alias)) {
+                    code_hosts.push(h.alias.clone());
+                }
+                continue;
+            }
             let key = h.alias.to_lowercase();
             let entry = merged.entry(key.clone()).or_insert_with(|| SshHost {
                 alias: h.alias.clone(),
@@ -175,6 +205,7 @@ pub fn list_hosts(envs: &[EnvContext], existing: &BTreeSet<String>) -> SshHostLi
         hosts: merged.into_values().collect(),
         scanned,
         skipped_patterns: skipped,
+        skipped_code_hosts: code_hosts,
     }
 }
 
@@ -260,6 +291,48 @@ mod tests {
             "managed hosts are ours, not a conflict"
         );
         assert_eq!(defined_in(&envs, "box"), vec![wsl.id.clone()]);
+    }
+
+    #[test]
+    fn code_hosting_hosts_are_not_server_candidates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::isolated_in(tmp.path());
+        let envs = detect(
+            &paths,
+            &FakeSystem {
+                distros: vec!["Ubuntu-24.04".into()],
+                ..Default::default()
+            },
+        );
+        let write = |env: &EnvContext, text: &str| {
+            let p = env.host_in_home(&[".ssh", "config"]);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, text).unwrap();
+        };
+        write(
+            &envs[0],
+            concat!(
+                "Host github.com\n  IdentityFile ~/.ssh/id_ed25519\n",
+                "Host gh-443\n  HostName ssh.github.com\n  Port 443\n",
+                "Host work-git\n  HostName GitHub.com.\n",
+                "Host lab\n  HostName gitlab.example.com\n  User git\n",
+                "Host azure\n  HostName ssh.dev.azure.com\n",
+                "Host hk-edge\n  HostName 203.0.113.10\n  User root\n",
+                "Host notgithub\n  HostName mygithub.com\n",
+            ),
+        );
+        write(
+            &envs[1],
+            "Host GITHUB.COM\nHost gitee\n  HostName gitee.com\nHost box\n",
+        );
+        let list = list_hosts(&envs, &BTreeSet::new());
+        let aliases: Vec<_> = list.hosts.iter().map(|h| h.alias.as_str()).collect();
+        // 只是名字里带 github 的服务器照常导入
+        assert_eq!(aliases, ["box", "hk-edge", "notgithub"]);
+        assert_eq!(
+            list.skipped_code_hosts,
+            ["github.com", "gh-443", "work-git", "lab", "azure", "gitee"]
+        );
     }
 
     #[test]

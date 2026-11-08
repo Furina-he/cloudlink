@@ -31,14 +31,18 @@ export const detailTitle = (page: Page) => page.locator("h2#detail-title")
 export const inspector = (page: Page) => page.locator("section").filter({ has: page.locator("#detail-title") }).last()
 
 /** 进入某项资源的详情。打开按钮铺满回路行左侧，状态旁的修复按钮叠在它上面；点左上角，避开修复按钮 */
-export async function openServer(page: Page, handle: string, title = handle) {
+export async function openServer(page: Page, handle: string, title?: string) {
   await row(page, handle).click({ position: { x: 6, y: 6 } })
-  await expect(detailTitle(page)).toHaveText(title)
+  await expect(detailOf(page, handle)).toBeVisible()
+  if (title) await expect(detailTitle(page)).toHaveText(title)
 }
+
+/** 某项资源的详情标题行（data-handle 是别名或 cloudflare-2） */
+export const detailOf = (page: Page, handle: string) => page.locator(`[data-handle="${handle}"]`)
 
 /** 详情视图的「← 返回」 */
 export async function back(page: Page) {
-  await page.getByRole("button", { name: "返回", exact: true }).click()
+  await page.getByRole("button", { name: "资源", exact: true }).click()
   await expect(detailTitle(page)).toHaveCount(0)
 }
 

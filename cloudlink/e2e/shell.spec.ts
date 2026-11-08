@@ -12,7 +12,7 @@ test.describe("应用外壳", () => {
     const nav = page.getByRole("navigation", { name: "主导航" })
     for (const v of VIEWS) await expect(nav.getByRole("button", { name: new RegExp(`^${v}`) })).toBeVisible()
     await expect(nav.getByRole("button", { name: /^资源/ })).toHaveAttribute("aria-current", "page")
-    await expect(nav.getByText("共 5 项资源")).toBeAttached()
+    await expect(nav.getByText("共 6 项资源")).toBeAttached()
     await expect(nav.getByText("有待确认的事项")).toBeAttached()
     await expect(page.locator("aside")).toHaveCount(0)
     await expect(page.getByRole("navigation", { name: "当前位置" })).toHaveCount(0)
@@ -62,7 +62,7 @@ test.describe("应用外壳", () => {
     await expect(dialog.getByRole("option", { selected: true })).toContainText("新加坡数据库")
     await page.keyboard.press("Enter")
     await expect(dialog).toBeHidden()
-    await expect(detailTitle(page)).toHaveText("sg-db")
+    await expect(detailTitle(page)).toHaveText("新加坡数据库")
 
     await page.keyboard.press("Control+k")
     await expect(input).toBeFocused()
@@ -70,7 +70,7 @@ test.describe("应用外壳", () => {
     await page.keyboard.press("Enter")
     await expect(page.getByRole("heading", { level: 1, name: "设置" })).toBeVisible()
     await page.keyboard.press("Control+1")
-    await expect(detailTitle(page)).toHaveText("sg-db")
+    await expect(detailTitle(page)).toHaveText("新加坡数据库")
     // 再点顶栏「资源」回到列表
     await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^资源/ }).click()
     await expect(detailTitle(page)).toHaveCount(0)
@@ -105,7 +105,7 @@ test.describe("应用外壳", () => {
     await page.setViewportSize({ width: 760, height: 520 })
     await ready(page)
     const rows = page.locator("[role=listitem]")
-    await expect(rows).toHaveCount(5)
+    await expect(rows).toHaveCount(6)
     for (const box of await rows.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height))) {
       expect(box).toBeGreaterThanOrEqual(56)
       expect(box).toBeLessThanOrEqual(64)
@@ -173,17 +173,19 @@ test.describe("键盘焦点（P6 无障碍复查）", () => {
     await expect(add).toBeFocused()
   })
 
-  test("详情的 Tab 面板本身不是 Tab 停靠点：焦点不会落在看不见焦点环的面板上", async ({ page }) => {
+  test("详情没有 Tab：从标题开始按 Tab 依次经过返回之后的操作和设置行", async ({ page }) => {
     await ready(page)
     await row(page, "hk-edge").focus()
     await page.keyboard.press("Enter")
-    await expect(detailTitle(page)).toHaveText("hk-edge")
-    await page.getByRole("tab", { name: "画像与规则" }).focus()
-    // 内容能滚动，先经过带焦点环的滚动区域，再到第一个字段
+    await expect(detailTitle(page)).toBeFocused()
+    await expect(page.getByRole("tab")).toHaveCount(0)
+    // 标题后面是「测试连接」「⋯」，再往下进入 Agent 权限的生产环境开关
     await page.keyboard.press("Tab")
-    await expect(page.locator(":focus")).toHaveAttribute("data-slot", "scroll-area-viewport")
+    await expect(page.getByRole("button", { name: "测试连接", exact: true })).toBeFocused()
     await page.keyboard.press("Tab")
-    await expect(page.getByRole("textbox", { name: "用途", exact: true })).toBeFocused()
+    await page.keyboard.press("Tab")
+    await page.keyboard.press("Tab")
+    await expect(page.getByRole("switch", { name: "生产环境" })).toBeFocused()
   })
 
   test("护栏规则加载完才变长，仍然能用键盘滚动：滚动区域进入 Tab 序列，PageDown 能翻页", async ({ page }) => {

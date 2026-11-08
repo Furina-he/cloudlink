@@ -1,22 +1,22 @@
 import { FileInputIcon, ServerIcon } from "lucide-react"
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 
 import type { CliProvider } from "@/bindings"
 import { PreviewSheet } from "@/components/app/PreviewSheet"
 import { ProviderMark } from "@/components/app/ProviderMark"
 import { useScrollRestore, useViewTitleFocus } from "@/components/app/ViewShell"
-import { Button } from "@/components/ui/button"
-import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { CLI_BINARY, CLI_PROVIDERS } from "@/lib/cliProviders"
+import { CLI_BINARY, CLI_PROVIDERS, CLOUD_PROVIDERS, CODE_HOSTS } from "@/lib/cliProviders"
 import { copy } from "@/lib/copy"
-import { useAssetStore } from "@/stores/assets"
+import { cn } from "@/lib/utils"
+import { cliEnvStatus, useAssetStore } from "@/stores/assets"
+import { useCliStore } from "@/stores/cli"
 import { useUIStore, type CreateKind } from "@/stores/ui"
 import { CliDetail } from "./CliDetail"
 import { CreateHeader } from "./CreateParts"
-import { FirstLaunch } from "./FirstLaunch"
+import { FirstLaunch, useImportableCount } from "./FirstLaunch"
 import { NewCliForm } from "./NewCliForm"
 import { NewServerForm } from "./NewServerForm"
 import { ProbeSheet } from "./ProbeSheet"
@@ -28,59 +28,104 @@ function WholePreview() {
   return <PreviewSheet scope="all" draft={{}} dirty={false} defaultFile="SKILL.md" />
 }
 
-/** 一个资源类型选择项（DESIGN.md：添加面板里的类型选择用 Card）。整张卡片是一个按钮 */
-/** added：这家已接入的账号数；可以继续接入其他账号。first：弹窗打开时焦点落在这张卡片上 */
-function TypeCard({ icon, title, meta, blurb, added = 0, first = false, onPick }: { icon: React.ReactNode; title: string; meta?: string; blurb: string; added?: number; first?: boolean; onPick: () => void }) {
+/** 一张可点的选项块（DESIGN.md「Add Dialog」）：品牌方块 + 名称 + 一句话 + 一行状态 */
+function TypeTile({ icon, title, blurb, status, tone = "signal", first = false, onPick }: { icon: React.ReactNode; title: string; blurb: string; status?: string; tone?: "signal" | "muted"; first?: boolean; onPick: () => void }) {
   return (
-    <button type="button" onClick={onPick} data-autofocus={first || undefined} className="group/type rounded-xl text-left outline-none">
-      <Card size="sm" className="transition-colors group-focus-visible/type:ring-2 group-focus-visible/type:ring-ring group-hover/type:bg-muted/50">
-        <CardHeader className="grid-cols-[auto_minmax(0,1fr)] gap-x-3">
-          <span aria-hidden className="row-span-2 flex size-8 items-center justify-center rounded-md bg-muted">
-            {icon}
-          </span>
-          <CardTitle className="flex items-center gap-2">
-            {title}
-            {meta && <span className="font-mono text-xs font-normal text-muted-foreground">{meta}</span>}
-            {added > 0 && <span className="ml-auto text-xs font-normal text-muted-foreground">{copy.create.addedCount(added)}</span>}
-          </CardTitle>
-          <CardDescription className="text-xs">{blurb}</CardDescription>
-        </CardHeader>
-      </Card>
+    <button
+      type="button"
+      onClick={onPick}
+      data-autofocus={first || undefined}
+      className="flex min-h-16 items-start gap-3 rounded-list border border-line bg-card px-3 py-2.5 text-left outline-none transition-colors hover:bg-card-2 focus-visible:ring-3 focus-visible:ring-ring/50"
+    >
+      <span aria-hidden className="flex size-8 shrink-0 items-center justify-center rounded-tile border border-line bg-card text-fg-2">
+        {icon}
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-[13px] font-medium">{title}</span>
+        <span className="text-xs text-muted-foreground">{blurb}</span>
+        {status && <span className={cn("text-xs", tone === "signal" ? "text-signal" : "text-muted-foreground")}>{status}</span>}
+      </span>
     </button>
   )
 }
 
-/** 添加资源的第一步（PRD 6.5，Ctrl+N）：选类型。云平台用官方 Logo；同一家可以接入多个账号 */
+function TileGroup({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
+  return (
+    <section aria-labelledby={id} className="flex flex-col gap-2">
+      <h3 id={id} className="px-1 text-[13px] font-semibold">
+        {title}
+      </h3>
+      <div className="grid gap-2 sm:grid-cols-2">{children}</div>
+    </section>
+  )
+}
+
+/** 选项块上的状态行：已接入的资源或这次检测的结果；还没检测过时打开选择器就检测一次 */
+function useCliStatus(provider: CliProvider): { text?: string; ok: boolean } {
+  const assetStates = useAssetStore(useShallow((s) => s.ids.map((id) => s.byId[id]).flatMap((a) => (a.type === "cli" && a.cliProvider === provider ? Object.values(a.cli.envStates) : []))))
+  const detection = useCliStore((s) => s.byProvider[provider])
+  const states = (assetStates.length ? assetStates : Object.values(detection?.envStates ?? {})).filter((x) => !!x)
+  if (states.length === 0) return detection?.detecting ? { text: copy.create.cliChecking, ok: false } : { ok: false }
+  const statuses = states.map(cliEnvStatus)
+  const binary = CLI_BINARY[provider]
+  if (statuses.includes("ready")) return { text: copy.create.cliReady(binary), ok: true }
+  if (statuses.includes("expired")) return { text: copy.create.cliExpired, ok: false }
+  if (statuses.includes("not-logged-in")) return { text: copy.create.cliNotLoggedIn, ok: false }
+  return { text: copy.create.cliNotInstalled(binary), ok: false }
+}
+
+function ProviderTile({ provider }: { provider: CliProvider }) {
+  const status = useCliStatus(provider)
+  return (
+    <TypeTile
+      icon={<ProviderMark provider={provider} className="size-4.5" />}
+      title={copy.cli.name[provider]}
+      blurb={copy.create.pickBlurb[provider]}
+      status={status.text}
+      tone={status.ok ? "signal" : "muted"}
+      onPick={() => useUIStore.getState().startCreate(provider)}
+    />
+  )
+}
+
+/** 添加资源的第一步（PRD 6.5，Ctrl+N）：分组「服务器」「云平台」「代码托管」，每项一张选项块 */
 function TypePicker() {
-  const providers = useAssetStore(useShallow((s) => s.ids.map((id) => s.byId[id]).flatMap((a) => (a.type === "cli" ? [a.cliProvider] : []))))
+  const importable = useImportableCount()
   const ui = useUIStore.getState
+  useEffect(() => {
+    // 没接入过、也没检测过的云平台检测一次，选项块上才有「已登录 · wrangler」「未安装 oci」
+    const assets = Object.values(useAssetStore.getState().byId)
+    for (const p of CLI_PROVIDERS) {
+      if (!useCliStore.getState().byProvider[p] && !assets.some((a) => a.type === "cli" && a.cliProvider === p)) void useCliStore.getState().detect(p)
+    }
+  }, [])
   return (
     <section aria-labelledby="detail-title" className="flex h-full min-h-0 flex-col">
       <CreateHeader title={copy.create.title} back={false} />
       <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-5 p-3 pb-6">
-          <div className="flex flex-col gap-2">
-            <h3 className="text-sm font-semibold">{copy.create.directGroup}</h3>
-            <TypeCard icon={<ServerIcon className="size-4" />} title={copy.create.ssh} blurb={copy.create.sshBlurb} first onPick={() => ui().startCreate("ssh")} />
-          </div>
-          <div className="flex flex-col gap-2">
-            <h3 className="text-sm font-semibold">{copy.create.cliGroup}</h3>
-            {CLI_PROVIDERS.map((p: CliProvider) => (
-              <TypeCard
-                key={p}
-                icon={<ProviderMark provider={p} className="size-5" />}
-                title={copy.cli.name[p]}
-                meta={CLI_BINARY[p]}
-                blurb={copy.cli.blurb[p]}
-                added={providers.filter((x) => x === p).length}
-                onPick={() => ui().startCreate(p)}
+        <div className="flex flex-col gap-5 p-4 pb-6">
+          <TileGroup id="pick-servers" title={copy.create.groups.servers}>
+            <TypeTile icon={<ServerIcon className="size-4" />} title={copy.create.ssh} blurb={copy.create.sshPick} first onPick={() => ui().startCreate("ssh")} />
+            {importable > 0 && (
+              <TypeTile
+                icon={<FileInputIcon className="size-4" />}
+                title={copy.create.importPick}
+                blurb={copy.create.importPickBlurb}
+                status={copy.create.importFound(importable)}
+                onPick={() => ui().setImportOpen(true)}
               />
+            )}
+          </TileGroup>
+          <TileGroup id="pick-clouds" title={copy.create.groups.clouds}>
+            {CLOUD_PROVIDERS.map((p) => (
+              <ProviderTile key={p} provider={p} />
             ))}
-          </div>
-          <Button variant="outline" size="sm" className="w-fit" onClick={() => ui().setImportOpen(true)}>
-            <FileInputIcon data-icon="inline-start" />
-            {copy.servers.importSsh}
-          </Button>
+          </TileGroup>
+          <TileGroup id="pick-code" title={copy.create.groups.codeHosts}>
+            {CODE_HOSTS.map((p) => (
+              <ProviderTile key={p} provider={p} />
+            ))}
+          </TileGroup>
         </div>
       </ScrollArea>
     </section>
@@ -112,7 +157,7 @@ function CreateDialog() {
         // 选类型时落在第一张卡片上；SSH 表单自己把焦点放到地址（有预填时放到用户），其余先落在弹窗本身
         initialFocus={() => popupRef.current?.querySelector<HTMLElement>("[data-autofocus]") ?? popupRef.current}
         showCloseButton={false}
-        className="flex h-[min(600px,calc(100svh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg"
+        className="flex h-[min(600px,calc(100svh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[580px]"
       >
         {shown && <Creating kind={shown} />}
       </DialogContent>

@@ -34,6 +34,7 @@ const accountOf: Record<CliProvider, string> = {
   cloudflare: "me@example.com",
   vercel: "my-team",
   oracle: "tenancy-demo",
+  github: "octo-dev",
 }
 type CliRequest = { provider: CliProvider; assetId?: string; account?: string }
 

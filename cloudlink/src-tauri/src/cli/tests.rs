@@ -55,6 +55,15 @@ impl Runner for FixtureRunner {
             } => {
                 json!({ "authenticated": account.as_deref() == Some("production"), "expired": account.as_deref() == Some("DEFAULT") })
             }
+            // gh 只在 Windows 上登录；WSL 里装了但没登录
+            Query::Identity {
+                provider: CliProvider::Github,
+                ..
+            } if env.is_windows() => json!({ "loggedIn": true, "login": "octo" }),
+            Query::Identity {
+                provider: CliProvider::Github,
+                ..
+            } => json!({ "loggedIn": false }),
             Query::Scope { .. } if self.fail_scope.load(Ordering::SeqCst) => {
                 return Err(AppError::ipc(IpcErrorId::CliScopePermission));
             }
@@ -83,6 +92,13 @@ impl Runner for FixtureRunner {
                 ..
             } => json!({ "items": [
                 { "id": "ocid1.instance.test.example", "kind": "instance", "name": "compute", "address": "192.0.2.30" }
+            ] }),
+            Query::Scope {
+                provider: CliProvider::Github,
+                ..
+            } => json!({ "items": [
+                { "id": "repo:R_app", "kind": "repo", "name": "octo/app", "defaultBranch": "main", "visibility": "private" },
+                { "id": "repo:R_site", "kind": "repo", "name": "acme/site.github.io", "defaultBranch": "release/2026 q4", "visibility": "secret" }
             ] }),
         };
         Ok(QueryOutput::json(output))
@@ -356,6 +372,18 @@ fn terminal_allowlist_rejects_injection_and_wrong_platform_installers() {
         );
     }
     assert!(!terminal_command_allowed(&envs[1], "winget install Oracle.OCICLI"));
+    assert!(terminal_command_allowed(&envs[0], "gh auth login") && terminal_command_allowed(&envs[1], "gh auth login"));
+    assert!(terminal_command_allowed(&envs[0], "winget install --id GitHub.cli"));
+    assert!(!terminal_command_allowed(&envs[1], "winget install --id GitHub.cli"));
+    assert!(terminal_command_allowed(&envs[1], "sudo apt install gh"));
+    assert!(!terminal_command_allowed(&envs[0], "sudo apt install gh"));
+    for command in [
+        "gh auth token",
+        "gh auth login --with-token",
+        "gh auth login; gh auth token",
+    ] {
+        assert!(!terminal_command_allowed(&envs[0], command), "{command}");
+    }
     let installer =
         r#"bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)""#;
     assert!(terminal_command_allowed(&envs[1], installer));
@@ -453,6 +481,144 @@ fn script_arguments_are_quoted_and_account_values_are_validated() {
                 provider: CliProvider::Cloudflare,
                 path: "/usr/bin/wrangler".into(),
                 account: "$(echo unsafe)".into()
+            }
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn github_counts_only_the_active_login_and_lists_repositories_with_branch_and_visibility() {
+    let temp = tempfile::tempdir().unwrap();
+    let envs = environments(&Paths::isolated_in(temp.path()));
+    let runner = Arc::new(FixtureRunner::default());
+    let service = Service::new(runner.clone());
+    let states = service.detect(&envs, CliProvider::Github, None).unwrap();
+    let windows = &states[&envs[0].id];
+    assert!(windows.authenticated && !windows.expired);
+    assert_eq!(windows.account.as_deref(), Some("octo"));
+    assert_eq!(windows.accounts.as_deref(), Some(&["octo".to_string()][..]));
+    let wsl = &states[&envs[1].id];
+    assert!(wsl.installed && !wsl.authenticated);
+    // 只在已登录的环境里拉仓库列表
+    let repos = service.scope(&envs, CliProvider::Github, Some("octo"), &[]).unwrap();
+    let scopes: Vec<_> = runner
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|q| match q {
+            Query::Scope { path, .. } => Some(path.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(scopes, ["C:/isolated/gh.cmd"]);
+    assert_eq!(repos.len(), 2);
+    let app = repos.iter().find(|r| r.id == "repo:R_app").unwrap();
+    assert_eq!((app.kind, app.name.as_str()), (CliScopeKind::Repo, "octo/app"));
+    assert_eq!(app.default_branch.as_deref(), Some("main"));
+    assert_eq!(app.visibility, Some(RepoVisibility::Private));
+    // 带空格的分支名和不认识的可见性都不写进 Skill
+    let site = repos.iter().find(|r| r.id == "repo:R_site").unwrap();
+    assert_eq!((site.default_branch.as_deref(), site.visibility), (None, None));
+    let mut draft = repos.clone();
+    draft[0].selected = true;
+    let saved = service
+        .validate_scope(CliProvider::Github, Some("octo"), &draft)
+        .unwrap();
+    assert_eq!(saved.iter().filter(|r| r.selected).count(), 1);
+    assert!(
+        service
+            .scope(&envs, CliProvider::Github, Some("someone-else"), &[])
+            .unwrap_err()
+            .is_ipc(IpcErrorId::CliAccountUnavailable)
+    );
+}
+
+#[test]
+fn github_identity_and_repository_names_accept_only_github_shapes() {
+    let (display, accounts, expired) =
+        parse_identity(CliProvider::Github, &json!({ "loggedIn": true, "login": "Furina-he" }));
+    assert_eq!(display.as_deref(), Some("Furina-he"));
+    assert_eq!(accounts, ["Furina-he"]);
+    assert!(!expired);
+    let long = "a".repeat(40);
+    for login in ["-octo", "octo cat", "octo/cat", "", long.as_str()] {
+        assert!(
+            parse_identity(CliProvider::Github, &json!({ "loggedIn": true, "login": login }))
+                .1
+                .is_empty(),
+            "{login}"
+        );
+    }
+    assert_eq!(
+        parse_identity(CliProvider::Github, &json!({ "loggedIn": false, "expired": true })),
+        (None, vec![], true)
+    );
+    for name in [
+        "octo",
+        "octo/",
+        "/app",
+        "-octo/app",
+        "octo/..",
+        "octo/app name",
+        "octo/app/extra",
+        "octo/`app`",
+    ] {
+        let items = json!({ "items": [{ "id": "repo:R_x", "kind": "repo", "name": name }] });
+        assert!(parse_scope(CliProvider::Github, &items, &[]).is_err(), "{name}");
+    }
+    let zone = json!({ "items": [{ "id": "zone:x", "kind": "zone", "name": "octo/app" }] });
+    assert!(parse_scope(CliProvider::Github, &zone, &[]).is_err());
+    for (branch, ok) in [
+        ("main", true),
+        ("feature/login-v2", true),
+        ("-x", false),
+        ("a|b", false),
+        ("a`b", false),
+        ("a b", false),
+    ] {
+        assert_eq!(valid_branch(branch), ok, "{branch}");
+    }
+}
+
+#[test]
+fn github_metadata_runs_through_the_python_bridge_in_wsl() {
+    let temp = tempfile::tempdir().unwrap();
+    let envs = environments(&Paths::isolated_in(temp.path()));
+    for query in [
+        Query::Identity {
+            provider: CliProvider::Github,
+            path: "/usr/bin/gh".into(),
+            account: None,
+        },
+        Query::Scope {
+            provider: CliProvider::Github,
+            path: "/usr/bin/gh".into(),
+            account: "octo".into(),
+        },
+    ] {
+        let script = runner::script_for(&envs[1], &query).unwrap();
+        assert!(script.contains("python3 -c") && !script.contains("node -e"));
+        assert!(script.contains("GH_PROMPT_DISABLED=1"));
+    }
+    let windows = runner::script_for(
+        &envs[0],
+        &Query::Scope {
+            provider: CliProvider::Github,
+            path: "C:/Program Files/GitHub CLI/gh.exe".into(),
+            account: "octo".into(),
+        },
+    )
+    .unwrap();
+    assert!(windows.contains("$clProvider='github'") && windows.contains("$env:GH_PROMPT_DISABLED='1'"));
+    assert!(
+        runner::script_for(
+            &envs[1],
+            &Query::Scope {
+                provider: CliProvider::Github,
+                path: "/usr/bin/gh".into(),
+                account: "octo;rm".into(),
             }
         )
         .is_err()

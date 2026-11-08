@@ -131,6 +131,8 @@ pub struct SshHostList {
     pub hosts: Vec<SshHost>,
     pub scanned: Vec<ScannedConfig>,
     pub skipped_patterns: Vec<String>,
+    /// F-102（2026-11-08）：被排除的代码托管主机别名，导入对话框底部注明
+    pub skipped_code_hosts: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

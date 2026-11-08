@@ -80,6 +80,26 @@ fn golden_with_cloud_platform() {
     assert_golden("windows-claude-code-cli", &p);
 }
 
+/// F-110 AC1：只写开放的仓库，名称、默认分支、可见性；gh 没有按命令选账号的参数
+#[test]
+fn golden_with_github_lists_only_open_repositories() {
+    let mut assets = golden_servers();
+    assets.push(Asset::Cli(testkit::github()));
+    let p = compile_with(&assets, &testkit::skill_config());
+    assert!(p.lint.is_empty(), "{:#?}", p.lint);
+    let github = p
+        .files
+        .iter()
+        .find(|f| f.path.ends_with("github.md"))
+        .expect("github file");
+    assert!(github.content.contains("## Repositories"));
+    assert!(github.content.contains("| `octo/shop-web` | `main` | private |"));
+    assert!(!github.content.contains("octo/notes"));
+    assert!(!github.content.contains("## Scope"));
+    assert!(github.content.contains("never switch accounts"));
+    assert_golden("windows-claude-code-github", &p);
+}
+
 #[test]
 fn skill_md_structure_matches_prd() {
     let p = compile_with(&golden_servers(), &testkit::skill_config());

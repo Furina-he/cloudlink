@@ -82,24 +82,47 @@ fn from_parsed(cfg: &SshConfig) -> ScanResult {
     out
 }
 
-/// 只认 `Host` 行（不跟随 Include）：用于 ssh2-config 解析失败时，以及读取 CloudLink 自己的托管文件
+/// 只认 `Host` 段（不跟随 Include）：用于 ssh2-config 解析失败时、隔离会话，以及读取 CloudLink 自己的托管文件。
+/// 段内的 HostName / User / Port 按 ssh 的规则取第一次出现的值（排除代码托管主机要用）
 pub fn scan_text(text: &str) -> ScanResult {
     let mut out = ScanResult::default();
     let mut seen = BTreeSet::new();
+    // 当前 Host 段新加入的条目；遇到 Match 段就不再归属任何 Host
+    let mut current: Vec<usize> = Vec::new();
     for line in text.lines() {
         let line = line.trim();
         let Some((key, rest)) = line.split_once(|c: char| c.is_whitespace() || c == '=') else {
             continue;
         };
-        if !key.eq_ignore_ascii_case("host") {
+        let value = rest
+            .trim_start_matches(|c: char| c.is_whitespace() || c == '=')
+            .trim()
+            .trim_matches('"');
+        if key.eq_ignore_ascii_case("match") {
+            current.clear();
             continue;
         }
+        if !key.eq_ignore_ascii_case("host") {
+            for &i in &current {
+                let host = &mut out.hosts[i];
+                if key.eq_ignore_ascii_case("hostname") && host.hostname.is_none() && !value.is_empty() {
+                    host.hostname = Some(value.to_string());
+                } else if key.eq_ignore_ascii_case("user") && host.user.is_none() && !value.is_empty() {
+                    host.user = Some(value.to_string());
+                } else if key.eq_ignore_ascii_case("port") && host.port.is_none() {
+                    host.port = value.parse().ok();
+                }
+            }
+            continue;
+        }
+        current.clear();
         for pat in rest.split_whitespace().map(|p| p.trim_matches('"')) {
             if is_pattern(pat) {
                 if !out.skipped.iter().any(|s| s == pat) {
                     out.skipped.push(pat.to_string());
                 }
             } else if seen.insert(pat.to_lowercase()) {
+                current.push(out.hosts.len());
                 out.hosts.push(HostEntry {
                     alias: pat.to_string(),
                     hostname: None,
@@ -195,6 +218,38 @@ mod tests {
             ["hk-edge", "dev-box"]
         );
         assert_eq!(r.skipped, ["*"]);
+        assert_eq!(r.hosts[0].hostname.as_deref(), Some("x"));
+        assert_eq!(r.hosts[1].hostname, None);
+    }
+
+    #[test]
+    fn text_scan_keeps_the_first_block_values_and_ignores_match_blocks() {
+        let r = scan_text(concat!(
+            "Host gh work\n  HostName = github.com\n  User git\n  Port 443\n  HostName other.example\n",
+            "Match host box\n  User root\n",
+            "Host box\n  User \"deploy\"\n",
+        ));
+        let gh = &r.hosts[0];
+        assert_eq!(
+            (gh.hostname.as_deref(), gh.user.as_deref(), gh.port),
+            (Some("github.com"), Some("git"), Some(443))
+        );
+        assert_eq!(r.hosts[1].hostname.as_deref(), Some("github.com"));
+        assert_eq!(r.hosts[2].user.as_deref(), Some("deploy"));
+    }
+
+    #[test]
+    fn parsed_scan_reports_code_host_fields() {
+        let home = tempfile::tempdir().unwrap();
+        let config = home.path().join("config");
+        std::fs::write(
+            &config,
+            "Host gh-443\n  HostName ssh.github.com\n  User git\n  Port 443\n",
+        )
+        .unwrap();
+        let r = scan(&config, home.path());
+        assert_eq!(r.hosts[0].hostname.as_deref(), Some("ssh.github.com"));
+        assert_eq!(r.hosts[0].user.as_deref(), Some("git"));
     }
 
     #[test]

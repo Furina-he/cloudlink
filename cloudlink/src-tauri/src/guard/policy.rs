@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use serde_json::{Value, json};
 
 use crate::error::Result;
-use crate::model::asset::Asset;
+use crate::model::asset::{Asset, CliProvider};
 use crate::paths::Paths;
 
 use super::owned;
@@ -14,6 +14,9 @@ use super::owned;
 pub fn project_policy(assets: &[Asset]) -> Value {
     let resources: Vec<Value> = assets
         .iter()
+        // GitHub 的护栏规则在 v0.3（F-110 AC3）。在那之前不写进 policy：已安装的护栏程序只认
+        // cloudflare / vercel / oracle，混进未知的 provider 会让整份 policy 被判为无效
+        .filter(|asset| !matches!(asset, Asset::Cli(cli) if cli.cli_provider == CliProvider::Github))
         .map(|asset| match asset {
             Asset::Vps(server) => {
                 let hosts: BTreeSet<&str> = std::iter::once(server.connection.ssh_alias.as_str())

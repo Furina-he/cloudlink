@@ -37,6 +37,8 @@ export interface SshHostList {
   scanned: { envId: EnvId; path: string }[]
   /** 被跳过的通配或否定 Host 的原始模式，例如 "*"、"*.internal" */
   skippedPatterns: string[]
+  /** 被排除的代码托管主机别名（HostName 是 github.com 等，或 User git），例如 "github.com" */
+  skippedCodeHosts: string[]
 }
 
 /** 设置 / ssh 配置的一行（F-107） */

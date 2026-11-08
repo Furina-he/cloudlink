@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use minijinja::{AutoEscape, Environment};
 use serde::Serialize;
 
-use crate::model::asset::{Asset, CliAsset, CliProvider, CliScopeKind, ServerAsset};
+use crate::model::asset::{Asset, CliAsset, CliProvider, CliScopeKind, RepoVisibility, ServerAsset};
 use crate::model::compile::{CompiledFile, SkillConfig};
 
 pub const TEMPLATE_VERSION: u32 = 1;
@@ -171,10 +171,19 @@ pub struct Description {
 /// F-201 AC2：超过 1024 字符时依次去掉站点名、缩短用途、只列前若干项并注明其余数量
 pub fn description(assets: &[&Asset]) -> Description {
     let has_cli = assets.iter().any(|a| matches!(a, Asset::Cli(_)));
+    // F-110：接了 GitHub 时，仓库相关的任务也要能触发这份 Skill
+    let targets = if assets
+        .iter()
+        .any(|a| matches!(a, Asset::Cli(c) if c.cli_provider == CliProvider::Github))
+    {
+        "servers, sites, cloud projects or repositories"
+    } else {
+        "servers, sites or cloud projects"
+    };
     let wrap = |list: &str| {
         if has_cli {
             format!(
-                "The user's servers and cloud platforms and how to operate them — {list}. Use for any task on these servers, sites or cloud projects: deployments, logs, Docker containers, DNS, configuration, troubleshooting, or a health check of the servers."
+                "The user's servers and cloud platforms and how to operate them — {list}. Use for any task on these {targets}: deployments, logs, Docker containers, DNS, configuration, troubleshooting, or a health check of the servers."
             )
         } else {
             format!(
@@ -522,6 +531,7 @@ fn scope_word(k: CliScopeKind) -> &'static str {
         CliScopeKind::Pages => "Pages project",
         CliScopeKind::Project => "Project",
         CliScopeKind::Instance => "Compute instance",
+        CliScopeKind::Repo => "Repository",
     }
 }
 
@@ -540,6 +550,11 @@ fn account_flag(p: CliProvider, account: &str) -> String {
             "Target this profile on every command: append {}.",
             code(&format!("--profile {account}"))
         ),
+        // gh 没有按命令指定账号的参数，总是以活动账号执行
+        CliProvider::Github => format!(
+            "Commands run as the active `gh` account. If `gh auth status` shows an active account other than {}, stop and tell the user; never switch accounts.",
+            code(account)
+        ),
     }
 }
 
@@ -548,6 +563,13 @@ struct ScopeRow {
     kind: &'static str,
     name: String,
     linked: String,
+}
+
+#[derive(Serialize)]
+struct RepoRow {
+    name: String,
+    branch: String,
+    visibility: &'static str,
 }
 
 pub fn render_cli(a: &CliAsset, all: &[Asset]) -> String {
@@ -571,6 +593,17 @@ pub fn render_cli(a: &CliAsset, all: &[Asset]) -> String {
                 .unwrap_or_else(|| "-".into()),
         })
         .collect();
+    let repos: Vec<RepoRow> = a
+        .cli
+        .scope
+        .iter()
+        .filter(|s| s.selected && s.kind == CliScopeKind::Repo)
+        .map(|s| RepoRow {
+            name: code(&s.name),
+            branch: s.default_branch.as_deref().map(code).unwrap_or_else(|| "-".into()),
+            visibility: s.visibility.map(RepoVisibility::as_str).unwrap_or("-"),
+        })
+        .collect();
     render(
         "cli",
         serde_json::json!({
@@ -583,7 +616,9 @@ pub fn render_cli(a: &CliAsset, all: &[Asset]) -> String {
             "account_flag": account.as_deref().map(|x| account_flag(a.cli_provider, x)),
             "role": one_line(&a.summary),
             "rules": a.guardrails.rules.iter().map(|r| one_line(&r.text)).collect::<Vec<_>>(),
+            "github": a.cli_provider == CliProvider::Github,
             "scope": scope,
+            "repos": repos,
             "notes": a.notes.trim(),}),
     )
 }

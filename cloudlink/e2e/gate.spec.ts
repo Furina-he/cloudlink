@@ -6,13 +6,13 @@ import { GATE, collectConsoleErrors, openServer, ready } from "./helpers"
 
 const VIEWS: { name: string; query?: string; empty?: boolean; open: (page: Page) => Promise<void> }[] = [
   { name: "servers-list", open: async () => {} },
-  // 首次启动：服务器、云平台两组入口
+  // 首次启动：居中引导，添加和导入
   {
     name: "servers-empty",
     query: "?mock=empty",
     empty: true,
     open: async (page) => {
-      await expect(page.getByRole("button", { name: /^从 ssh config 导入/ })).toContainText("3 台主机")
+      await expect(page.getByRole("button", { name: "从 ~/.ssh/config 导入 · 3 台" })).toBeVisible()
     },
   },
   { name: "servers-detail", open: (page) => openServer(page, "hk-edge") },

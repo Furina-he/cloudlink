@@ -1,5 +1,5 @@
-import { ArrowLeftIcon, CircleCheckIcon, CircleXIcon, TriangleAlertIcon, XIcon } from "lucide-react"
-import { useMemo, type ReactNode } from "react"
+import { CircleCheckIcon, CircleXIcon, TriangleAlertIcon, XIcon } from "lucide-react"
+import { useMemo } from "react"
 import { useShallow } from "zustand/react/shallow"
 
 import type { Asset, EnvId, InclusionReasonId } from "@/bindings"
@@ -12,8 +12,6 @@ import { useAssetStore } from "@/stores/assets"
 import { selectInclusionsByAsset, useDeliveryStore } from "@/stores/deliveries"
 import { compileKey, selectAssetCompile, useSkillStore } from "@/stores/skills"
 import { useUIStore } from "@/stores/ui"
-import { AgentPicker } from "./AgentPicker"
-import { ModeToggle } from "./ModeSwitch"
 
 /** 添加弹窗右上角的关闭按钮：回到资源列表；有未保存修改时先确认 */
 export function ClosePanelButton() {
@@ -26,62 +24,6 @@ export function ClosePanelButton() {
       </TooltipTrigger>
       <TooltipContent>{copy.common.close}</TooltipContent>
     </Tooltip>
-  )
-}
-
-/** 详情视图左上角的「← 返回」（PRD 6.4）：回到资源列表，Esc、再点顶栏「资源」同样返回；有未保存修改时先确认 */
-export function BackButton() {
-  return (
-    <Button variant="ghost" size="sm" className="-ml-2 shrink-0" onClick={() => useUIStore.getState().closeInspector()}>
-      <ArrowLeftIcon data-icon="inline-start" />
-      {copy.detail.back}
-    </Button>
-  )
-}
-
-/** 控制头的档位和授权（PRD 6.4）：立即生效，不经过保存。more 是右侧的「⋯」菜单；宽度够时并排一行 */
-export function ControlRows({ asset, more }: { asset: Asset; more: ReactNode }) {
-  const { known, agents } = useAgentOptions()
-  return (
-    <div className="mt-2.5 flex flex-wrap items-center gap-x-5 gap-y-2">
-      <div className="flex items-center gap-2">
-        <span id="detail-mode-label" className="text-xs font-medium text-muted-foreground">
-          {copy.agentSection.mode}
-        </span>
-        <ModeToggle asset={asset} labelledBy="detail-mode-label" />
-      </div>
-      <div className="flex min-w-0 flex-1 items-center gap-2">
-        <span id="detail-agents-label" className="shrink-0 text-xs font-medium text-muted-foreground">
-          {copy.agentSection.distribute}
-        </span>
-        {agents.length > 0 ? (
-          <AgentPicker asset={asset} agents={agents} labelledBy="detail-agents-label" className="min-w-0" />
-        ) : known ? (
-          <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            {copy.agentSection.noTargets}
-            <Button variant="link" size="xs" className="h-auto p-0" onClick={() => useUIStore.getState().setView("agents")}>
-              {copy.agentSection.goAgents}
-            </Button>
-          </span>
-        ) : null}
-        <span className="ml-auto shrink-0">{more}</span>
-      </div>
-    </div>
-  )
-}
-
-/** 一条异常提示（「正常即隐身」，PRD 6.4）：琥珀色文字加图标，右侧一键处理 */
-export function Notice({ children, action, onAction, busy }: { children: ReactNode; action?: string; onAction?: () => void; busy?: boolean }) {
-  return (
-    <div className="flex items-start gap-2 rounded-lg border border-warning/35 bg-warning/10 px-2.5 py-1.5 text-xs">
-      <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
-      <span className="min-w-0 flex-1 text-warning">{children}</span>
-      {action && (
-        <Button variant="outline" size="xs" className="shrink-0" disabled={busy} onClick={onAction}>
-          {action}
-        </Button>
-      )}
-    </div>
   )
 }
 

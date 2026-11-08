@@ -19,6 +19,16 @@
 {% endfor %}
 {% endif %}
 
+{% if github %}
+## Repositories
+Only operate on these repositories; ask the user before touching any other repository on the account.
+
+| Repository | Default branch | Visibility |
+| --- | --- | --- |
+{% for r in repos %}
+| {{ r.name }} | {{ r.branch }} | {{ r.visibility }} |
+{% endfor %}
+{% else %}
 ## Scope
 Only operate on these resources; ask the user before touching anything else in the account.
 
@@ -27,6 +37,7 @@ Only operate on these resources; ask the user before touching anything else in t
 {% for s in scope %}
 | {{ s.kind }} | {{ s.name }} | {{ s.linked }} |
 {% endfor %}
+{% endif %}
 {% if notes %}
 
 ## Notes

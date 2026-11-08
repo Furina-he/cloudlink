@@ -41,6 +41,7 @@ export type ContractCheck = [
   Assert<Same<H.CliProvider, GAsset.CliProvider>>,
   Assert<Same<H.CliScopeItem, GAsset.CliScopeItem>>,
   Assert<Same<H.CliScopeKind, GAsset.CliScopeKind>>,
+  Assert<Same<H.RepoVisibility, GAsset.RepoVisibility>>,
   Assert<Same<H.CompileBudget, GCompile.CompileBudget>>,
   Assert<Same<H.CompilePreview, GCompile.CompilePreview>>,
   Assert<Same<H.CompileStatus, GCompile.CompileStatus>>,

@@ -335,6 +335,8 @@ pub fn cloudflare() -> CliAsset {
                     selected: true,
                     linked_asset_id: Some("ast_01JB3Q8Z6W".into()),
                     address: None,
+                    default_branch: None,
+                    visibility: None,
                 },
                 CliScopeItem {
                     id: "zone_2".into(),
@@ -343,6 +345,8 @@ pub fn cloudflare() -> CliAsset {
                     selected: false,
                     linked_asset_id: None,
                     address: None,
+                    default_branch: None,
+                    visibility: None,
                 },
                 CliScopeItem {
                     id: "zone_3".into(),
@@ -351,6 +355,8 @@ pub fn cloudflare() -> CliAsset {
                     selected: true,
                     linked_asset_id: None,
                     address: None,
+                    default_branch: None,
+                    visibility: None,
                 },
                 CliScopeItem {
                     id: "worker_1".into(),
@@ -359,7 +365,59 @@ pub fn cloudflare() -> CliAsset {
                     selected: true,
                     linked_asset_id: None,
                     address: None,
+                    default_branch: None,
+                    visibility: None,
                 },
+            ],
+        },
+    }
+}
+
+/// F-110：gh 在 Windows 上已登录，开放两个仓库中的一个
+pub fn github() -> CliAsset {
+    let ready = CliEnvState {
+        installed: true,
+        version: Some("2.102.0".into()),
+        path: Some(r"C:\Program Files\GitHub CLI\gh.exe".into()),
+        authenticated: true,
+        expired: false,
+        account: Some("octo".into()),
+        accounts: Some(vec!["octo".into()]),
+        checked_at: "2026-11-08T09:00:00Z".into(),
+    };
+    let repo = |id: &str, name: &str, branch: &str, visibility: RepoVisibility, selected: bool| CliScopeItem {
+        id: id.into(),
+        kind: CliScopeKind::Repo,
+        name: name.into(),
+        selected,
+        linked_asset_id: None,
+        address: None,
+        default_branch: Some(branch.into()),
+        visibility: Some(visibility),
+    };
+    CliAsset {
+        tag: CliTag::Tag,
+        id: "ast_01JB9CLI09".into(),
+        name: "GitHub".into(),
+        production: false,
+        summary: "Source for the shop front end and the API".into(),
+        agent: AssetAgent {
+            agents: vec!["claude-code".into()],
+            mode: Mode::ReadOnly,
+        },
+        guardrails: Guardrails::default(),
+        notes: String::new(),
+        created_at: "2026-11-08T09:00:00Z".into(),
+        updated_at: "2026-11-08T09:00:00Z".into(),
+        cli_provider: CliProvider::Github,
+        handle: "github".into(),
+        account: Some("octo".into()),
+        cli: CliInfo {
+            binary: CliBinary::Gh,
+            env_states: BTreeMap::from([(EnvId::windows(), ready)]),
+            scope: vec![
+                repo("repo:R_shop", "octo/shop-web", "main", RepoVisibility::Private, true),
+                repo("repo:R_notes", "octo/notes", "master", RepoVisibility::Public, false),
             ],
         },
     }
