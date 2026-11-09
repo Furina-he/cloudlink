@@ -247,13 +247,17 @@ impl Backend {
             let source_changed = !same_source;
             if !preview.blocked {
                 let content_hash = publish::files_hash(&preview.files);
-                let marker = Marker {
-                    managed_by: publish::MANAGED_BY.into(),
-                    env_id: env_id.to_string(),
-                    agent_key: agent_key.clone(),
-                    content_hash: content_hash.clone(),
-                    compiled_at: now.clone(),
-                    template_version: 1,
+                // Unchanged source keeps its published marker, so copies stay byte-identical to it
+                let marker = match old_source.as_ref() {
+                    Some((old, _)) if same_source && old.content_hash == content_hash => old.clone(),
+                    _ => Marker {
+                        managed_by: publish::MANAGED_BY.into(),
+                        env_id: env_id.to_string(),
+                        agent_key: agent_key.clone(),
+                        content_hash: content_hash.clone(),
+                        compiled_at: now.clone(),
+                        template_version: 1,
+                    },
                 };
                 let published = if same_source {
                     Ok(())
