@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils"
 import { useCliStore } from "@/stores/cli"
 import { useDeliveryStore } from "@/stores/deliveries"
 import { useGuardStore } from "@/stores/guard"
+import { syncTrayCopy } from "@/stores/backups"
 import { loadAll, useLoadError } from "@/stores/load"
 import { useNotesStore } from "@/stores/notes"
 import { togglePreview, useUIStore } from "@/stores/ui"
@@ -57,7 +58,7 @@ function LoadErrorAlert() {
 }
 
 /**
- * 副本健康检查（F-305）：窗口重新聚焦时检查，30 秒内最多一次；启动时随首次加载完成。
+ * 副本检查（F-309）：窗口重新聚焦时检查，30 秒内最多一次；缺失和被改动的副本由后端自动恢复（被改动的先备份）。
  * 护栏与笔记在窗口可见时每 60 秒读取，重新聚焦或恢复可见时立即读取（F-307/308）。
  * 刚在终端里安装或登录云平台 CLI 的，不受节流，立即重新检测（F-104 AC2）。
  */
@@ -129,6 +130,8 @@ export function App() {
   useRecheckOnFocus()
   useEffect(() => {
     loadAll()
+    // 托盘（F-407）由 Rust 创建，菜单文字从 copy.ts 交过去
+    syncTrayCopy()
   }, [])
 
   return (

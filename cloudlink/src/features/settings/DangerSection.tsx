@@ -1,4 +1,4 @@
-import { FolderMinusIcon, Trash2Icon, type LucideIcon } from "lucide-react"
+import type { LucideIcon } from "lucide-react"
 import { useState } from "react"
 
 import { useTheme } from "@/components/theme-provider"
@@ -13,10 +13,8 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Button } from "@/components/ui/button"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 import { copy, ipcErrorText } from "@/lib/copy"
@@ -27,7 +25,6 @@ import { loadAll } from "@/stores/load"
 import { useOperationStore } from "@/stores/operations"
 import { useTargetStore } from "@/stores/targets"
 import { useUIStore } from "@/stores/ui"
-import { Section } from "./Section"
 
 /** 失败时播报原因，并让确认对话框留在原处 */
 async function attempt(action: () => Promise<unknown>) {
@@ -41,7 +38,7 @@ async function attempt(action: () => Promise<unknown>) {
 }
 
 /** 危险操作的确认：AlertDialog，并要求输入确认文字（PRD 6.7） */
-function TypedConfirm({
+export function TypedConfirm({
   open,
   onOpenChange,
   icon: Icon,
@@ -100,13 +97,9 @@ function TypedConfirm({
   )
 }
 
-/** 危险操作（PRD 6.7）：移除全部分发；清空数据。CloudLink 只删除自己创建的副本、配置和数据 */
-export function DangerSection() {
+/** 危险操作（PRD 6.8）：移除全部分发；重置 CloudLink。CloudLink 只删除自己创建的副本、配置和数据 */
+export function useDangerActions() {
   const { setTheme } = useTheme()
-  const hasDeliveries = useDeliveryStore((s) => Object.keys(s.byId).length > 0)
-  const hasEnabled = useTargetStore((s) => s.targets.some((t) => t.enabled))
-  const [dialog, setDialog] = useState<"remove" | "reset" | null>(null)
-
   const removeAll = () =>
     attempt(async () => {
       await useDeliveryStore.getState().removeAll()
@@ -124,50 +117,5 @@ export function DangerSection() {
       void useActivityStore.getState().load({})
       toast.add({ title: copy.settings.resetDone })
     })
-
-  const rows = [
-    { id: "remove" as const, icon: FolderMinusIcon, title: copy.settings.removeAll, hint: copy.settings.removeAllHint, disabled: !hasDeliveries && !hasEnabled },
-    { id: "reset" as const, icon: Trash2Icon, title: copy.settings.resetData, hint: copy.settings.resetDataHint, disabled: false },
-  ]
-
-  return (
-    <Section id="danger" title={copy.settings.section.danger} hint={copy.settings.dangerHint}>
-      <ItemGroup className="gap-2">
-        {rows.map(({ id, icon: Icon, title, hint, disabled }) => (
-          <Item key={id} variant="outline">
-            <ItemMedia>
-              <Icon className="size-4" aria-hidden />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>{title}</ItemTitle>
-              <ItemDescription>{hint}</ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <Button variant="destructive" size="sm" disabled={disabled} onClick={() => setDialog(id)}>
-                {title}
-              </Button>
-            </ItemActions>
-          </Item>
-        ))}
-      </ItemGroup>
-      <TypedConfirm
-        open={dialog === "remove"}
-        onOpenChange={(o) => !o && setDialog(null)}
-        icon={FolderMinusIcon}
-        title={copy.settings.removeAll}
-        description={copy.settings.removeAllHint}
-        phrase={copy.settings.removeAllConfirm}
-        onConfirm={removeAll}
-      />
-      <TypedConfirm
-        open={dialog === "reset"}
-        onOpenChange={(o) => !o && setDialog(null)}
-        icon={Trash2Icon}
-        title={copy.settings.resetData}
-        description={copy.settings.resetDataHint}
-        phrase={copy.settings.resetDataConfirm}
-        onConfirm={resetData}
-      />
-    </Section>
-  )
+  return { removeAll, resetData }
 }

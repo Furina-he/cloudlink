@@ -14,14 +14,14 @@ export function collectConsoleErrors(page: Page) {
   return errors
 }
 
-/** 打开应用并等夹具加载完：回路行出现 */
+/** 打开应用并等夹具加载完：资源行出现 */
 export async function ready(page: Page, query = "") {
   await page.goto(`/${query}`)
   await expect(page.getByRole("heading", { level: 1, name: "资源" })).toBeAttached()
   await expect(row(page, "hk-edge")).toBeVisible()
 }
 
-/** 回路行上进入详情的按钮，名称是「标识，名称，状态」 */
+/** 资源行上进入详情的按钮，名称是「标识，名称，状态」 */
 export const row = (page: Page, handle: string) => page.getByRole("button", { name: new RegExp(`^${handle}，`) })
 
 /** 详情视图的标题：服务器是别名，云平台是平台名称 */
@@ -30,7 +30,7 @@ export const detailTitle = (page: Page) => page.locator("h2#detail-title")
 /** 详情视图（或添加弹窗）：标题是 #detail-title 的那个 section */
 export const inspector = (page: Page) => page.locator("section").filter({ has: page.locator("#detail-title") }).last()
 
-/** 进入某项资源的详情。打开按钮铺满回路行左侧，状态旁的修复按钮叠在它上面；点左上角，避开修复按钮 */
+/** 进入某项资源的详情。打开按钮铺满资源行左侧，状态旁的修复按钮叠在它上面；点左上角，避开修复按钮 */
 export async function openServer(page: Page, handle: string, title?: string) {
   await row(page, handle).click({ position: { x: 6, y: 6 } })
   await expect(detailOf(page, handle)).toBeVisible()

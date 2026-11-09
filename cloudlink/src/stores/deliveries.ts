@@ -14,7 +14,8 @@ interface DeliveryState {
   load: () => Promise<void>
   /** 健康检查（F-305）：返回检查后的全部副本 */
   checkAll: () => Promise<Delivery[]>
-  repair: (id: string) => Promise<Delivery>
+  /** F-309 AC3：备份并接管同名 Skill */
+  takeOver: (targetId: string) => Promise<Delivery>
   removeAll: () => Promise<void>
   _onChanged: (e: { deliveries: Delivery[]; inclusions: Inclusion[] }) => void
   _setInclusions: (inclusions: Inclusion[]) => void
@@ -48,9 +49,9 @@ export const useDeliveryStore = create<DeliveryState>()((set) => ({
     }
   },
 
-  repair: async (id) => {
+  takeOver: async (targetId) => {
     try {
-      const d = await ipc.repairDelivery(id)
+      const d = await ipc.takeOverTarget(targetId)
       set((s) => ({ byId: { ...s.byId, [d.id]: d } }))
       return d
     } catch (e) {

@@ -28,15 +28,8 @@ export interface CreatePrefill {
   name: string
 }
 
-export type SettingsSection =
-  | "general"
-  | "environments"
-  | "ssh"
-  | "compile"
-  | "probe"
-  | "activity"
-  | "data"
-  | "danger"
+/** Agent 页的二级页（PRD 6.6）：资源关系、运维约定、护栏规则；main 为 Agent 页本身 */
+export type AgentsPage = "main" | "relations" | "conventions" | "rules"
 
 /**
  * 离开当前对象前的确认（PRD 6.4）。服务器详情、新建表单、Agent 页有未保存修改时注册：
@@ -94,7 +87,9 @@ interface UIState {
   /** 顶栏搜索框展开（PRD 6.3） */
   searchOpen: boolean
   importOpen: boolean
-  settingsSection: SettingsSection
+  agentsPage: AgentsPage
+  /** 设置 → 数据 →「活动日志」（PRD 6.7：应用自己的活动不混进 Agent 的操作记录） */
+  activityLogOpen: boolean
   /** 各视图主滚动区的位置，切回视图时恢复（PRD 6.3） */
   scrollByView: Partial<Record<ViewId, number>>
 
@@ -118,7 +113,8 @@ interface UIState {
   toggleNavPosition: () => void
   setSearchOpen: (open: boolean) => void
   setImportOpen: (open: boolean) => void
-  setSettingsSection: (section: SettingsSection) => void
+  setAgentsPage: (page: AgentsPage) => void
+  setActivityLogOpen: (open: boolean) => void
   saveScroll: (view: ViewId, top: number) => void
 }
 
@@ -138,7 +134,8 @@ export const useUIStore = create<UIState>()((set, get) => ({
       navPosition: readNav(),
       searchOpen: false,
       importOpen: false,
-      settingsSection: "general",
+      agentsPage: "main",
+      activityLogOpen: false,
       scrollByView: {},
 
       setView: (view, opts) => {
@@ -146,10 +143,11 @@ export const useUIStore = create<UIState>()((set, get) => ({
           opts?.then?.()
           return
         }
-        guarded(opts, () => set((s) => ({ view, viewSwitches: s.viewSwitches + 1, previewOpen: false })))
+        guarded(opts, () => set((s) => ({ view, viewSwitches: s.viewSwitches + 1, previewOpen: false, agentsPage: "main" })))
       },
       goToView: (view) => {
         if (get().view === view && view === "servers") get().closeInspector()
+        if (get().view === view && view === "agents") get().setAgentsPage("main")
         else get().setView(view)
       },
       selectAsset: (selectedAssetId, opts) => {
@@ -207,7 +205,8 @@ export const useUIStore = create<UIState>()((set, get) => ({
       toggleNavPosition: () => get().setNavPosition(get().navPosition === "top" ? "side" : "top"),
       setSearchOpen: (searchOpen) => set(searchOpen ? { searchOpen } : { searchOpen, query: "" }),
       setImportOpen: (importOpen) => set({ importOpen }),
-      setSettingsSection: (settingsSection) => set({ settingsSection }),
+      setAgentsPage: (agentsPage) => set({ agentsPage }),
+      setActivityLogOpen: (activityLogOpen) => set({ activityLogOpen }),
       saveScroll: (view, top) => set((s) => ({ scrollByView: { ...s.scrollByView, [view]: top } })),
 }))
 

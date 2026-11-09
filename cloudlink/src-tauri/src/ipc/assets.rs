@@ -393,6 +393,31 @@ impl Backend {
         Ok(SaveResult { asset, statuses })
     }
 
+    /// F-407 AC2「全部切回只读」：只动处于标准运维的生产资源，返回切回的资源名称
+    pub fn all_read_only(&self) -> Result<Vec<String>> {
+        let _edit = self.edit()?;
+        let mut switched = Vec::new();
+        for mut asset in self.list_assets()? {
+            if !asset.production() || asset.agent().mode != Mode::Standard {
+                continue;
+            }
+            asset.agent_mut().mode = Mode::ReadOnly;
+            self.database()?.upsert_asset(&asset)?;
+            self.activity(
+                ActivityKind::Mode,
+                ActivityMessageId::ModeChanged,
+                Some(asset.id()),
+                params! {"alias" => asset.handle(), "mode" => Mode::ReadOnly.as_str()},
+                true,
+            )?;
+            switched.push(asset.name().to_string());
+        }
+        if !switched.is_empty() {
+            self.publish_locked()?;
+        }
+        Ok(switched)
+    }
+
     pub fn set_distribute(&self, asset_id: &str, agent_key: &str, on: bool) -> Result<Vec<Inclusion>> {
         let epoch = self.reset_epoch.load(Ordering::SeqCst);
         if on {

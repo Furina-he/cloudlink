@@ -7,7 +7,7 @@ export type ActivityItem = { id: string, kind: ActivityKind, at: string, assetId
 
 export type ActivityKind = "connection" | "probe" | "compile" | "deliver" | "remove" | "repair" | "ssh-config" | "guard" | "mode" | "cli" | "note" | "agent-op" | "update";
 
-export type ActivityMessageId = "test-ok" | "test-failed" | "probe-updated" | "probe-held" | "probe-no-changes" | "probe-failed" | "probe-undone" | "compile-ok" | "compile-blocked" | "deliver-ok" | "remove-ok" | "repair-ok" | "ssh-config-written" | "ssh-include-added" | "guard-installed" | "guard-removed" | "mode-changed" | "cli-detected" | "cli-scope-updated" | "notes-merged" | "notes-dismissed" | "agent-op-allowed" | "agent-op-denied" | "update-installing";
+export type ActivityMessageId = "test-ok" | "test-failed" | "probe-updated" | "probe-held" | "probe-no-changes" | "probe-failed" | "probe-undone" | "compile-ok" | "compile-blocked" | "deliver-ok" | "remove-ok" | "repair-ok" | "copy-restored" | "copy-taken-over" | "backup-undone" | "ssh-config-written" | "ssh-include-added" | "guard-installed" | "guard-removed" | "mode-changed" | "cli-detected" | "cli-scope-updated" | "notes-merged" | "notes-dismissed" | "agent-op-allowed" | "agent-op-denied" | "update-installing";
 
 export type ActivityQuery = { before?: string, limit: number, kinds?: Array<ActivityKind>, assetId?: string, };
 
@@ -39,9 +39,35 @@ export type Settings = { theme: Theme, outputLanguage: OutputLanguage, environme
 /**
  * F-406：定时检查更新，默认开启（旧数据由迁移 v4 补上）
  */
-autoCheckUpdates: boolean, };
+autoCheckUpdates: boolean, 
+/**
+ * F-407：关闭窗口时留在托盘（默认），false 为退出
+ */
+closeToTray: boolean, 
+/**
+ * 开机时启动（tauri-plugin-autostart，写当前用户的启动项）
+ */
+launchAtLogin: boolean, };
 
 export type Theme = "system" | "light" | "dark";
+
+/**
+ * `tray://confirm-mode`：生产资源要切到标准运维，主窗口打开确认（AC1）
+ */
+export type TrayConfirmMode = { assetId: string, };
+
+/**
+ * 托盘菜单的全部文字。`{n}` 由 Rust 换成数量
+ */
+export type TrayCopy = { tooltip: string, guardOn: string, guardOff: string, modesHeader: string, readOnly: string, standard: string, allReadOnly: string, 
+/**
+ * 「{n} 台生产在运维档」
+ */
+prodInStandard: string, open: string, quit: string, 
+/**
+ * 系统通知标题与正文「{n} 台生产服务器已切回只读」
+ */
+notifyTitle: string, notifyAllReadOnly: string, };
 
 /**
  * F-406：idle 时界面不显示任何更新元素（没有新版本、尚未检查或已关闭检查）

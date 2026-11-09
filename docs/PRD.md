@@ -1365,7 +1365,7 @@ src/
 
 Rust 依赖锁定的主版本（2026-10-27 核实）：`tauri` 2.12、`tauri-build` 2.7、`rusqlite` 0.41（features = bundled）、`minijinja` 3、`ssh2-config` 0.9、`keyring` 3、`ssh-key` 0.6（features = ed25519）、`ts-rs` 12、`serde` 1、`serde_json` 1（features = preserve_order）、`thiserror` 2、`tokio` 1、`ulid` 3、`regex` 1、`sha2` 0.11、`dirs` 7；开发依赖 `tempfile` 3。v3 去掉了 `tiktoken-rs`（不再估算 Token）和 `junction`（不再使用链接）。
 
-Tauri 插件：`tauri-plugin-dialog`、`tauri-plugin-opener`、`tauri-plugin-window-state`、`tauri-plugin-single-instance`、`tauri-plugin-log`，以及 F-406 的 `tauri-plugin-updater` 2（2026-11-05 加入，只在 Rust 侧调用，capability 不给前端授予 `updater:*` 权限）。**不向前端暴露 shell 插件和 fs 插件**：所有系统操作都由具名的 Rust 命令完成，capability 按最小权限配置。护栏程序作为 sidecar 打包（`bundle.externalBin`，文件名带目标三元组后缀）。`pnpm --dir cloudlink build:guard` 构建并准备该文件；Tauri 的 `beforeDevCommand` / `beforeBuildCommand` 自动执行此步骤，全新检出后直接运行 Cargo 门禁前也须先准备 sidecar。主应用、`guard-rules` 和 `cloudlink-guard` 都是 workspace 的默认成员，全套 Cargo 门禁覆盖三者。
+Tauri 插件：`tauri-plugin-dialog`、`tauri-plugin-opener`、`tauri-plugin-window-state`、`tauri-plugin-single-instance`、`tauri-plugin-log`，以及 F-406 的 `tauri-plugin-updater` 2（2026-11-05 加入，只在 Rust 侧调用，capability 不给前端授予 `updater:*` 权限）；F-407 的 `tauri-plugin-notification` 2 与设置「开机时启动」的 `tauri-plugin-autostart` 2（2026-11-09 经用户同意加入，都只在 Rust 侧调用，不给前端授予权限；隔离模式下不注册开机启动）。**不向前端暴露 shell 插件和 fs 插件**：所有系统操作都由具名的 Rust 命令完成，capability 按最小权限配置。护栏程序作为 sidecar 打包（`bundle.externalBin`，文件名带目标三元组后缀）。`pnpm --dir cloudlink build:guard` 构建并准备该文件；Tauri 的 `beforeDevCommand` / `beforeBuildCommand` 自动执行此步骤，全新检出后直接运行 Cargo 门禁前也须先准备 sidecar。主应用、`guard-rules` 和 `cloudlink-guard` 都是 workspace 的默认成员，全套 Cargo 门禁覆盖三者。
 
 ### 8.2 分发方式：一律受管复制
 

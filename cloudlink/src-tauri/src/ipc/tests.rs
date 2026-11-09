@@ -20,7 +20,7 @@ use crate::fsx;
 use crate::model::asset::*;
 use crate::model::delivery::{AddCustomTargetRequest, AgentId, DeliveryStatus, InclusionReasonId, Target};
 use crate::model::env::EnvId;
-use crate::model::misc::IpcErrorId;
+use crate::model::misc::{ActivityMessageId, ActivityQuery, IpcErrorId};
 use crate::paths::Paths;
 use crate::secret::SecretString;
 use crate::secret::store::{CredentialStore, MemoryCredentialStore};
@@ -52,6 +52,16 @@ impl RecordingEvents {
 
     fn contains(&self, name: &str) -> bool {
         self.items.lock().unwrap().iter().any(|(event, _)| event == name)
+    }
+
+    fn payloads(&self, name: &str) -> Vec<Value> {
+        self.items
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(event, _)| event == name)
+            .map(|(_, payload)| payload.clone())
+            .collect()
     }
 }
 
@@ -543,7 +553,7 @@ fn summary_edits_keep_verified_connection_but_changed_connection_requires_a_new_
 }
 
 #[test]
-fn checking_missing_delivery_does_not_publish_or_restore_it_until_explicit_repair() {
+fn checking_rewrites_a_missing_delivery_without_republishing_the_source() {
     let fixture = Fixture::new();
     fixture.seed_ready_server();
     let target = fixture.target();
@@ -556,72 +566,108 @@ fn checking_missing_delivery_does_not_publish_or_restore_it_until_explicit_repai
     fixture.events.clear();
 
     let checked = fixture.backend.check_deliveries().unwrap();
-    let missing = checked.iter().find(|delivery| delivery.target_id == target.id).unwrap();
-    assert_eq!(missing.status, DeliveryStatus::Missing);
-    assert!(!destination.exists());
+    let restored = checked.iter().find(|delivery| delivery.target_id == target.id).unwrap();
+    assert_eq!(restored.status, DeliveryStatus::Ok);
+    assert_eq!(tree_bytes(&destination), before);
     assert_eq!(tree_bytes(&source), before);
     assert_eq!(fixture.backend.get_compile_status().unwrap(), statuses);
     assert!(!fixture.events.contains("compile://finished"));
     assert!(fixture.events.contains("deliveries://changed"));
-
-    let repaired = fixture.backend.repair_delivery(&missing.id).unwrap();
-    assert_eq!(repaired.status, DeliveryStatus::Ok);
-    assert_eq!(tree_bytes(&destination), before);
+    // A missing copy has nothing to back up.
+    assert!(!fixture.events.contains("deliveries://backed-up"));
+    assert!(!fixture.paths.backups_dir().exists());
     fixture.assert_neighbors_untouched();
 }
 
+fn backup_id_from_events(fixture: &Fixture) -> String {
+    fixture
+        .events
+        .payloads("deliveries://backed-up")
+        .last()
+        .and_then(|p| p.get("backupId").and_then(|v| v.as_str()).map(str::to_string))
+        .expect("a backup event")
+}
+
 #[test]
-fn checking_and_automatic_publication_preserve_external_edits_until_explicit_repair() {
+fn modified_copy_is_backed_up_restored_and_undo_writes_the_edit_back_and_pauses_the_target() {
     let fixture = Fixture::new();
-    let ready = fixture.seed_ready_server();
+    fixture.seed_ready_server();
     let target = fixture.target();
     let destination = fixture.destination(&target);
     let source = fixture.source(&target);
-    fixture.replace_owned_file(&destination, &target, "SKILL.md", b"external edit\n");
+    fixture.replace_owned_file(
+        &destination,
+        &target,
+        "SKILL.md",
+        b"external edit
+",
+    );
     fixture.replace_owned_file(
         &destination,
         &target,
         "references/external.md",
-        b"external additional file\n",
+        b"external additional file
+",
     );
     let edited = tree_bytes(&destination);
-    let source_before = tree_bytes(&source);
+    fixture.events.clear();
 
     let checked = fixture.backend.check_deliveries().unwrap();
     assert_eq!(
-        checked
-            .iter()
-            .find(|delivery| delivery.target_id == target.id)
-            .unwrap()
-            .status,
-        DeliveryStatus::Modified
-    );
-    assert_eq!(tree_bytes(&destination), edited);
-    assert_eq!(tree_bytes(&source), source_before);
-
-    let mut documentation = server_input(ready.as_server().unwrap(), Some(ready.id()));
-    documentation.summary = "Updated documentation without changing authorization".into();
-    fixture.backend.save_asset(AssetInput::Vps(documentation)).unwrap();
-    let modified = fixture
-        .backend
-        .list_deliveries()
-        .unwrap()
-        .into_iter()
-        .find(|delivery| delivery.target_id == target.id)
-        .unwrap();
-    assert_eq!(modified.status, DeliveryStatus::Modified);
-    assert_eq!(tree_bytes(&destination), edited);
-    assert_eq!(
-        fixture.backend.repair_delivery(&modified.id).unwrap().status,
+        checked.iter().find(|d| d.target_id == target.id).unwrap().status,
         DeliveryStatus::Ok
     );
     assert_eq!(tree_bytes(&destination), tree_bytes(&source));
-    assert!(!destination.join("references/external.md").exists());
+    let backup_id = backup_id_from_events(&fixture);
+    let saved = fixture
+        .paths
+        .backups_dir()
+        .join(&backup_id)
+        .join(&target.id)
+        .join(publish::SKILL_DIR);
+    assert_eq!(
+        fs::read(saved.join("SKILL.md")).unwrap(),
+        b"external edit
+"
+        .to_vec()
+    );
+    assert!(saved.join("references/external.md").is_file());
+    assert!(
+        fixture
+            .backend
+            .list_activity(ActivityQuery {
+                before: None,
+                limit: 50,
+                kinds: None,
+                asset_id: None
+            })
+            .unwrap()
+            .iter()
+            .any(|a| a.message_id == ActivityMessageId::CopyRestored)
+    );
+
+    let paused = fixture.backend.undo_backup(&backup_id).unwrap();
+    assert!(!paused.enabled);
+    assert_eq!(tree_bytes(&destination), edited);
+    // A paused target is neither checked nor overwritten again.
+    fixture.backend.check_deliveries().unwrap();
+    assert_eq!(tree_bytes(&destination), edited);
+    assert!(
+        fixture
+            .backend
+            .list_deliveries()
+            .unwrap()
+            .iter()
+            .all(|d| d.target_id != target.id)
+    );
+    // Undo validates the backup id; separators and unknown ids are rejected.
+    assert_ipc(fixture.backend.undo_backup("../x"), IpcErrorId::NotFound);
+    assert_ipc(fixture.backend.undo_backup("missing-id"), IpcErrorId::NotFound);
     fixture.assert_neighbors_untouched();
 }
 
 #[test]
-fn foreign_delivery_marker_blocks_repair_and_disable_without_changing_foreign_files() {
+fn foreign_same_name_skill_is_untouched_until_take_over_which_backs_it_up_and_can_be_undone() {
     let fixture = Fixture::new();
     fixture.seed_ready_server();
     let target = fixture.target();
@@ -639,34 +685,47 @@ fn foreign_delivery_marker_blocks_repair_and_disable_without_changing_foreign_fi
     let checked = fixture.backend.check_deliveries().unwrap();
     let conflict = checked.iter().find(|delivery| delivery.target_id == target.id).unwrap();
     assert_eq!(conflict.status, DeliveryStatus::Conflict);
-    assert_eq!(
-        fixture.backend.repair_delivery(&conflict.id).unwrap().status,
-        DeliveryStatus::Conflict
-    );
+    assert_eq!(tree_bytes(&destination), foreign);
     assert_ipc(
         fixture.backend.set_target_enabled(&target.id, false),
         IpcErrorId::TargetExists,
     );
     assert!(fixture.backend.require_target(&target.id).unwrap().enabled);
     assert_eq!(tree_bytes(&destination), foreign);
+
+    fixture.events.clear();
+    let taken = fixture.backend.take_over_target(&target.id).unwrap();
+    assert_eq!(taken.status, DeliveryStatus::Ok);
+    assert_eq!(tree_bytes(&destination), tree_bytes(&fixture.source(&target)));
+    let backup_id = backup_id_from_events(&fixture);
+    // Taking over twice is refused: the directory is CloudLink's now.
+    assert_ipc(fixture.backend.take_over_target(&target.id), IpcErrorId::NotFound);
+
+    let paused = fixture.backend.undo_backup(&backup_id).unwrap();
+    assert!(!paused.enabled);
+    assert_eq!(tree_bytes(&destination), foreign);
     fixture.assert_neighbors_untouched();
 }
 
 #[test]
-fn tampered_compiled_source_cannot_be_used_to_repair_a_delivery() {
+fn take_over_refuses_a_healthy_copy_and_a_tampered_compiled_source() {
     let fixture = Fixture::new();
     fixture.seed_ready_server();
     let target = fixture.target();
     let destination = fixture.destination(&target);
-    let source = fixture.source(&target);
     let before = tree_bytes(&destination);
-    fixture.replace_owned_file(&source, &target, "SKILL.md", b"tampered source\n");
-    let tampered = tree_bytes(&source);
+    assert_ipc(fixture.backend.take_over_target(&target.id), IpcErrorId::NotFound);
 
-    assert_ipc(
-        fixture.backend.repair_delivery(&format!("dlv_{}", target.id)),
-        IpcErrorId::SourceMissing,
+    let source = fixture.source(&target);
+    fixture.replace_owned_file(
+        &source,
+        &target,
+        "SKILL.md",
+        b"tampered source
+",
     );
+    let tampered = tree_bytes(&source);
+    assert_ipc(fixture.backend.take_over_target(&target.id), IpcErrorId::SourceMissing);
     assert_eq!(tree_bytes(&destination), before);
     assert_eq!(tree_bytes(&source), tampered);
 }
@@ -1205,10 +1264,7 @@ fn assert_blocked_withdrawal_cannot_restore_old_copy(
     let checked = fixture.backend.check_deliveries().unwrap();
     let withdrawn = checked.iter().find(|delivery| delivery.target_id == target.id).unwrap();
     assert_eq!(withdrawn.status, DeliveryStatus::Missing);
-    assert_ipc(
-        fixture.backend.repair_delivery(&withdrawn.id),
-        IpcErrorId::CompileBlocked,
-    );
+    assert_ipc(fixture.backend.take_over_target(&target.id), IpcErrorId::CompileBlocked);
     assert!(!fixture.destination(target).exists());
     assert_eq!(tree_bytes(&fixture.source(target)), *last_success);
 
@@ -1234,7 +1290,7 @@ fn assert_blocked_withdrawal_cannot_restore_old_copy(
         .unwrap();
     assert_eq!(new_delivery.status, DeliveryStatus::Missing);
     assert_ipc(
-        fixture.backend.repair_delivery(&new_delivery.id),
+        fixture.backend.take_over_target(&additional.id),
         IpcErrorId::CompileBlocked,
     );
     assert!(!fixture.destination(target).exists());

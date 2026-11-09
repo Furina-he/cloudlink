@@ -835,3 +835,58 @@ fn compiled_source_with_nested_link_is_not_read_or_copied() {
     );
     remove_link_dir(&link);
 }
+
+#[test]
+fn backups_keep_the_newest_twenty_or_thirty_days_and_skip_foreign_directories() {
+    let fixture = Fixture::new();
+    fixture.sync(0, "one", false);
+    let source = fixture.destination(0);
+    let target = &fixture.targets[0];
+    let mut ids = Vec::new();
+    for _ in 0..23 {
+        ids.push(
+            backup::create(&fixture.paths, target, &source, BackupReason::Modified)
+                .unwrap()
+                .backup_id,
+        );
+    }
+    // Three oldest are 40 days old, one more is recent but outside the newest twenty by age order.
+    let now = crate::time::now_secs();
+    for (i, id) in ids.iter().enumerate() {
+        let age = if i < 3 { 40 * 86_400 + i as i64 } else { 100 - i as i64 };
+        backup::rewrite_created_at(&fixture.paths, id, &target.id, &crate::time::format_rfc3339(now - age));
+    }
+    let foreign = fixture.paths.backups_dir().join("user-folder");
+    fs::create_dir_all(&foreign).unwrap();
+    fs::write(foreign.join("notes.txt"), b"mine").unwrap();
+
+    assert_eq!(backup::prune(&fixture.paths, now).unwrap(), 3);
+    for (i, id) in ids.iter().enumerate() {
+        assert_eq!(fixture.paths.backups_dir().join(id).exists(), i >= 3, "backup {i}");
+    }
+    assert_eq!(fs::read(foreign.join("notes.txt")).unwrap(), b"mine");
+    // The copied tree is byte-identical and the backed-up copy itself is untouched.
+    let (_, tree) = backup::load(&fixture.paths, &ids[5], target).unwrap();
+    assert_eq!(
+        fs::read(tree.join("SKILL.md")).unwrap(),
+        fs::read(source.join("SKILL.md")).unwrap()
+    );
+    assert_eq!(fixture.status(0, "one"), DeliveryStatus::Ok);
+}
+
+#[test]
+fn automatic_sync_backs_up_a_modified_copy_but_never_a_linked_one() {
+    let fixture = Fixture::new();
+    fixture.sync(0, "one", false);
+    fs::write(fixture.destination(0).join("SKILL.md"), b"edited").unwrap();
+    let files = sample_files("two");
+    let marker = sample_marker(&fixture.targets[0], &files);
+    let (delivery, saved) = sync_auto(&fixture.paths, &fixture.envs[0], &fixture.targets[0], &files, &marker).unwrap();
+    assert_eq!(delivery.status, DeliveryStatus::Ok);
+    let saved = saved.expect("modified copy was backed up");
+    let (_, tree) = backup::load(&fixture.paths, &saved.backup_id, &fixture.targets[0]).unwrap();
+    assert_eq!(fs::read(tree.join("SKILL.md")).unwrap(), b"edited");
+    // A healthy copy produces no backup.
+    let (_, none) = sync_auto(&fixture.paths, &fixture.envs[0], &fixture.targets[0], &files, &marker).unwrap();
+    assert!(none.is_none());
+}

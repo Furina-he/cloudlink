@@ -33,6 +33,12 @@ export type ActivityMessageId =
   | "deliver-ok"
   | "remove-ok"
   | "repair-ok"
+  /** F-309：被改动的副本已备份并恢复；params：target、env、backup */
+  | "copy-restored"
+  /** F-309：外来的同名 Skill 已移进备份并接管；params：target、env、backup */
+  | "copy-taken-over"
+  /** F-309：备份已写回，这个目标停用；params：target、env */
+  | "backup-undone"
   | "ssh-config-written"
   | "ssh-include-added"
   | "guard-installed"
@@ -88,6 +94,31 @@ export interface Settings {
   sshIncludeAsked: EnvId[]
   /** 定时检查更新，默认开启（F-406） */
   autoCheckUpdates: boolean
+  /** 关闭窗口时留在托盘，默认开启（F-407） */
+  closeToTray: boolean
+  /** 开机时启动 */
+  launchAtLogin: boolean
+}
+
+/** 托盘菜单的文字（F-407）：文案只在 copy.ts，启动时经 setTrayCopy 交给 Rust；{n} 由 Rust 替换 */
+export interface TrayCopy {
+  tooltip: string
+  guardOn: string
+  guardOff: string
+  modesHeader: string
+  readOnly: string
+  standard: string
+  allReadOnly: string
+  prodInStandard: string
+  open: string
+  quit: string
+  notifyTitle: string
+  notifyAllReadOnly: string
+}
+
+/** tray://confirm-mode：托盘里把生产资源切到标准运维，主窗口弹出确认（F-407 AC1） */
+export interface TrayConfirmMode {
+  assetId: string
 }
 
 export interface SaveResult {

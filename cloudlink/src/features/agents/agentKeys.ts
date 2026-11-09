@@ -1,4 +1,4 @@
-// 回路行上可点选的 Agent，和每一份总 Skill（运行环境 × Agent）。都由已启用的目标推出来（2026-11-01 用户确认）
+// 资源行上可点选的 Agent，和每一份总 Skill（运行环境 × Agent）。都由已启用的目标推出来（2026-11-01 用户确认）
 import { useMemo } from "react"
 
 import type { AgentBrand, AgentId, EnvId, Environment, Target } from "@/bindings"
@@ -16,7 +16,7 @@ export interface AgentOption {
   agent: AgentId
   /** 完整名称，例如「Codex」 */
   label: string
-  /** 回路行按钮上的短名称，例如「通用」 */
+  /** 资源行按钮上的短名称，例如「通用」 */
   short: string
   /** 把它当作主要目录的、检测到的 Agent（通用目录下的 Codex、Cursor 等），各运行环境合并 */
   readers: AgentBrand[]

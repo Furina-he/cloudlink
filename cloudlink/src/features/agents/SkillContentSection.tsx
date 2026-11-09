@@ -1,4 +1,4 @@
-import { ChevronRightIcon, CircleCheckIcon, EyeIcon, EyeOffIcon, GlobeIcon, GripVerticalIcon, PencilIcon, PenLineIcon, PlusIcon, ServerIcon, Trash2Icon, Undo2Icon, WaypointsIcon } from "lucide-react"
+import { ChevronRightIcon, EyeIcon, EyeOffIcon, GlobeIcon, GripVerticalIcon, PencilIcon, PenLineIcon, PlusIcon, ServerIcon, Trash2Icon, Undo2Icon, WaypointsIcon } from "lucide-react"
 import { useMemo, useRef, type ReactNode } from "react"
 import { useFieldArray, useFormContext, useWatch } from "react-hook-form"
 
@@ -99,7 +99,7 @@ function NoteRow({ index, onRemove }: { index: number; onRemove: () => void }) {
  * 资源关系（2026-11-07）：CloudLink 从资源推出的关系逐条列出，可以隐藏、改写（改写后原来那条隐藏，换成用户的一句）；
  * 推不出来的由用户补充。只有补充和改写的那几句是输入框，不再是一大块文本框
  */
-function RelationsBlock() {
+export function RelationsBlock() {
   const relations = useSkillStore((s) => s.relations)
   const { control, getValues, setValue } = useFormContext<SkillConfigValues>()
   const notes = useFieldArray({ control, name: "relationNotes", keyName: "key" })
@@ -177,11 +177,11 @@ function RelationsBlock() {
         </Button>
       </div>
       {all.length > 0 ? (
-        <ul aria-labelledby="skill-relations" className="divide-y rounded-xl border">
+        <ul aria-labelledby="skill-relations" className="divide-y divide-line-2 rounded-list border border-line bg-card">
           {all}
         </ul>
       ) : (
-        <p className="rounded-xl border px-3 py-2.5 text-sm text-muted-foreground">{copy.skillContent.relationsEmpty}</p>
+        <p className="rounded-list border border-line bg-card px-3 py-2.5 text-sm text-muted-foreground">{copy.skillContent.relationsEmpty}</p>
       )}
       {hiddenOnly.length > 0 && (
         <Collapsible>
@@ -190,7 +190,7 @@ function RelationsBlock() {
             {copy.skillContent.hiddenCount(hiddenOnly.length)}
           </CollapsibleTrigger>
           <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-200 data-ending-style:h-0 data-starting-style:h-0">
-            <ul aria-label={copy.skillContent.hiddenListLabel} className="mt-1 divide-y rounded-xl border border-dashed">
+            <ul aria-label={copy.skillContent.hiddenListLabel} className="mt-1 divide-y divide-line-2 rounded-list border border-line bg-card border-dashed">
               {hiddenOnly.map((r) => (
                 <li key={r.id} className="flex items-center gap-2 px-2 py-1 text-muted-foreground">
                   <span className="ml-1 flex shrink-0 opacity-60">
@@ -254,7 +254,7 @@ function ConventionRow({ id, index, onRemove }: { id: string; index: number; onR
   )
 }
 
-function ConventionsBlock() {
+export function ConventionsBlock() {
   const { control } = useFormContext<SkillConfigValues>()
   // keyName "key"：约定自带 id，排序用领域 id（PRD 7.2 已知的坑第 2 条）
   const { fields, append, remove, move } = useFieldArray({ control, name: "conventions", keyName: "key" })
@@ -274,52 +274,31 @@ function ConventionsBlock() {
       </div>
       {fields.length > 0 ? (
         <SortableList ids={fields.map((f) => f.id)} onMove={move}>
-          <ol aria-labelledby="skill-conventions" className="divide-y rounded-xl border">
+          <ol aria-labelledby="skill-conventions" className="divide-y divide-line-2 rounded-list border border-line bg-card">
             {fields.map((f, i) => (
               <ConventionRow key={f.key} id={f.id} index={i} onRemove={() => remove(i)} />
             ))}
           </ol>
         </SortableList>
       ) : (
-        <p className="rounded-xl border px-3 py-2.5 text-sm text-muted-foreground">{copy.skillContent.conventionsEmpty}</p>
+        <p className="rounded-list border border-line bg-card px-3 py-2.5 text-sm text-muted-foreground">{copy.skillContent.conventionsEmpty}</p>
       )}
     </div>
   )
 }
 
-/**
- * 写进 Skill 的内容（PRD 6.6、F-201 AC1，2026-11-07 重新设计）：资源关系由 CloudLink 维护、用户可隐藏改写补充；
- * 运维约定是一行一条的列表；巡检清单内置只读。修改后底部出现保存操作条
- */
-export function SkillContentSection({ saved }: { saved: boolean }) {
+/** 巡检清单：内置只读，在运维约定页底部 */
+export function HealthCheckRow() {
   return (
-    <section aria-labelledby="agents-content" className="flex flex-col gap-4">
-      <div className="flex flex-col gap-0.5">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <h2 id="agents-content" className="text-sm font-semibold">
-            {copy.skillContent.title}
-          </h2>
-          {saved && (
-            <span role="status" className="flex items-center gap-1 text-xs text-success">
-              <CircleCheckIcon className="size-3.5" aria-hidden />
-              {copy.skillContent.saved}
-            </span>
-          )}
-        </div>
-        <p className="text-xs text-muted-foreground">{copy.skillContent.hint}</p>
+    <div className="flex items-center gap-3 rounded-list border border-line bg-card px-3.5 py-2.5">
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-[13px] font-medium">{copy.skillContent.healthCheck}</span>
+        <span className="text-xs text-muted-foreground">{copy.skillContent.healthCheckHint}</span>
       </div>
-      <RelationsBlock />
-      <ConventionsBlock />
-      <div className="flex items-center gap-3 rounded-xl border px-3 py-2">
-        <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
-          <span className="text-sm font-medium">{copy.skillContent.healthCheck}</span>
-          <span className="text-xs text-muted-foreground">{copy.skillContent.healthCheckHint}</span>
-        </div>
-        <Button type="button" variant="ghost" size="sm" onClick={() => useUIStore.getState().openPreview({ file: "references/health-check.md" })}>
-          <EyeIcon data-icon="inline-start" />
-          {copy.skillContent.viewHealthCheck}
-        </Button>
-      </div>
-    </section>
+      <Button type="button" variant="outline" size="sm" onClick={() => useUIStore.getState().openPreview({ file: "references/health-check.md" })}>
+        <EyeIcon data-icon="inline-start" />
+        {copy.skillContent.viewHealthCheck}
+      </Button>
+    </div>
   )
 }

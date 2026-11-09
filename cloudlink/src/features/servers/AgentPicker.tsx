@@ -10,7 +10,7 @@ import { serverActions } from "./actions"
 
 /**
  * 分发给哪些 Agent（F-303，参考 CC Switch，2026-11-01 用户确认）：每个启用的 Agent 一个按钮，点亮即分发，可以多选。
- * 回路行上是只有标识的小方块，名称在 Tooltip 里（compact）；详情的 Agent 分段是标识加名称。
+ * 资源行上是只有标识的小方块，名称在 Tooltip 里（compact）；详情的 Agent 分段是标识加名称。
  * 不能分发时（未验证、只用密码），没点亮的按钮不可用，已点亮的仍然可以取消
  */
 export function AgentPicker({
@@ -65,7 +65,7 @@ export function AgentPicker({
             </ToggleGroupItem>
           )
         }
-        // 回路行上同 CC Switch：未点亮时没有底色和描边，只有灰色标识；悬停用墨色淡底（选中的回路行本身就是 muted 底，bg-muted 看不出来）
+        // 资源行上同 CC Switch：未点亮时没有底色和描边，只有灰色标识；悬停用墨色淡底（选中的资源行本身就是 muted 底，bg-muted 看不出来）
         const tile = cn("size-7 border-transparent bg-transparent px-0 hover:bg-foreground/6", AGENT_TILE_ON[a.agent])
         return (
           <Tooltip key={a.key}>

@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test"
 
 import { GATE, collectConsoleErrors, openServer, ready } from "./helpers"
 
-// P3.6 门槛截图：资源（配电盘、首次启动、服务器详情、云平台详情）、添加 SSH 服务器、添加云平台、Agent、设置，以及有新版本时的顶栏提醒和更新对话框 × 浅色 / 深色 × 900×640 / 760×520，随提交
+// 门槛截图：资源（配电盘、首次启动、服务器详情、云平台详情）、添加 SSH 服务器、添加云平台、Agent、设置，以及有新版本时的顶栏提醒和更新对话框 × 浅色 / 深色 × 900×640 / 760×520，随提交
 
 const VIEWS: { name: string; query?: string; empty?: boolean; open: (page: Page) => Promise<void> }[] = [
   { name: "servers-list", open: async () => {} },
@@ -41,14 +41,22 @@ const VIEWS: { name: string; query?: string; empty?: boolean; open: (page: Page)
     name: "agents",
     open: async (page) => {
       await page.keyboard.press("Control+2")
-      await expect(page.getByRole("heading", { level: 2, name: "Agent 与目录" })).toBeVisible()
+      await expect(page.getByRole("list", { name: "已检测到" })).toBeVisible()
+    },
+  },
+  {
+    name: "activity",
+    open: async (page) => {
+      await page.keyboard.press("Control+3")
+      await expect(page.getByRole("heading", { name: "操作记录" })).toBeVisible()
+      await expect(page.getByRole("heading", { level: 4, name: "今天" })).toBeVisible()
     },
   },
   {
     name: "settings",
     open: async (page) => {
       await page.keyboard.press("Control+4")
-      await expect(page.getByText("编译产物语言")).toBeVisible()
+      await expect(page.getByRole("heading", { level: 3, name: "危险操作" })).toBeAttached()
     },
   },
   // F-406：有新版本时的顶栏提醒和更新对话框（PRD 第十章验收第 5 条）
@@ -69,12 +77,20 @@ const VIEWS: { name: string; query?: string; empty?: boolean; open: (page: Page)
   },
 ]
 
-for (const scheme of ["light", "dark"] as const) {
-  for (const [width, height] of [[900, 640], [760, 520]]) {
+// P7 门槛（EXECUTION-PLAN P7 第 4 条）：顶栏浅色、顶栏深色、侧栏浅色 × 1000 与 760 宽
+const SHELLS = [
+  { nav: "top", scheme: "light" },
+  { nav: "top", scheme: "dark" },
+  { nav: "side", scheme: "light" },
+] as const
+
+for (const { nav, scheme } of SHELLS) {
+  for (const [width, height] of [[1000, 680], [760, 520]]) {
     // 每个视图使用独立的 page/context，避免同页连续重载开发模块耗尽 Chromium 资源。
     for (const v of VIEWS) {
-      test(`门槛截图：${scheme} ${width} ${v.name}`, async ({ page }) => {
+      test(`门槛截图：${nav} ${scheme} ${width} ${v.name}`, async ({ page }) => {
         const errors = collectConsoleErrors(page)
+        await page.addInitScript((pos) => localStorage.setItem("cloudlink-nav-position", pos), nav)
         await page.emulateMedia({ colorScheme: scheme })
         await page.setViewportSize({ width, height })
         if (v.empty) await page.goto(`/${v.query}`)
@@ -82,7 +98,7 @@ for (const scheme of ["light", "dark"] as const) {
         await v.open(page)
         // 焦点环不进截图
         await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
-        await page.screenshot({ path: `${GATE}/${v.name}-${scheme}-${width}.png`, animations: "disabled" })
+        await page.screenshot({ path: `${GATE}/${v.name}-${nav}-${scheme}-${width}.png`, animations: "disabled" })
         expect(errors).toEqual([])
       })
     }

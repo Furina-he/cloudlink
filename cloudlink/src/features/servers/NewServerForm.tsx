@@ -166,7 +166,7 @@ export function NewServerForm() {
     flow.submit({ pipeline: true, after: (saved) => void enable(saved, password), onInterrupted: () => setStage(null) })
   }
 
-  /** 只保存，不授权（F-106 AC3）：标为「未验证」，回路行上有「测试连接」 */
+  /** 只保存，不授权（F-106 AC3）：标为「未验证」，资源行上有「测试连接」 */
   const saveOnly = () => {
     if (stage || flow.saving) return
     setSaveIntent("save-only")

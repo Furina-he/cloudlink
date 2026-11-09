@@ -19,6 +19,7 @@ pub mod proc;
 pub mod secret;
 pub mod ssh;
 pub mod time;
+pub mod tray;
 pub mod update;
 
 #[cfg(test)]
@@ -40,17 +41,19 @@ pub fn run() {
         // 单实例插件必须最先注册；askpass 辅助进程在 main() 第一行就已经退出，不会走到这里
         // 隔离实例不转发给另一个数据根的窗口，也不读取它的插件状态。
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            use tauri::Manager;
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.unminimize();
-                let _ = w.set_focus();
-            }
+            tray::show_main(app);
         }));
+        // 开机启动只写当前用户的启动项；隔离实例不注册，不碰真实系统设置
+        builder = builder.plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ));
     }
     let app = builder
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         // F-406：只在 Rust 侧调用，capability 不给前端授予 updater:* 权限
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
@@ -77,7 +80,16 @@ pub fn run() {
                 &app.package_info().version.to_string(),
                 Arc::new(update::PluginSource::new(app.handle().clone(), isolated)),
             );
+            if !isolated {
+                use tauri_plugin_autostart::ManagerExt;
+                let handle = app.handle().clone();
+                backend.set_autostart_hook(Box::new(move |on| {
+                    let launcher = handle.autolaunch();
+                    if on { launcher.enable() } else { launcher.disable() }.is_ok()
+                }));
+            }
             app.manage(backend);
+            app.manage(Arc::new(tray::TrayState::default()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -119,7 +131,8 @@ pub fn run() {
             ipc::commands::list_inclusions,
             ipc::commands::list_deliveries,
             ipc::commands::check_deliveries,
-            ipc::commands::repair_delivery,
+            ipc::commands::take_over_target,
+            ipc::commands::undo_backup,
             ipc::commands::remove_all_deliveries,
             ipc::commands::get_guard_status,
             ipc::commands::install_guard,
@@ -137,10 +150,31 @@ pub fn run() {
             ipc::commands::get_update_status,
             ipc::commands::install_update,
             ipc::commands::cancel_update,
+            ipc::commands::all_read_only,
+            ipc::commands::set_tray_copy,
         ])
         .build(context)
         .expect("error while running CloudLink");
     app.run(|handle, event| {
+        // F-407：关闭窗口时留在托盘（设置里可改为退出）。托盘还没建好时照常关闭，免得窗口找不回来
+        if let tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::CloseRequested { api, .. },
+            ..
+        } = &event
+            && label == "main"
+            && handle.tray_by_id("cloudlink").is_some()
+            && handle
+                .try_state::<Arc<ipc::Backend>>()
+                .and_then(|b| b.get_settings().ok())
+                .is_some_and(|s| s.close_to_tray)
+        {
+            api.prevent_close();
+            if let Some(w) = handle.get_webview_window("main") {
+                let _ = w.hide();
+            }
+            return;
+        }
         if matches!(
             event,
             tauri::RunEvent::ExitRequested { .. }

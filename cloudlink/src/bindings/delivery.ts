@@ -39,7 +39,7 @@ export interface DetectedAgent {
 }
 
 /**
- * 回路行上点选的 Agent（2026-11-01 用户确认）：内置 Agent 取 AgentId，自定义目录取 `custom:<名称>`。
+ * 资源行上点选的 Agent（2026-11-01 用户确认）：内置 Agent 取 AgentId，自定义目录取 `custom:<名称>`。
  * 由后端给出，同一个 Agent 在 Windows 和 WSL 的目录共用一个
  */
 export type AgentKey = string
@@ -120,4 +120,14 @@ export interface AddCustomTargetRequest {
   envId: EnvId
   label: string
   path: string
+}
+
+/** F-309：为什么备份了一个副本 */
+export type BackupReason = "modified" | "takeover"
+
+/** deliveries://backed-up：提示条「已恢复，改动的版本已备份 · 撤销」 */
+export interface BackupEvent {
+  backupId: string
+  targetId: string
+  reason: BackupReason
 }

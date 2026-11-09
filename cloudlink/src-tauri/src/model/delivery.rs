@@ -191,3 +191,24 @@ pub struct AddCustomTargetRequest {
     pub label: String,
     pub path: String,
 }
+
+/// F-309：为什么备份了一个副本
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export, export_to = "delivery.ts")]
+pub enum BackupReason {
+    /// 副本被改动过：改动的版本备份后恢复
+    Modified,
+    /// 目录里已有不是 CloudLink 创建的同名 Skill：用户点了「备份并接管」
+    Takeover,
+}
+
+/// `deliveries://backed-up`：提示条「已恢复，改动的版本已备份 · 撤销」
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "delivery.ts")]
+pub struct BackupEvent {
+    pub backup_id: String,
+    pub target_id: String,
+    pub reason: BackupReason,
+}

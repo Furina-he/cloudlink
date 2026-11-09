@@ -116,7 +116,7 @@ test.describe("检测更新", () => {
     await button(page, "稍后").click()
     await expect(reminder(page)).toHaveText("正在安装")
     await page.keyboard.press("Control+4")
-    await page.getByRole("button", { name: /^活动/ }).click()
+    await page.getByRole("button", { name: "查看活动日志" }).click()
     await expect(page.getByText("开始把 CloudLink 从 0.1.0 更新到 0.2.0")).toBeVisible()
   })
 

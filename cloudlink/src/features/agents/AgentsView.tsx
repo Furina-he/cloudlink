@@ -1,100 +1,231 @@
 import { zodResolver } from "@hookform/resolvers/zod"
-import { CircleXIcon, PackageIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { ChevronLeftIcon, ChevronRightIcon, CircleXIcon, FileTextIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { FormProvider, useForm, useWatch, type Control } from "react-hook-form"
 import { useHotkeys } from "react-hotkeys-hook"
 
+import type { EnvId, GuardRules } from "@/bindings"
+import { EnvIcon } from "@/components/app/StateBadge"
 import { PreviewSheet } from "@/components/app/PreviewSheet"
+import { ListGroup, ListNote, PrefRow } from "@/components/app/SettingsList"
 import { useScrollRestore, useViewTitleFocus } from "@/components/app/ViewShell"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Separator } from "@/components/ui/separator"
+import { Skeleton } from "@/components/ui/skeleton"
+import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
+import { toast } from "@/components/ui/toast"
 import { copy } from "@/lib/copy"
 import { HOTKEY_OPTIONS, HOTKEYS, isModalOpen } from "@/lib/hotkeys"
 import { skillConfigSchema, type SkillConfigValues } from "@/lib/schemas"
 import { toastError } from "@/features/servers/actions"
 import { LeaveDialog, useLeaveGuard } from "@/features/servers/LeaveDialog"
 import { SaveBar } from "@/features/servers/SaveBar"
-import { useDeliveryStore } from "@/stores/deliveries"
+import { update } from "@/features/settings/settingsUpdate"
 import { useGuardStore } from "@/stores/guard"
-import { selectHealth } from "@/stores/health"
+import { useSettingsStore } from "@/stores/settings"
 import { compileKey, selectCompileSummary, useSkillStore } from "@/stores/skills"
 import { useTargetStore } from "@/stores/targets"
-import { useUIStore } from "@/stores/ui"
+import { useUIStore, type AgentsPage } from "@/stores/ui"
+import { AgentList } from "./AgentList"
 import { compileLabel, useAgentOptions } from "./agentKeys"
-import { SkillContentSection } from "./SkillContentSection"
-import { targetActions } from "./targetActions"
-import { TargetsSection } from "./TargetsSection"
+import { ConventionsBlock, HealthCheckRow, RelationsBlock } from "./SkillContentSection"
 
 const EMPTY_CONFIG: SkillConfigValues = { relationNotes: [], hiddenRelations: [], conventions: [] }
 
-/** 整个总 Skill 的预览：有未保存的全局内容时预览草稿 */
+/** 整个 Skill 的预览：有未保存的内容时预览草稿 */
 function ConfigPreview({ control, dirty }: { control: Control<SkillConfigValues>; dirty: boolean }) {
   const values = useWatch({ control }) as SkillConfigValues
   return <PreviewSheet scope="agents" draft={{ config: dirty ? values : undefined }} dirty={dirty} defaultFile="SKILL.md" />
 }
 
-/** 顶部摘要（PRD 6.6）：列入的服务器、启用的目标、需要修复的问题；编译受阻时列出受阻的那几份，警告去重后合成一行 */
-function Summary() {
-  const inclusions = useDeliveryStore((s) => s.inclusions)
-  const deliveries = useDeliveryStore((s) => s.byId)
-  const targets = useTargetStore((s) => s.targets)
-  const guards = useGuardStore((s) => s.statusByEnv)
+const openPreview = () => useUIStore.getState().openPreview({ file: "SKILL.md" })
+
+/** 编译受阻时顶部一行琥珀说明（6.12），警告合成一行；正常时隐身 */
+function CompileLine() {
   const statusByKey = useSkillStore((s) => s.statusByKey)
   const { compileTargets } = useAgentOptions()
-  const included = new Set(inclusions.filter((i) => i.included).map((i) => i.assetId)).size
-  const enabled = targets.filter((t) => t.enabled).length
-  const statuses = useMemo(() => Object.values(statusByKey), [statusByKey])
-  const health = useMemo(() => selectHealth(Object.values(deliveries), Object.values(guards), statuses), [deliveries, guards, statuses])
-  const problems = health.deliveryProblems + health.guardProblems
-  const compile = useMemo(() => selectCompileSummary(statuses), [statuses])
-  const showLint = (s: { envId: string; agentKey: string }) => {
+  const compile = useMemo(() => selectCompileSummary(Object.values(statusByKey)), [statusByKey])
+  const show = (s: { envId: EnvId; agentKey: string }) => {
     useUIStore.getState().setPreviewKey(compileKey(s))
     useUIStore.getState().openPreview({ file: "SKILL.md", lint: true })
   }
-
-  // 跳到第一个有问题的位置，并把焦点放在它的处理按钮上
-  const jump = () => {
-    const el = document.querySelector<HTMLElement>("[data-problem]")
-    el?.scrollIntoView({ block: "center" })
-    el?.querySelector<HTMLElement>("button:not(:disabled)")?.focus()
-  }
-
+  if (compile.blocked.length === 0 && !compile.firstWarning) return null
+  const blocked = compile.blocked.length > 0
+  const first = blocked ? compile.blocked[0] : compile.firstWarning!
   return (
-    <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-      <p className="flex flex-wrap items-center gap-x-1.5">
-        <span className="tabular-nums">{copy.agents.summary(included, enabled)}</span>
-        {problems > 0 && (
-          <>
-            <span aria-hidden>·</span>
-            <Button variant="link" size="xs" className="h-auto p-0 text-destructive tabular-nums" onClick={jump} aria-label={copy.agents.problemsLabel(problems)}>
-              {copy.agents.problems(problems)}
-            </Button>
-          </>
-        )}
-      </p>
-      {compile.blocked.length > 0 && (
-        <Button variant="link" size="xs" className="h-auto w-fit gap-1 p-0 text-destructive" onClick={() => showLint(compile.blocked[0])}>
-          <CircleXIcon />
-          {copy.agents.compileBlocked(compile.errors, compile.blocked.map((s) => compileLabel(compileTargets, s)).join("、"))}
-          {` · ${copy.detail.showLint}`}
-        </Button>
-      )}
-      {compile.firstWarning && (
-        <Button variant="link" size="xs" className="h-auto w-fit gap-1 p-0 text-warning" onClick={() => compile.firstWarning && showLint(compile.firstWarning)}>
-          <TriangleAlertIcon />
-          {copy.agents.compileWarnings(compile.warnings)}
-          {` · ${copy.detail.showLint}`}
-        </Button>
-      )}
-    </div>
+    <p role="status" className={blocked ? "flex items-center gap-1.5 text-xs text-destructive" : "flex items-center gap-1.5 text-xs text-warning"}>
+      {blocked ? <CircleXIcon className="size-3.5 shrink-0" aria-hidden /> : <TriangleAlertIcon className="size-3.5 shrink-0" aria-hidden />}
+      {blocked ? copy.agents.compileBlocked(compile.blocked.map((s) => compileLabel(compileTargets, s)).join("、")) : copy.agents.compileWarnings(compile.warnings)}
+      <Button variant="link" size="xs" className="h-auto p-0" onClick={() => show(first)}>
+        {copy.agents.showLint}
+      </Button>
+    </p>
   )
 }
 
-/** Agent 视图（PRD 6.6，2026-11-07 重新设计）：Agent 与目录（含护栏）在前，写进 Skill 的内容在后 */
+/** Skill 内容：三行可点，进入二级页 */
+function ContentRows({ control }: { control: Control<SkillConfigValues> }) {
+  const relations = useSkillStore((s) => s.relations)
+  const hidden = useWatch({ control, name: "hiddenRelations" }) ?? []
+  const conventions = useWatch({ control, name: "conventions" }) ?? []
+  const rules = useGuardStore((s) => s.rules)
+  useEffect(() => {
+    useGuardStore.getState().loadRules().catch(() => undefined)
+  }, [])
+  const ruleCount = rules ? rules.readOnlyAllow.length + rules.standardDeny.length + rules.alwaysDeny.length : null
+  const rows: { page: AgentsPage; label: string; value: string }[] = [
+    { page: "relations", label: copy.agents.relations, value: copy.agents.relationsCount(relations.filter((r) => !hidden.includes(r.id)).length) },
+    { page: "conventions", label: copy.agents.conventions, value: copy.agents.conventionsCount(conventions.length) },
+    { page: "rules", label: copy.agents.rules, value: ruleCount === null ? copy.agents.rulesBuiltin : copy.agents.rulesCount(ruleCount) },
+  ]
+  return (
+    <ListGroup id="agents-content" title={copy.agents.content}>
+      {rows.map((r) => (
+        <button
+          key={r.page}
+          type="button"
+          onClick={() => useUIStore.getState().setAgentsPage(r.page)}
+          className="flex min-h-11 w-full items-center gap-3 px-3.5 py-2.5 text-left outline-none hover:bg-card-2 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        >
+          <span className="flex-1 text-[13px] font-medium">{r.label}</span>
+          <span className="text-xs text-muted-foreground tabular-nums">{r.value}</span>
+          <ChevronRightIcon aria-hidden className="size-4 text-faint" />
+        </button>
+      ))}
+    </ListGroup>
+  )
+}
+
+/** 运行环境（6.6）：Windows、各 WSL 发行版各一行开关 */
+function EnvironmentsGroup() {
+  const environments = useTargetStore((s) => s.environments)
+  const detecting = useTargetStore((s) => s.status === "loading")
+  const settings = useSettingsStore((s) => s.settings)
+  const enabled = (id: EnvId) => settings?.environments.find((e) => e.id === id)?.enabled ?? true
+  const setEnabled = (id: EnvId, on: boolean) =>
+    update({ environments: environments.map((e) => ({ id: e.id, enabled: e.id === id ? on : enabled(e.id) })) })
+  const redetect = (
+    <Button
+      variant="ghost"
+      size="xs"
+      className="text-muted-foreground"
+      disabled={detecting}
+      onClick={() =>
+        void useTargetStore
+          .getState()
+          .detect()
+          .then(() => toast.add({ title: copy.agents.redetected }))
+      }
+    >
+      {detecting ? <Spinner data-icon="inline-start" aria-hidden /> : <RefreshCwIcon data-icon="inline-start" />}
+      {copy.agents.redetect}
+    </Button>
+  )
+  return (
+    <ListGroup id="agents-envs" title={copy.agents.environments} action={redetect}>
+      {environments.map((e) => (
+        <PrefRow
+          key={e.id}
+          label={
+            <span className="flex items-center gap-2">
+              <EnvIcon envId={e.id} className="size-3.5 text-muted-foreground" />
+              {copy.env.long(e.id)}
+            </span>
+          }
+          hint={e.available ? undefined : copy.agents.envUnavailable}
+        >
+          <Switch
+            checked={e.available && enabled(e.id)}
+            disabled={!e.available || !settings}
+            onCheckedChange={(on) => setEnabled(e.id, on)}
+            aria-label={copy.agents.envEnable(copy.env.long(e.id))}
+          />
+        </PrefRow>
+      ))}
+    </ListGroup>
+  )
+}
+
+/** 一组拦下的类别：中文说明加英文命令示例（等宽） */
+function Categories({ id, title, list }: { id: string; title: string; list: GuardRules["standardDeny"] }) {
+  return (
+    <ListGroup id={id} title={title} count={list.length}>
+      {list.map((c) => (
+        <div key={c.id} className="flex flex-col gap-0.5 px-3.5 py-2.5">
+          <span className="text-[13px] font-medium">{copy.guardReason[c.id]}</span>
+          <span className="font-mono text-xs break-all text-muted-foreground">{c.examples.join("  ·  ")}</span>
+        </div>
+      ))}
+    </ListGroup>
+  )
+}
+
+/** 护栏规则（只读，8.6）：只读白名单、标准运维下拦下的类别、任何档位都拦下的类别 */
+function RulesPage() {
+  const rules = useGuardStore((s) => s.rules)
+  if (!rules) {
+    return (
+      <div className="flex flex-col gap-3" aria-busy="true" aria-label={copy.guard.loading}>
+        <Skeleton className="h-20 rounded-list" />
+        <Skeleton className="h-32 rounded-list" />
+      </div>
+    )
+  }
+  return (
+    <>
+      <p className="text-xs text-muted-foreground">{copy.guard.rulesDescription}</p>
+      <ListGroup id="rules-read-only" title={copy.guard.readOnlyTitle} count={rules.readOnlyAllow.length}>
+        <ul className="flex flex-wrap gap-1.5 px-3.5 py-3" aria-label={copy.guard.readOnlyTitle}>
+          {rules.readOnlyAllow.map((c) => (
+            <li key={c}>
+              <Badge variant="outline" className="font-mono">
+                {c}
+              </Badge>
+            </li>
+          ))}
+        </ul>
+        <ListNote>{copy.guard.readOnlyNote}</ListNote>
+      </ListGroup>
+      <Categories id="rules-standard" title={copy.guard.standardTitle} list={rules.standardDeny} />
+      <Categories id="rules-always" title={copy.guard.alwaysTitle} list={rules.alwaysDeny} />
+      <p className="text-xs text-muted-foreground">{copy.guard.unparsedNote}</p>
+      <p className="text-xs text-muted-foreground">{copy.guard.boundary}</p>
+    </>
+  )
+}
+
+const SUBPAGE_TITLE: Record<Exclude<AgentsPage, "main">, string> = {
+  relations: copy.agents.relations,
+  conventions: copy.agents.conventions,
+  rules: copy.agents.rules,
+}
+
+/** 二级页的外框：左上「‹ Agent」返回（Esc 也返回），标题 */
+function Subpage({ page, titleRef, children }: { page: Exclude<AgentsPage, "main">; titleRef: React.RefObject<HTMLHeadingElement | null>; children: ReactNode }) {
+  useEffect(() => titleRef.current?.focus(), [titleRef])
+  return (
+    <>
+      <div className="flex flex-col items-start gap-1">
+        <Button variant="ghost" size="xs" className="-ml-2 text-muted-foreground" onClick={() => useUIStore.getState().setAgentsPage("main")} aria-label={copy.agents.backLabel}>
+          <ChevronLeftIcon data-icon="inline-start" />
+          {copy.agents.back}
+        </Button>
+        <h1 ref={titleRef} id="view-title" tabIndex={-1} className="text-lg font-semibold outline-none">
+          {SUBPAGE_TITLE[page]}
+        </h1>
+      </div>
+      {children}
+    </>
+  )
+}
+
+/** Agent 视图（PRD 6.6，v0.2）：一句说明、已检测到的 Agent、Skill 内容（二级页）、运行环境 */
 export function AgentsView({ focusTitle }: { focusTitle: boolean }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const titleRef = useRef<HTMLHeadingElement>(null)
+  const page = useUIStore((s) => s.agentsPage)
   useViewTitleFocus(titleRef, focusTitle)
   useScrollRestore("agents", () => rootRef.current?.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]"))
 
@@ -107,9 +238,6 @@ export function AgentsView({ focusTitle }: { focusTitle: boolean }) {
   })
   const dirty = form.formState.isDirty
   const [saving, setSaving] = useState(false)
-  // 保存后显示「已保存，已重新编译」，不弹 Toast；再次修改后消失（与服务器详情一致）
-  const [saved, setSaved] = useState(false)
-  if (saved && dirty) setSaved(false)
   // 必须关掉 keepDirtyValues：它只用于后台同步，RHF 的 reset() 也会带上 useForm 的 resetOptions
   const discard = () => form.reset(undefined, { keepDirtyValues: false })
   const guard = useLeaveGuard(dirty, discard)
@@ -117,6 +245,8 @@ export function AgentsView({ focusTitle }: { focusTitle: boolean }) {
   useEffect(() => {
     void useSkillStore.getState().load()
   }, [])
+  // Esc 从二级页返回 Agent 页；浮层打开时交给浮层
+  useHotkeys(HOTKEYS.escape, () => page !== "main" && !isModalOpen() && useUIStore.getState().setAgentsPage("main"), { enableOnFormTags: false }, [page])
 
   const save = () =>
     void form.handleSubmit(async (v) => {
@@ -124,7 +254,7 @@ export function AgentsView({ focusTitle }: { focusTitle: boolean }) {
       try {
         await useSkillStore.getState().saveConfig(v)
         form.reset(v, { keepDirtyValues: false })
-        setSaved(true)
+        toast.add({ title: copy.skillContent.saved })
       } catch (e) {
         toastError(e)
       } finally {
@@ -137,28 +267,38 @@ export function AgentsView({ focusTitle }: { focusTitle: boolean }) {
     <FormProvider {...form}>
       <div className="flex min-h-0 flex-1 flex-col">
         <ScrollArea ref={rootRef} className="min-h-0 flex-1">
-          <div className="mx-auto flex max-w-4xl flex-col gap-5 p-3 pb-8">
-            <header className="flex flex-col gap-1.5">
-              <div className="flex items-center gap-2">
-                <h1 ref={titleRef} id="view-title" tabIndex={-1} className="text-base font-semibold outline-none">
+          <div className="mx-auto flex w-full max-w-190 flex-col gap-5 px-5 pt-5 pb-10">
+            {page === "main" ? (
+              <>
+                <h1 ref={titleRef} id="view-title" tabIndex={-1} className="sr-only">
                   {copy.nav.agents}
                 </h1>
-                <div className="ml-auto flex gap-1.5">
-                  <Button variant="outline" size="sm" onClick={() => useUIStore.getState().openPreview({ file: "SKILL.md" })}>
-                    <PackageIcon data-icon="inline-start" />
+                <div className="flex items-center gap-3">
+                  <p className="flex-1 text-[13px] text-fg-2">{copy.agents.intro}</p>
+                  <Button variant="outline" size="sm" onClick={openPreview}>
+                    <FileTextIcon data-icon="inline-start" />
                     {copy.agents.preview}
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => void targetActions.checkAll()}>
-                    <RefreshCwIcon data-icon="inline-start" />
-                    {copy.agents.checkAll}
-                  </Button>
                 </div>
-              </div>
-              <Summary />
-            </header>
-            <TargetsSection />
-            <Separator />
-            <SkillContentSection saved={saved} />
+                <CompileLine />
+                <AgentList />
+                <ContentRows control={form.control} />
+                <EnvironmentsGroup />
+              </>
+            ) : (
+              <Subpage key={page} page={page} titleRef={titleRef}>
+                {page === "relations" ? (
+                  <RelationsBlock />
+                ) : page === "conventions" ? (
+                  <>
+                    <ConventionsBlock />
+                    <HealthCheckRow />
+                  </>
+                ) : (
+                  <RulesPage />
+                )}
+              </Subpage>
+            )}
           </div>
         </ScrollArea>
         {dirty && <SaveBar saving={saving} onDiscard={discard} onSave={save} />}

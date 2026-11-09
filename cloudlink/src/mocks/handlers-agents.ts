@@ -1,7 +1,7 @@
 // Mock 命令：总 Skill 的全局内容与预览、Agent 目标、分发副本、护栏（F-201、F-204、F-301 到 F-306）
 import { emit } from "@tauri-apps/api/event"
 
-import type { AddCustomTargetRequest, EnvId, PreviewRequest, SkillConfig } from "@/bindings"
+import type { AddCustomTargetRequest, BackupReason, Delivery, EnvId, PreviewRequest, SkillConfig } from "@/bindings"
 import * as fx from "./fixtures"
 import { compileSkill } from "./lint"
 import { deriveRelations, withHidden } from "./relations"
@@ -67,23 +67,56 @@ function removeCustomTarget(id: string) {
   emitDeliveries()
 }
 
+/** 健康检查（F-309）：缺失、过期的直接重写，被改动的先备份再恢复；同名冲突不动 */
 function checkDeliveries() {
-  db.deliveries.forEach((d) => (d.checkedAt = now()))
+  for (const d of db.deliveries) {
+    d.checkedAt = now()
+    if (d.status === "modified") backedUp(d.targetId, "modified", "modified")
+    if (d.status !== "conflict" && d.status !== "pending") d.status = "ok"
+  }
   recompile({ silent: true })
   emitDeliveries()
   return db.deliveries
 }
 
-async function repairDelivery(id: string) {
-  const d = db.deliveries.find((x) => x.id === id) ?? fail("not-found")
+/** F-309：mock 的备份只记住目标和接管前的状态 */
+const backups = new Map<string, { targetId: string; status: Delivery["status"] }>()
+
+function backedUp(targetId: string, status: Delivery["status"], reason: BackupReason) {
+  const backupId = newId("bak")
+  backups.set(backupId, { targetId, status })
+  const t = db.targets.find((x) => x.id === targetId)
+  logActivity({ kind: "repair", messageId: reason === "takeover" ? "copy-taken-over" : "copy-restored", params: { target: t?.label ?? "", env: t?.envId ?? "windows", backup: backupId }, ok: true })
+  void emit("deliveries://backed-up", { backupId, targetId, reason })
+}
+
+/** F-309 AC3：同名 Skill 移进备份再写入 */
+async function takeOverTarget(targetId: string) {
+  const d = db.deliveries.find((x) => x.targetId === targetId) ?? fail("not-found")
+  if (d.status !== "conflict") fail("not-found")
   await sleep(300)
-  // 冲突的目录不是 CloudLink 创建的，修复也不覆盖（F-304 AC1）
-  if (d.status !== "conflict") d.status = "ok"
+  d.status = "ok"
   d.checkedAt = now()
-  const t = db.targets.find((x) => x.id === d.targetId)
-  logActivity({ kind: "repair", messageId: "repair-ok", params: { target: t?.label ?? "", env: d.envId }, durationMs: 90, ok: true })
   emitDeliveries()
+  backedUp(targetId, "conflict", "takeover")
   return d
+}
+
+/** 撤销：写回备份，停用这个目标（暂停自动同步） */
+async function undoBackup(backupId: string) {
+  const saved = backups.get(backupId) ?? fail("not-found")
+  const t = targetById(saved.targetId)
+  await sleep(200)
+  backups.delete(backupId)
+  t.enabled = false
+  const d = db.deliveries.find((x) => x.targetId === t.id)
+  if (d && saved.status === "conflict") d.status = "conflict"
+  else db.deliveries = db.deliveries.filter((x) => x.targetId !== t.id)
+  logActivity({ kind: "repair", messageId: "backup-undone", params: { target: t.label, env: t.envId }, ok: true })
+  recompile({ silent: true })
+  emitCompiled()
+  emitDeliveries()
+  return t
 }
 
 function removeAllDeliveries() {
@@ -125,7 +158,8 @@ export const agentHandlers: Record<string, (a: Args) => unknown> = {
   list_inclusions: () => db.inclusions,
   list_deliveries: () => db.deliveries,
   check_deliveries: () => checkDeliveries(),
-  repair_delivery: (a) => repairDelivery(a.id as string),
+  take_over_target: (a) => takeOverTarget(a.id as string),
+  undo_backup: (a) => undoBackup(a.backupId as string),
   remove_all_deliveries: () => removeAllDeliveries(),
   get_guard_status: () => db.guard,
   install_guard: (a) => setGuard(a.envId as EnvId, true),

@@ -118,7 +118,7 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     await expect(panel.getByRole("button", { name: "配置私钥" })).toBeVisible()
     await expect(panel.getByText("红线写给 Agent 看。Claude Code 上护栏会强制拦截，能防手滑，防不了刻意绕过。")).toBeVisible()
     await shot(page, "state-06-detail-hk-edge")
-    await expect(panel.getByText("待处理的 Agent 笔记")).toBeVisible()
+    await expect(panel.getByRole("button", { name: /条 Agent 笔记等你确认/ })).toBeVisible()
     await expect(panel.getByRole("list", { name: "最近的操作记录" })).toBeVisible()
     await shot(page, "state-07-detail-activity")
 
@@ -170,7 +170,7 @@ test.describe("资源视图：PRD 6.10 状态", () => {
   })
 })
 
-test.describe("回路行右侧的双闸刀（PRD 6.4）", () => {
+test.describe("资源行右侧的档位与 Agent（PRD 6.4）", () => {
   test("档位菜单：生产资源切到标准运维在菜单底部确认，变成琥珀色，提示条可撤销；切回只读不确认", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
@@ -434,7 +434,7 @@ test.describe("纯键盘流程", () => {
     await expect(row(page, "keyboard-box")).toBeVisible()
   })
 
-  test("方向键在回路行之间移动，Enter 进入详情；方向键在 Agent 按钮间移动，Space 切换", async ({ page }) => {
+  test("方向键在资源行之间移动，Enter 进入详情；方向键在 Agent 按钮间移动，Space 切换", async ({ page }) => {
     await ready(page)
     await row(page, "hk-edge").focus()
     await page.keyboard.press("ArrowDown")

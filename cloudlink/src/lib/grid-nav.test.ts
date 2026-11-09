@@ -6,7 +6,7 @@ const box = (top: number, left: number): CardBox => ({ top, left, width: 200 })
 // 生产组两行（3 + 1 张），开发组一行 2 张；组标题让 top 有落差，同一行的 top 有 1~2px 抖动
 const boxes = [box(0, 0), box(1, 210), box(0, 420), box(120, 0), box(280, 0), box(281, 210)]
 
-describe("回路行的方向键导航（PRD 6.4、7.3）", () => {
+describe("资源行的方向键导航（PRD 6.4、7.3）", () => {
   it("左右按 DOM 顺序移动，到头不再动", () => {
     expect(nextCardIndex(boxes, 0, "ArrowRight")).toBe(1)
     expect(nextCardIndex(boxes, 2, "ArrowRight")).toBe(3)

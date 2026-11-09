@@ -54,4 +54,6 @@ pub struct SettingsPatch {
     pub log_dir: Option<String>,
     pub ssh_include_asked: Option<Vec<EnvId>>,
     pub auto_check_updates: Option<bool>,
+    pub close_to_tray: Option<bool>,
+    pub launch_at_login: Option<bool>,
 }

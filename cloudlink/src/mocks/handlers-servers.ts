@@ -1,5 +1,6 @@
 // Mock 命令：资源的增删改、导入、分发、档位（F-101、F-102、F-104、F-106、F-303）
-import type { AssetConnection, AssetInput, CliAsset, CliAssetInput, ConnectionInput, ImportHost, Mode, ServerAsset, ServerAssetInput } from "@/bindings"
+import type {
+  TrayCopy, AssetConnection, AssetInput, CliAsset, CliAssetInput, ConnectionInput, ImportHost, Mode, ServerAsset, ServerAssetInput } from "@/bindings"
 import { CLI_BINARY } from "@/lib/cliProviders"
 import { connectionInputOf } from "@/features/servers/serverForm"
 import { connectionSignature } from "@/stores/connection"
@@ -189,6 +190,17 @@ function setMode(id: string, mode: Mode) {
   return { asset, statuses: recompile() }
 }
 
+/** F-407 AC2：只动处于标准运维的生产资源 */
+function allReadOnly() {
+  const list = db.assets.filter((a) => a.production && a.agent.mode === "standard")
+  for (const a of list) {
+    a.agent.mode = "read-only"
+    logActivity({ kind: "mode", assetId: a.id, messageId: "mode-changed", params: { alias: handleOf(a), mode: "read-only" }, ok: true })
+  }
+  if (list.length > 0) recompile()
+  return list.map((a) => a.name)
+}
+
 type Args = Record<string, unknown>
 
 export const serverHandlers: Record<string, (a: Args) => unknown> = {
@@ -197,4 +209,7 @@ export const serverHandlers: Record<string, (a: Args) => unknown> = {
   import_hosts: (a) => importHosts(a.hosts as ImportHost[], a.probeAfter as boolean),
   set_distribute: (a) => setDistribute(a.assetId as string, a.agentKey as string, a.on as boolean),
   set_mode: (a) => setMode(a.assetId as string, a.mode as Mode),
+  all_read_only: () => allReadOnly(),
+  // 托盘只在桌面版里有；mock 记下文字，e2e 可以检查
+  set_tray_copy: (a) => void (db.trayCopy = a.copy as TrayCopy),
 }

@@ -102,7 +102,7 @@ describe("云平台 CLI 的状态（F-104、6.11）", () => {
     expect(cliEnvStatus(env({ authenticated: true, expired: true }))).toBe("expired")
   })
 
-  it("回路行就地修复：第一个有问题的运行环境，Windows 在前；全部就绪时为 null", () => {
+  it("资源行就地修复：第一个有问题的运行环境，Windows 在前；全部就绪时为 null", () => {
     expect(selectCliProblem(cloudflare)).toBeNull()
     expect(selectCliProblem(vercel)).toEqual({ envId: fx.WSL, status: "not-logged-in" })
     const both = withEnvs(vercel, { [fx.WSL]: env({ authenticated: false }), windows: env({ installed: false, authenticated: false }) })

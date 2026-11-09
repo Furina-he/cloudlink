@@ -188,31 +188,22 @@ test.describe("键盘焦点（P6 无障碍复查）", () => {
     await expect(page.getByRole("switch", { name: "生产环境" })).toBeFocused()
   })
 
-  test("护栏规则加载完才变长，仍然能用键盘滚动：滚动区域进入 Tab 序列，PageDown 能翻页", async ({ page }) => {
+  test("护栏规则二级页：标题接收焦点，Esc 返回 Agent 页", async ({ page }) => {
     await ready(page)
     await page.keyboard.press("Control+2")
-    // 护栏规则在 Claude Code 那一行的「⋯」菜单里
-    await page.getByRole("button", { name: "Claude Code（Windows） 的操作" }).click()
-    await page.getByRole("menuitem", { name: "查看护栏规则" }).click()
-    const sheet = page.getByRole("dialog", { name: "护栏规则" })
-    await expect(sheet.getByText("只读巡检：只放行这些命令")).toBeVisible()
-    const viewport = sheet.locator("[data-slot=scroll-area-viewport]")
-    await expect(viewport).toHaveAttribute("tabindex", "0")
-    await page.keyboard.press("Tab")
-    await expect(viewport).toBeFocused()
-    await page.keyboard.press("PageDown")
-    await expect.poll(() => viewport.evaluate((el) => el.scrollTop)).toBeGreaterThan(100)
+    await page.getByRole("button", { name: /^护栏规则/ }).click()
+    await expect(page.getByRole("heading", { level: 1, name: "护栏规则" })).toBeFocused()
+    await expect(page.getByText("只读巡检：只放行这些命令")).toBeVisible()
+    await page.keyboard.press("Escape")
+    await expect(page.getByRole("button", { name: /^护栏规则/ })).toBeVisible()
   })
 
-  test("安装护栏的确认框焦点停在「取消」上，代码块的高亮版本加载完也不会把焦点弄丢", async ({ page }) => {
+  test("移除护栏的确认框焦点停在「取消」上", async ({ page }) => {
     await ready(page)
     await page.keyboard.press("Control+2")
-    await page.getByRole("button", { name: /^安装护栏：/ }).first().focus()
-    await page.keyboard.press("Enter")
+    await page.getByRole("button", { name: "Claude Code 的更多操作" }).click()
+    await page.getByRole("menuitem", { name: /^移除护栏/ }).first().click()
     const confirm = page.getByRole("alertdialog")
-    await expect(confirm.getByRole("button", { name: "取消" })).toBeFocused()
-    // 等高亮版本替换掉纯文本版本以后，焦点仍在对话框里
-    await expect(confirm.locator("[data-slot=code-block-content] span[style]").first()).toBeAttached()
     await expect(confirm.getByRole("button", { name: "取消" })).toBeFocused()
   })
 

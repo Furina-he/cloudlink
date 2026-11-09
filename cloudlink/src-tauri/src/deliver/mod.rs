@@ -1,7 +1,8 @@
-//! 受管复制（F-304、F-305）：不覆盖外来目录，不自动覆盖被改动的副本。
+//! 受管复制（F-304、F-309）：不覆盖外来目录；被改动的副本先备份再覆盖。
 //! 所有文件系统操作先检查归属及链接/重解析点；数据库与事件由 IPC 层负责。
 
 pub mod agents;
+pub mod backup;
 mod inclusion;
 mod paths;
 
@@ -18,7 +19,7 @@ use crate::env::EnvContext;
 use crate::error::{AppError, Result};
 use crate::fsx;
 use crate::model::compile::CompiledFile;
-use crate::model::delivery::{Delivery, DeliveryStatus, Target};
+use crate::model::delivery::{BackupReason, Delivery, DeliveryStatus, Target};
 use crate::model::env::EnvId;
 use crate::model::misc::IpcErrorId;
 use crate::paths::Paths;
@@ -50,7 +51,7 @@ fn delivery(target: &Target, status: DeliveryStatus) -> Delivery {
 }
 
 /// 遇到任何非普通文件或链接都拒绝删除/交换，显式修复也不例外。
-fn ordinary_tree(path: &Path) -> io::Result<bool> {
+pub(crate) fn ordinary_tree(path: &Path) -> io::Result<bool> {
     let meta = fs::symlink_metadata(path)?;
     if fsx::is_link(&meta) {
         return Ok(false);
@@ -191,7 +192,7 @@ pub fn load_source(paths: &Paths, env_id: &EnvId, agent_key: &str) -> Result<Opt
 }
 
 /// 同步一个目标。I/O 错误由调用方记录为待同步，其余目标可以继续。
-/// `repair_modified` 只在用户确认覆盖改动后传 true，冲突永不覆盖。
+/// `repair_modified` 为 true 时覆盖被改动的副本（不备份），冲突永不覆盖。
 pub fn sync(
     paths: &Paths,
     env: &EnvContext,
@@ -200,6 +201,66 @@ pub fn sync(
     marker: &Marker,
     repair_modified: bool,
 ) -> Result<Delivery> {
+    sync_inner(paths, env, target, files, marker, repair_modified, false).map(|(delivery, _)| delivery)
+}
+
+/// 自动同步（F-309 AC2）：副本被改动时先备份改动的版本再覆盖，返回这份备份
+pub fn sync_auto(
+    paths: &Paths,
+    env: &EnvContext,
+    target: &Target,
+    files: &[CompiledFile],
+    marker: &Marker,
+) -> Result<(Delivery, Option<backup::BackupMeta>)> {
+    sync_inner(paths, env, target, files, marker, true, true)
+}
+
+/// 「备份并接管」（F-309 AC3）：目录里是不带 CloudLink 标记的同名 Skill 时，移进备份再写入
+pub fn take_over(
+    paths: &Paths,
+    env: &EnvContext,
+    target: &Target,
+    files: &[CompiledFile],
+    marker: &Marker,
+) -> Result<(Delivery, backup::BackupMeta)> {
+    let checked = inspect(paths, env, target, Some(&marker.content_hash))?;
+    if checked.status != DeliveryStatus::Conflict {
+        return Err(AppError::ipc(IpcErrorId::NotFound));
+    }
+    let destination = resolve_target_path(paths, env, target)?.join(SKILL_DIR);
+    if publish::read_marker(&destination).is_some_and(|m| m.managed_by == MANAGED_BY) {
+        // 别的目标（或损坏）的 CloudLink 副本不算外来 Skill，不接管
+        return Err(AppError::ipc(IpcErrorId::TargetExists));
+    }
+    let saved = backup::take_over(paths, target, &destination)?;
+    let (delivery, _) = sync_inner(paths, env, target, files, marker, false, false)?;
+    Ok((delivery, saved))
+}
+
+/// 撤销一份备份：删掉 CloudLink 写入的副本（只删归属匹配的），把备份写回原处
+pub fn restore_backup(paths: &Paths, env: &EnvContext, target: &Target, backup_id: &str) -> Result<BackupReason> {
+    if !env.available {
+        return Err(AppError::ipc(IpcErrorId::TargetExists));
+    }
+    let (meta, tree) = backup::load(paths, backup_id, target)?;
+    let destination = resolve_target_path(paths, env, target)?.join(SKILL_DIR);
+    paths::reject_link_ancestors(&destination)?;
+    if fs::symlink_metadata(&destination).is_ok() {
+        remove(paths, env, target)?;
+    }
+    backup::restore_into(&tree, &destination)?;
+    Ok(meta.reason)
+}
+
+fn sync_inner(
+    paths: &Paths,
+    env: &EnvContext,
+    target: &Target,
+    files: &[CompiledFile],
+    marker: &Marker,
+    repair_modified: bool,
+    backup_modified: bool,
+) -> Result<(Delivery, Option<backup::BackupMeta>)> {
     if !marker_matches(marker, &target.env_id, &target.agent_key)
         || !files_are_safe(files)
         || publish::files_hash(files) != marker.content_hash
@@ -210,16 +271,16 @@ pub fn sync(
     if matches!(checked.status, DeliveryStatus::Conflict | DeliveryStatus::Pending)
         || (checked.status == DeliveryStatus::Modified && !repair_modified)
     {
-        return Ok(checked);
+        return Ok((checked, None));
     }
     let skills_dir = resolve_target_path(paths, env, target)?;
     let destination = skills_dir.join(SKILL_DIR);
     if files.is_empty() {
         remove(paths, env, target)?;
-        return Ok(delivery(target, DeliveryStatus::Missing));
+        return Ok((delivery(target, DeliveryStatus::Missing), None));
     }
     if checked.status == DeliveryStatus::Ok {
-        return Ok(checked);
+        return Ok((checked, None));
     }
     if fs::symlink_metadata(&destination).is_ok() && !ordinary_tree(&destination)? {
         return Err(AppError::ipc(IpcErrorId::TargetExists));
@@ -230,6 +291,7 @@ pub fn sync(
     let staged = skills_dir.join(format!(".{SKILL_DIR}.cloudlink-stage-{nonce}"));
     let trash = skills_dir.join(format!(".{SKILL_DIR}.cloudlink-trash-{nonce}"));
     fs::create_dir(&staged)?;
+    let mut saved = None;
     let result = (|| {
         // 标记先写：即使后续写文件失败，清理也能验证这是本次创建的目录。
         fsx::write_atomic(&staged.join(MARKER_FILE), &serde_json::to_vec_pretty(marker)?)?;
@@ -242,6 +304,9 @@ pub fn sync(
         let current = inspect_path(&destination, target, Some(&marker.content_hash))?;
         if current == DeliveryStatus::Conflict || (current == DeliveryStatus::Modified && !repair_modified) {
             return Ok(current);
+        }
+        if current == DeliveryStatus::Modified && backup_modified {
+            saved = Some(backup::create(paths, target, &destination, BackupReason::Modified)?);
         }
         if fs::symlink_metadata(&destination).is_ok() {
             let owns = publish::read_marker(&destination)
@@ -262,8 +327,8 @@ pub fn sync(
     // swap_in 删除它自己创建的 owned 子目录；这里只移除已空的父目录，不递归删除。
     let _ = fs::remove_dir(&trash);
     match result? {
-        DeliveryStatus::Ok => inspect(paths, env, target, Some(&marker.content_hash)),
-        status => Ok(delivery(target, status)),
+        DeliveryStatus::Ok => Ok((inspect(paths, env, target, Some(&marker.content_hash))?, saved)),
+        status => Ok((delivery(target, status), saved)),
     }
 }
 

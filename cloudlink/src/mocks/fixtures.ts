@@ -156,7 +156,7 @@ export const assets: Asset[] = [
       resolved: { hostname: "198.51.100.7", user: "deploy", port: 2222, proxyJump: "hk-edge", resolvedAt: ago(3 * DAY) },
       verified: { ok: true, at: ago(3 * DAY), envIds: [WSL] },
     },
-    // 生产环境开着标准运维：回路行的档位闸刀是琥珀色（DESIGN.md Breaker Row）
+    // 生产环境开着标准运维：资源行的档位文字是琥珀色（DESIGN.md Breaker Row）
     agent: { agents: ["claude-code", "universal"], mode: "standard" },
     facts: { os: "Debian 12", kernel: "6.1.0-26-amd64", arch: "x86_64", cpuCores: 2, memoryTotalMiB: 3900, diskTotalGiB: 80, panel: null },
     paths: [{ key: "pg-data", label: "PostgreSQL 数据目录", path: "/var/lib/postgresql/16/main", source: "manual" }],
@@ -236,7 +236,7 @@ export const assets: Asset[] = [
     createdAt: ago(2 * DAY),
     updatedAt: ago(2 * DAY),
   },
-  // Windows 已就绪；WSL 未登录：演示回路行就地修复（PRD 6.4）
+  // Windows 已就绪；WSL 未登录：演示资源行就地修复（PRD 6.4）
   {
     id: "ast_vercel",
     type: "cli",
@@ -338,6 +338,8 @@ export const settings: Settings = {
   writeSnapshotTime: true,
   defaultMode: "read-only",
   autoCheckUpdates: true,
+  closeToTray: true,
+  launchAtLogin: false,
   probeTimeoutSec: 30,
   windowsSshPath: "C:\\Windows\\System32\\OpenSSH\\ssh.exe",
   dataDir: "C:\\Users\\me\\.cloudlink",

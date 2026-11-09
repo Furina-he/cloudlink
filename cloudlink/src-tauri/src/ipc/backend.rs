@@ -38,6 +38,7 @@ pub struct TauriEvents(pub tauri::AppHandle);
 
 impl EventSink for TauriEvents {
     fn emit(&self, event: &str, payload: serde_json::Value) {
+        crate::tray::on_event(&self.0, event, &payload);
         if self.0.emit(event, payload).is_err() {
             log::warn!("could not emit CloudLink event {event}");
         }
@@ -68,7 +69,11 @@ pub struct Backend {
     /// 冷启动：启动工作做完之前 IPC 命令在这里等（见 `startup.rs`）
     pub(super) startup: StartupGate,
     pub(super) startup_environments: Mutex<Option<StartupEnvironments>>,
+    /// 开机启动的开关（tauri-plugin-autostart）。隔离模式和单元测试不注册，设置只记在数据库里
+    pub(super) autostart: std::sync::OnceLock<AutostartHook>,
 }
+
+pub type AutostartHook = Box<dyn Fn(bool) -> bool + Send + Sync>;
 
 /// 登记一次进行中的 CLI 检测，结束（含出错返回）时自动注销
 pub(super) struct CliRun<'a> {
@@ -229,6 +234,7 @@ impl Backend {
             cli_runs: Mutex::new(Vec::new()),
             startup: StartupGate::closed(),
             startup_environments: Mutex::new(None),
+            autostart: std::sync::OnceLock::new(),
         });
         Ok(backend)
     }
@@ -555,25 +561,34 @@ impl Backend {
         self.list_deliveries()
     }
 
-    pub fn repair_delivery(&self, id: &str) -> Result<Delivery> {
+    /// F-309：自动覆盖后通知界面（提示条带「撤销」）并记进活动日志
+    pub(super) fn backed_up(&self, saved: &deliver::backup::BackupMeta) -> Result<()> {
+        let target = self.require_target(&saved.target_id)?;
+        self.emit(
+            "deliveries://backed-up",
+            &BackupEvent {
+                backup_id: saved.backup_id.clone(),
+                target_id: saved.target_id.clone(),
+                reason: saved.reason,
+            },
+        );
+        self.activity(
+            ActivityKind::Repair,
+            match saved.reason {
+                BackupReason::Modified => ActivityMessageId::CopyRestored,
+                BackupReason::Takeover => ActivityMessageId::CopyTakenOver,
+            },
+            None,
+            params! {"target" => target.label, "env" => target.env_id.as_str(), "backup" => saved.backup_id.clone()},
+            true,
+        )
+    }
+
+    /// F-309 AC3：「备份并接管」。只处理没有 CloudLink 标记、全部由普通文件组成的同名目录
+    pub fn take_over_target(&self, id: &str) -> Result<Delivery> {
         let _edit = self.edit()?;
-        let original = self
-            .list_deliveries()?
-            .into_iter()
-            .find(|d| d.id == id)
-            .ok_or_else(|| AppError::ipc(IpcErrorId::NotFound))?;
-        let original_target = self.require_target(&original.target_id)?;
-        // Repair must validate the stored source before any health reconciliation can republish it.
-        deliver::load_source(&self.paths, &original_target.env_id, &original_target.agent_key)?
-            .ok_or_else(|| AppError::ipc(IpcErrorId::SourceMissing))?;
-        self.reconcile_locked(true)?;
-        let delivery = self
-            .list_deliveries()?
-            .into_iter()
-            .find(|d| d.id == id)
-            .ok_or_else(|| AppError::ipc(IpcErrorId::NotFound))?;
-        let target = self.require_target(&delivery.target_id)?;
-        if !target.enabled || !self.contexts(true)?.iter().any(|e| e.id == target.env_id) {
+        let target = self.require_target(id)?;
+        if !target.enabled {
             return Err(AppError::ipc(IpcErrorId::NotFound));
         }
         if self
@@ -586,17 +601,39 @@ impl Backend {
         let env = self.context(&target.env_id)?;
         let (marker, files) = deliver::load_source(&self.paths, &target.env_id, &target.agent_key)?
             .ok_or_else(|| AppError::ipc(IpcErrorId::SourceMissing))?;
-        let repaired = deliver::sync(&self.paths, &env, &target, &files, &marker, true)?;
-        self.database()?.upsert_delivery(&repaired)?;
+        let (delivery, saved) = deliver::take_over(&self.paths, &env, &target, &files, &marker)?;
+        self.database()?.upsert_delivery(&delivery)?;
         self.emit_deliveries()?;
+        self.backed_up(&saved)?;
+        if deliver::backup::prune(&self.paths, crate::time::now_secs()).is_err() {
+            log::warn!("CloudLink could not prune old backups");
+        }
+        Ok(delivery)
+    }
+
+    /// F-309 AC2/AC3「撤销」：备份写回原处，并停用这个目标（暂停自动同步），直到用户再次启用
+    pub fn undo_backup(&self, backup_id: &str) -> Result<Target> {
+        let _edit = self.edit()?;
+        let target_id = deliver::backup::target_of(&self.paths, backup_id)?;
+        let mut target = self.require_target(&target_id)?;
+        let env = self.context(&target.env_id)?;
+        deliver::restore_backup(&self.paths, &env, &target, backup_id)?;
+        target.enabled = false;
+        self.database()?.upsert_target(&target)?;
+        self.database()?.delete_delivery(&format!("dlv_{}", target.id))?;
         self.activity(
             ActivityKind::Repair,
-            ActivityMessageId::RepairOk,
+            ActivityMessageId::BackupUndone,
             None,
-            params! {"target" => target.label, "env" => target.env_id.as_str()},
-            repaired.status == DeliveryStatus::Ok,
+            params! {"target" => target.label.clone(), "env" => target.env_id.as_str()},
+            true,
         )?;
-        Ok(repaired)
+        self.publish_locked()?;
+        Ok(target)
+    }
+
+    pub fn set_autostart_hook(&self, hook: AutostartHook) {
+        let _ = self.autostart.set(hook);
     }
 
     pub(super) fn require_target(&self, id: &str) -> Result<Target> {
@@ -797,6 +834,17 @@ impl Backend {
         }
         if let Some(v) = patch.ssh_include_asked {
             settings.ssh_include_asked = v;
+        }
+        if let Some(v) = patch.close_to_tray {
+            settings.close_to_tray = v;
+        }
+        if let Some(v) = patch.launch_at_login {
+            if let Some(hook) = self.autostart.get()
+                && !hook(v)
+            {
+                return Err(AppError::ipc(IpcErrorId::SettingsInvalid));
+            }
+            settings.launch_at_login = v;
         }
         let auto_check_updates = patch.auto_check_updates;
         if let Some(v) = auto_check_updates {

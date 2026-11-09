@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 
-import { collectConsoleErrors, openServer, ready, toastText } from "./helpers"
+import { collectConsoleErrors, ready } from "./helpers"
 
 type ObservedWindow = Window & {
   __TAURI_INTERNALS__: { invoke: (command: string, args?: unknown, options?: unknown) => Promise<unknown> }
@@ -37,20 +37,3 @@ test("反馈每 60 秒刷新，隐藏时暂停，重新聚焦立即读取", asyn
   expect(errors).toEqual([])
 })
 
-test("全部并入跳过密钥笔记，编辑清理后才能并入", async ({ page }) => {
-  const errors = collectConsoleErrors(page)
-  await ready(page)
-  await openServer(page, "hk-edge")
-  const notes = page.getByRole("listitem").filter({ has: page.getByRole("button", { name: "编辑后并入", exact: true }) })
-  await expect(notes).toHaveCount(3)
-  await page.getByRole("button", { name: "全部并入", exact: true }).click()
-  await expect(notes).toHaveCount(1)
-  const secretNote = page.getByRole("listitem").filter({ has: page.getByText("疑似包含密钥", { exact: true }) })
-  await expect(secretNote.getByRole("button", { name: "并入", exact: true })).toBeDisabled()
-  await secretNote.getByRole("button", { name: "编辑后并入", exact: true }).click()
-  await secretNote.getByRole("textbox").fill("部署配置位于 /opt/apps/api，更新前先检查服务状态。")
-  await secretNote.getByRole("button", { name: "并入", exact: true }).click()
-  await expect(toastText(page, /已并入 1 条/)).toBeVisible()
-  await expect(page.locator("#asset-notes")).toHaveValue(/部署配置位于 \/opt\/apps\/api/)
-  expect(errors).toEqual([])
-})

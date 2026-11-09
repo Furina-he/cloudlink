@@ -13,13 +13,13 @@ export const targets: Target[] = [
   { id: "tgt_agents_wsl", envId: WSL, agent: "universal", agentKey: "universal", label: "Agent Skills", path: "/home/me/.agents/skills", enabled: true, detected: true },
 ]
 
-/** 副本状态覆盖 ok、missing、modified、conflict（PRD 7.8） */
+/** 副本缺失、被改动由后端自动处理（F-309），夹具里只剩 ok 和同名冲突 */
 export const deliveries: Delivery[] = [
   { id: "dlv_cc_win", targetId: "tgt_cc_win", envId: "windows", path: "C:\\Users\\me\\.claude\\skills\\cloudlink-servers", status: "ok", checkedAt: ago(5 * 60 * 1000) },
   // 目录里已有用户手写的 cloudlink-servers
   { id: "dlv_custom_win", targetId: "tgt_custom_win", envId: "windows", path: "C:\\Users\\me\\.cursor\\skills\\cloudlink-servers", status: "conflict", checkedAt: ago(5 * 60 * 1000) },
-  { id: "dlv_cc_wsl", targetId: "tgt_cc_wsl", envId: WSL, path: "/home/me/.claude/skills/cloudlink-servers", status: "missing", checkedAt: ago(5 * 60 * 1000) },
-  { id: "dlv_agents_wsl", targetId: "tgt_agents_wsl", envId: WSL, path: "/home/me/.agents/skills/cloudlink-servers", status: "modified", checkedAt: ago(5 * 60 * 1000) },
+  { id: "dlv_cc_wsl", targetId: "tgt_cc_wsl", envId: WSL, path: "/home/me/.claude/skills/cloudlink-servers", status: "ok", checkedAt: ago(5 * 60 * 1000) },
+  { id: "dlv_agents_wsl", targetId: "tgt_agents_wsl", envId: WSL, path: "/home/me/.agents/skills/cloudlink-servers", status: "ok", checkedAt: ago(5 * 60 * 1000) },
 ]
 
 export const skillConfig: SkillConfig = {

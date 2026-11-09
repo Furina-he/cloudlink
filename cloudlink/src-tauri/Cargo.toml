@@ -23,7 +23,7 @@ tauri-build = { version = "2.7.4", features = [] }
 
 # 主版本按 PRD 8.1 锁定
 [dependencies]
-tauri = { version = "2.12.5", features = [] }
+tauri = { version = "2.12.5", features = ["tray-icon"] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
@@ -49,3 +49,5 @@ dirs = "7"
 zeroize = "1"
 tempfile = "3"
 tauri-plugin-updater = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-autostart = "2"

@@ -11,6 +11,16 @@ export type AgentBrand = "claude-code" | "codex" | "cursor" | "windsurf" | "gemi
 
 export type AgentId = "claude-code" | "universal" | "trae" | "trae-cn" | "kiro" | "continue" | "custom";
 
+/**
+ * `deliveries://backed-up`：提示条「已恢复，改动的版本已备份 · 撤销」
+ */
+export type BackupEvent = { backupId: string, targetId: string, reason: BackupReason, };
+
+/**
+ * F-309：为什么备份了一个副本
+ */
+export type BackupReason = "modified" | "takeover";
+
 export type Delivery = { id: string, targetId: string, envId: EnvId, path: string, status: DeliveryStatus, statusDetail?: Detail<string>, checkedAt: string, };
 
 export type DeliveryStatus = "ok" | "pending" | "missing" | "modified" | "outdated" | "conflict";

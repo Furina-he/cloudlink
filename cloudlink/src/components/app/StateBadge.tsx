@@ -3,7 +3,6 @@ import {
   CircleDashedIcon,
   CircleXIcon,
   ClockIcon,
-  FileWarningIcon,
   MonitorIcon,
   ShieldCheckIcon,
   ShieldOffIcon,
@@ -14,7 +13,7 @@ import {
 } from "lucide-react"
 import type { ReactNode } from "react"
 
-import type { DeliveryStatus, GuardState, ProbeState } from "@/bindings"
+import type { GuardState, ProbeState } from "@/bindings"
 import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
 import { copy } from "@/lib/copy"
@@ -57,7 +56,7 @@ export function StateBadge({
   )
 }
 
-/** 状态的图标 + 文字（不加底色），用在回路行和列表行里 */
+/** 状态的图标 + 文字（不加底色），用在资源行和列表行里 */
 export function StateText({ tone, icon: Icon, children, className }: { tone: StateTone; icon: LucideIcon; children: ReactNode; className?: string }) {
   return (
     <span className={cn("inline-flex min-w-0 items-center gap-1", TONE_TEXT[tone], className)}>
@@ -74,14 +73,6 @@ export const CONN_STATE: Record<ConnState, { tone: StateTone; icon: LucideIcon }
   changed: { tone: "warning", icon: TriangleAlertIcon },
 }
 
-export const DELIVERY_STATE: Record<DeliveryStatus, { tone: StateTone; icon: LucideIcon | null }> = {
-  ok: { tone: "success", icon: CircleCheckIcon },
-  pending: { tone: "neutral", icon: null },
-  missing: { tone: "danger", icon: CircleXIcon },
-  modified: { tone: "warning", icon: FileWarningIcon },
-  outdated: { tone: "warning", icon: ClockIcon },
-  conflict: { tone: "warning", icon: TriangleAlertIcon },
-}
 
 export const GUARD_STATE: Record<GuardState, { tone: StateTone; icon: LucideIcon }> = {
   active: { tone: "success", icon: ShieldCheckIcon },

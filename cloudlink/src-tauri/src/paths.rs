@@ -187,6 +187,10 @@ impl Paths {
     pub fn log_dir(&self) -> PathBuf {
         self.data_dir.join("logs")
     }
+    /// F-309：被改动或被接管的副本先备份到这里
+    pub fn backups_dir(&self) -> PathBuf {
+        self.data_dir.join("backups")
+    }
     pub fn tmp_dir(&self) -> PathBuf {
         self.data_dir.join("tmp")
     }

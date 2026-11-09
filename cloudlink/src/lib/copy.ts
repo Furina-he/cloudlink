@@ -27,11 +27,11 @@ import type {
   ProbeStepStatus,
   RelationKind,
   SshErrorId,
+  TrayCopy,
 } from "@/bindings"
 import type { PanelTemplateId } from "@/lib/panelTemplates"
 import type { ValidationKey } from "@/lib/schemas"
 import type { CliEnvStatus, ConnState } from "@/stores/assets"
-import type { SettingsSection } from "@/stores/ui"
 import type { UpdateTask } from "@/stores/update"
 
 type Params = Record<string, string | number> | undefined
@@ -53,7 +53,7 @@ const AGENT_LABEL: Record<AgentId, string> = {
   continue: "Continue",
   custom: "自定义目录",
 }
-/** 回路行上 Agent 按钮的短名称；自定义目录用用户填的名称 */
+/** 资源行上 Agent 按钮的短名称；自定义目录用用户填的名称 */
 const AGENT_SHORT: Record<Exclude<AgentId, "custom">, string> = {
   "claude-code": "Claude Code",
   universal: "通用",
@@ -281,7 +281,7 @@ export const copy = {
       stopTo: (agent: string) => `当前资源停止分发给 ${agent}`,
       setMode: (mode: string) => `把当前资源切换为「${mode}」`,
       preview: "预览 Skill",
-      checkAll: "检查全部分发",
+      allReadOnly: "全部切回只读",
       theme: "切换主题",
     },
     back: "返回",
@@ -316,7 +316,7 @@ export const copy = {
       "允许常规部署和重启服务。删除数据、改防火墙或 SSH 配置、停止关键服务、重启主机前，必须先征得你同意。",
   } satisfies Record<Mode, string>,
 
-  /** 回路行和详情的连接状态（6.11 状态词表）。changed 仍是「未验证」，另附一句提示（F-106 AC4） */
+  /** 资源行和详情的连接状态（6.11 状态词表）。changed 仍是「未验证」，另附一句提示（F-106 AC4） */
   connState: {
     connected: "已连接",
     unverified: "未验证",
@@ -352,18 +352,6 @@ export const copy = {
     modified: "副本被改动",
     outdated: "待同步",
     conflict: "冲突",
-  } satisfies Record<DeliveryStatus, string>,
-  deliveryOk: (n: number) => `已同步 ${n} 台`,
-  deliveryNone: "还没有分发给它的资源",
-  deliveryDetail: {
-    pending: "正在写入副本。",
-    ok: "",
-    missing: "副本被外部程序删除了。点「修复」重新写入。",
-    modified:
-      "副本被改动过，内容和 CloudLink 的编译结果不一致。「修复」会覆盖这些改动。",
-    outdated: "副本不是最新的编译结果，上次同步没有成功。点「修复」重新同步。",
-    conflict:
-      "目录里已有一个不是 CloudLink 创建的 cloudlink-servers，CloudLink 没有覆盖它。先手动处理，再点「检查」。",
   } satisfies Record<DeliveryStatus, string>,
 
   probeState: {
@@ -608,7 +596,7 @@ export const copy = {
       "not-logged-in": "去登录",
       expired: "去登录",
     } satisfies Record<Exclude<CliEnvStatus, "ready">, string>,
-    /** 回路行：「WSL 未登录」 */
+    /** 资源行：「WSL 未登录」 */
     envProblem: (env: string, status: string) => `${env} ${status}`,
     kind: {
       zone: "域名 (Zones)",
@@ -715,7 +703,7 @@ export const copy = {
     grantAfter: "连接成功后授权给",
     grant: "授权给",
     defaultMode: "默认档位",
-    prodStandardHint: "生产资源处于标准运维时，回路行会一直以琥珀色提醒。",
+    prodStandardHint: "生产资源处于标准运维时，资源行会一直以琥珀色提醒。",
     connectEnable: "连接并启用",
     saveOnly: "仅保存（暂不启用）",
     passwordHint: "连接后自动配置免密密钥供 Agent 使用，不保留明文密码。",
@@ -745,6 +733,7 @@ export const copy = {
 
   /** 右侧检视面板（PRD 6.4） */
   detail: {
+    notesPending: (n: number) => `${n} 条 Agent 笔记等你确认`,
     back: "资源",
     test: "测试连接",
     probe: "重新探测",
@@ -856,7 +845,7 @@ export const copy = {
   modeConfirm: {
     title: (alias: string) => `把 ${alias} 切换为标准运维？`,
     description:
-      "所有已启用的 Agent 都会获得变更权限的指令，护栏只会拦下明显危险的命令。切换后回路行会一直以琥珀色提醒，干完活记得切回只读巡检。",
+      "所有已启用的 Agent 都会获得变更权限的指令，护栏只会拦下明显危险的命令。切换后资源行会一直以琥珀色提醒，干完活记得切回只读巡检。",
     confirm: "切换为标准运维",
   },
 
@@ -1262,7 +1251,7 @@ export const copy = {
     noTargets: "还没有启用的 Agent，下面按 Claude Code（Windows）计算。",
     emptyTitle: "没有可预览的内容",
     emptyDescription:
-      "还没有分发给这个 Agent 的资源。在资源配电盘的回路行上点亮它之后，这里显示编译出的总 Skill。",
+      "还没有分发给这个 Agent 的资源。在资源列表的资源行上点亮它之后，这里显示编译出的总 Skill。",
   },
 
   /** 探测 Sheet（PRD 6.4 探测流程） */
@@ -1419,34 +1408,62 @@ export const copy = {
   } satisfies Record<ValidationKey, string>,
 
   /** Agent 视图（PRD 6.6） */
+  /** Agent 视图（PRD 6.6，v0.2）：一行一个分发目标，Skill 内容，运行环境 */
   agents: {
-    summary: (included: number, enabled: number) =>
-      `${included} 项资源已列入 · ${enabled} 个目录已启用`,
-    /** Agent 与目录分区（2026-11-07 重新设计：目标、读取它的 Agent、护栏合在一行里） */
-    targetsTitle: "Agent 与目录",
-    targetsHint: "总 Skill 复制到每个已启用的目录，读取这个目录的 Agent 都能用上。",
-    /** 通用目录下面一行：哪些检测到的 Agent 读取它 */
-    readersSuffix: "读取这个目录",
-    readersNone: "Codex、Cursor、Gemini CLI、GitHub Copilot 等大多数 Agent 都读取这里",
+    intro: "CloudLink 把服务器和云平台写成一个 Skill，自动同步给下面这些 Agent。",
+    preview: "预览 Skill",
+    detected: "已检测到",
+    groupActions: "Agent 目录的更多操作",
+    addCustom: "添加自定义目录",
+    rowActions: (label: string) => `${label} 的更多操作`,
+    enable: (label: string) => `给 ${label} 同步`,
+    synced: "已同步",
+    syncing: "同步中",
+    disabled: "已停用",
+    resources: (n: number) => `${n} 项资源`,
+    readers: (n: number) => `${n} 个 Agent 读取这里`,
     readersLabel: "读取这个目录的 Agent",
     readersTooltip: (label: string, names: string) => `${label}：${names} 读取`,
-    duplicate: (name: string, dir: string) =>
-      `${name} 已经能从「${dir}」读到总 Skill，这里再放一份会让它看到两份；不需要的话停用这个目录。`,
-    guard: "护栏",
-    installGuard: "安装护栏",
-    reinstallGuard: "重新安装护栏",
-    removeGuard: "移除护栏",
+    readersNone: "Codex、Cursor、Gemini CLI 等大多数 Agent 读取这里",
+    conflict: "目录里已有同名 Skill",
+    takeOver: "备份并接管",
+    takeOverLabel: (label: string) => `备份并接管 ${label} 目录里的同名 Skill`,
+    takenOver: (label: string) => `已接管 ${label} 里的同名 Skill，原来的版本已备份`,
+    syncFailed: "同步没有成功，下次检查时会重试",
+    guardOn: "护栏已开启",
+    guardOnTip: (n: number) => `今天拦截 ${n} 条`,
+    guardBroken: "护栏未生效",
+    guardReinstall: "重新安装",
+    guardInstall: "开启护栏",
+    guardNone: "无护栏",
+    guardNoneTip: "这个 Agent 还没有护栏，靠红线约束",
     guardRules: "查看护栏规则",
-    homePath: (path: string) => `完整路径：${path}`,
-    problems: (n: number) => `${n} 个问题需要处理`,
-    problemsLabel: (n: number) => `${n} 个问题需要处理，跳到第一个`,
-    preview: "预览 Skill",
-    checkAll: "检查全部",
-    checked: (n: number) => `已检查 ${n} 个副本`,
-    loading: "正在加载 Agent 目标",
-    compileWarnings: (n: number) => `总 Skill 有 ${n} 条警告`,
-    compileBlocked: (n: number, targets: string) =>
-      `编译受阻：${n} 个错误，${targets}的总 Skill 没有发布`,
+    removeGuard: "移除护栏",
+    reveal: "在文件夹中显示",
+    removeCustom: "移除这个目录",
+    others: (n: number) => `其余 ${n} 个未检测到`,
+    othersCollapse: "收起",
+    duplicate: (name: string, dir: string) =>
+      `${name} 已经能从「${dir}」读到 Skill，这里再放一份会让它看到两份。`,
+    content: "Skill 内容",
+    relations: "资源关系",
+    relationsCount: (n: number) => `自动整理 ${n} 条`,
+    conventions: "运维约定",
+    conventionsCount: (n: number) => `${n} 条`,
+    rules: "护栏规则",
+    rulesCount: (n: number) => `内置 ${n} 条`,
+    rulesBuiltin: "内置",
+    back: "Agent",
+    backLabel: "返回 Agent",
+    environments: "运行环境",
+    redetect: "重新检测",
+    redetected: "已重新检测运行环境与 Agent",
+    envUnavailable: "没有检测到，或者没有启动",
+    envEnable: (label: string) => `启用 ${label}`,
+    loading: "正在加载 Agent",
+    compileBlocked: (targets: string) => `Skill 有错误，${targets}没有更新`,
+    compileWarnings: (n: number) => `Skill 有 ${n} 条警告`,
+    showLint: "查看",
   },
 
   skillContent: {
@@ -1535,32 +1552,15 @@ export const copy = {
   },
 
   targets: {
-    title: "分发目标",
-    addCustom: "自定义目录",
-    enable: (label: string, env: string) => `启用 ${label}（${env}）`,
-    detected: "已检测到",
-    notDetected: "未检测到",
-    enabled: "已启用",
-    disabled: "已停用",
-    repair: "修复",
-    actions: (label: string) => `${label} 的操作`,
-    check: "检查",
-    removeCustom: "移除",
-    enabledToast: (label: string) => `已启用 ${label}，已写入总 Skill`,
-    disabledToast: (label: string) =>
-      `已停用 ${label}，已移除 CloudLink 分发的 cloudlink-servers`,
-    disableTitle: (label: string) => `停用 ${label}？`,
+    enabledToast: (label: string) => `已开始同步给 ${label}`,
+    disabledToast: (label: string) => `已停止同步给 ${label}，已移除 CloudLink 写入的 Skill`,
+    disableTitle: (label: string) => `停止同步给 ${label}？`,
     disableDescription:
-      "CloudLink 会从这个目录移除自己分发的 cloudlink-servers，目录里的其他内容不受影响。",
-    disableConfirm: "停用",
-    repairTitle: "修复会覆盖副本里的改动",
-    repairDescription: (path: string) =>
-      `${path} 被改动过。修复会用 CloudLink 的编译结果覆盖它，改动会丢失。`,
-    repairConfirm: "覆盖并修复",
-    repaired: (label: string) => `已修复 ${label} 的副本`,
+      "CloudLink 会从这个 Agent 的目录移除自己写入的 cloudlink-servers，目录里的其他内容不受影响。",
+    disableConfirm: "停止同步",
+    removeCustom: "移除",
     removeTitle: (label: string) => `移除自定义目录 ${label}？`,
-    removeDescription:
-      "CloudLink 会删除自己分发的 cloudlink-servers，并不再同步这个目录。",
+    removeDescription: "CloudLink 会删除自己写入的 cloudlink-servers，并不再同步这个目录。",
     removed: (label: string) => `已移除 ${label}`,
   },
 
@@ -1576,29 +1576,36 @@ export const copy = {
     added: (label: string) => `已添加 ${label}`,
   },
 
-  /** 设置视图（PRD 6.7） */
+  /** 设置视图（PRD 6.8，v0.2）：一页往下滚的分组设置式列表 */
   settings: {
-    nav: "设置分区",
-    section: {
-      general: "通用",
-      environments: "运行环境",
-      ssh: "ssh 配置",
+    groups: {
+      appearance: "外观",
+      startup: "启动与托盘",
+      connection: "连接",
       compile: "编译",
-      probe: "探测",
-      activity: "活动",
       data: "数据",
       danger: "危险操作",
-    } satisfies Record<SettingsSection, string>,
-    sectionHint: {
-      general: "主题、默认档位、检查更新",
-      environments: "Windows 与 WSL 发行版",
-      ssh: "托管配置与 Include",
-      compile: "正文上限、快照时间",
-      probe: "超时与探测脚本",
-      activity: "活动日志与 Agent 操作",
-      data: "数据目录与日志",
-      danger: "移除全部分发、清空数据",
-    } satisfies Record<SettingsSection, string>,
+    },
+    navPosition: "导航位置",
+    navOption: { top: "顶栏", side: "侧栏" },
+    closeWindow: "关闭窗口时",
+    closeOption: { tray: "留在托盘", quit: "退出" },
+    closeHint: "留在托盘时，护栏和托盘里的档位切换照常可用。",
+    launchAtLogin: "开机时启动",
+    sshConfig: (env: string) => `ssh 配置 · ${env}`,
+    sshIncludedHint: (path: string) => `${path} 已通过 Include 生效`,
+    sshMissingHint: (path: string) => `${path} 还没有加入 Include，Agent 连不上这里的服务器`,
+    open: "打开",
+    backups: "备份",
+    backupsHint: (path: string) => `覆盖或接管之前的版本保存在 ${path}`,
+    activityLog: "活动日志",
+    activityLogHint: "测试连接、探测、编译、同步和备份的记录，保留 30 天",
+    activityLogOpen: "查看",
+    activityLogOpenLabel: "查看活动日志",
+    reset: "重置 CloudLink",
+    resetHint: "移除全部托管副本和设置，不会动你自己的文件",
+    resetPhrase: "重置",
+    resetConfirm: "重置",
     saved: "设置已保存",
     loading: "正在加载设置",
     theme: "主题",
@@ -1666,6 +1673,34 @@ export const copy = {
     envUnavailable: "不可用",
   },
 
+  /** 自动同步的备份与撤销（F-309） */
+  allReadOnly: {
+    done: (n: number) => `${n} 台生产资源已切回只读`,
+    none: "没有处于标准运维的生产资源",
+  },
+
+  backups: {
+    restored: (label: string) => `${label} 里的 Skill 被改动过，已恢复；改动的版本已备份`,
+    takenOver: (label: string) => `已接管 ${label} 里的同名 Skill，原来的版本已备份`,
+    undone: (label: string) => `已撤销，${label} 暂停自动同步，重新打开开关后恢复`,
+  },
+
+  /** 托盘菜单与系统通知（F-407）。{n} 由 Rust 替换 */
+  tray: {
+    tooltip: "CloudLink",
+    guardOn: "● 护栏运行中",
+    guardOff: "○ 护栏未开启",
+    modesHeader: "档位",
+    readOnly: "只读巡检",
+    standard: "标准运维",
+    allReadOnly: "全部切回只读",
+    prodInStandard: "{n} 台生产在运维档",
+    open: "打开 CloudLink",
+    quit: "退出",
+    notifyTitle: "CloudLink",
+    notifyAllReadOnly: "{n} 台生产服务器已切回只读",
+  } satisfies TrayCopy,
+
   activityKind: {
     connection: "测试连接",
     probe: "探测",
@@ -1701,6 +1736,12 @@ export const copy = {
     "remove-ok": (p) =>
       `从 ${v(p, "target")}（${envOf(p)}）移除了 cloudlink-servers`,
     "repair-ok": (p) => `修复了 ${v(p, "target")}（${envOf(p)}）的副本`,
+    "copy-restored": (p) =>
+      `${v(p, "target")}（${envOf(p)}）里的 Skill 被改动过，已备份并恢复`,
+    "copy-taken-over": (p) =>
+      `接管了 ${v(p, "target")}（${envOf(p)}）里的同名 Skill，原来的版本已备份`,
+    "backup-undone": (p) =>
+      `把备份写回 ${v(p, "target")}（${envOf(p)}），暂停这个目录的自动同步`,
     "ssh-config-written": (p) =>
       `写入了 ${envOf(p)} 的托管 ssh 配置（${v(p, "count")} 台服务器）`,
     "ssh-include-added": (p) =>
@@ -1724,6 +1765,50 @@ export const copy = {
     "update-installing": (p) =>
       `开始把 CloudLink 从 ${v(p, "from")} 更新到 ${v(p, "to")}`,
   } satisfies Record<ActivityMessageId, Msg>,
+
+  /** 动态视图（PRD 6.7，v0.2）：等你确认、操作记录 */
+  feed: {
+    asks: "等你确认",
+    noteAsk: (alias: string) => `Agent 记下了一条关于 ${alias} 的笔记`,
+    merge: "并入资源",
+    dismiss: "忽略",
+    edit: "编辑",
+    needsEdit: "需编辑",
+    secretHint: "里面像是有密钥，删掉以后才能并入。",
+    injectionHint: "里面像是写给 Agent 的指令，不能并入，只能忽略。",
+    editLabel: "编辑笔记",
+    cancelEdit: "取消",
+    merged: (alias: string) => `已并入 ${alias}，已重新编译`,
+    dismissed: "已忽略这条笔记",
+    log: "操作记录",
+    filter: { all: "全部", denied: "已拦截", allowed: "已执行" },
+    filterLabel: "按结果筛选",
+    assetFilter: "按资源筛选",
+    allAssets: "全部资源",
+    allowed: "已执行",
+    denied: "已拦截",
+    unparsed: "未能解析，已放行",
+    reasonShort: (id: GuardReasonId) =>
+      ({
+        "read-only": "只读档",
+        "cli-write": "只读档",
+        "file-transfer": "只读档",
+        interactive: "只读档",
+        "credential-read": "读取凭据",
+        "cli-env-export": "导出凭据",
+        "cli-account": "账号不符",
+        "cli-scope": "超出范围",
+        unparsed: "无法确认",
+      })[id as string] ?? "危险操作",
+    copyCommand: "复制命令",
+    empty: "还没有记录。Agent 通过 ssh 或云平台 CLI 执行命令后会出现在这里。",
+    noMatch: "没有符合筛选条件的记录",
+    clearFilter: "清除筛选",
+    loadMore: "加载更多",
+    loading: "正在加载操作记录",
+    scopeNote: "目前只有 Claude Code 的命令会记录在这里。",
+    deletedAsset: "已删除的资源",
+  },
 
   activityView: {
     title: "活动",

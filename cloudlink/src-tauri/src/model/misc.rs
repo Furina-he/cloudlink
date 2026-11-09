@@ -43,6 +43,12 @@ pub enum ActivityMessageId {
     DeliverOk,
     RemoveOk,
     RepairOk,
+    /// F-309：被改动的副本已备份并恢复，`params.target`、`params.env`
+    CopyRestored,
+    /// F-309：外来的同名 Skill 已移进备份并由 CloudLink 接管
+    CopyTakenOver,
+    /// F-309：备份已写回，这个目标的自动同步暂停（目标停用）
+    BackupUndone,
     SshConfigWritten,
     SshIncludeAdded,
     GuardInstalled,
@@ -140,6 +146,12 @@ pub struct Settings {
     /// F-406：定时检查更新，默认开启（旧数据由迁移 v4 补上）
     #[serde(default = "enabled_by_default")]
     pub auto_check_updates: bool,
+    /// F-407：关闭窗口时留在托盘（默认），false 为退出
+    #[serde(default = "enabled_by_default")]
+    pub close_to_tray: bool,
+    /// 开机时启动（tauri-plugin-autostart，写当前用户的启动项）
+    #[serde(default)]
+    pub launch_at_login: bool,
 }
 
 fn enabled_by_default() -> bool {
@@ -165,6 +177,8 @@ impl Settings {
             log_dir,
             ssh_include_asked: Vec::new(),
             auto_check_updates: true,
+            close_to_tray: true,
+            launch_at_login: false,
         }
     }
 }

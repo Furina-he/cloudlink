@@ -195,6 +195,11 @@ pub async fn set_mode(state: State<'_, Arc<Backend>>, asset_id: String, mode: Mo
 }
 
 #[tauri::command]
+pub async fn all_read_only(state: State<'_, Arc<Backend>>) -> Result<Vec<String>> {
+    blocking(state, |backend| backend.all_read_only()).await
+}
+
+#[tauri::command]
 pub async fn detect_cli_environment(
     state: State<'_, Arc<Backend>>,
     req: CliRequest,
@@ -307,8 +312,13 @@ pub async fn check_deliveries(state: State<'_, Arc<Backend>>) -> Result<Vec<Deli
 }
 
 #[tauri::command]
-pub async fn repair_delivery(state: State<'_, Arc<Backend>>, id: String) -> Result<Delivery> {
-    blocking(state, move |backend| backend.repair_delivery(&id)).await
+pub async fn take_over_target(state: State<'_, Arc<Backend>>, id: String) -> Result<Delivery> {
+    blocking(state, move |backend| backend.take_over_target(&id)).await
+}
+
+#[tauri::command]
+pub async fn undo_backup(state: State<'_, Arc<Backend>>, backup_id: String) -> Result<Target> {
+    blocking(state, move |backend| backend.undo_backup(&backup_id)).await
 }
 
 #[tauri::command]
@@ -398,4 +408,10 @@ pub async fn cancel_update(state: State<'_, Arc<Backend>>) -> Result<()> {
         Ok(())
     })
     .await
+}
+
+/// F-407：托盘菜单的文字（只在 copy.ts 里），收到后创建或重建托盘
+#[tauri::command]
+pub fn set_tray_copy(app: tauri::AppHandle, copy: crate::tray::TrayCopy) {
+    crate::tray::set_copy(&app, copy);
 }

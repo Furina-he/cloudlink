@@ -114,7 +114,8 @@ fn failure(target: &Target, now: &str, detail: &str) -> Delivery {
 }
 
 impl Backend {
-    /// In health mode, unchanged authorizations are inspected so missing/modified copies remain visible.
+    /// Every pass repairs missing/outdated copies and backs up modified ones before overwriting (F-309).
+    /// Health mode only limits compile notifications to what changed.
     /// Caller holds the mutation mutex; vault and remote authentication are never called here.
     pub(super) fn reconcile_locked(&self, health: bool) -> Result<Vec<CompileStatus>> {
         let mut assets = self.list_assets()?;
@@ -312,6 +313,7 @@ impl Backend {
             self.emit("compile://finished", &serde_json::json!({ "statuses": statuses }));
         }
         let all_envs = self.contexts(false)?;
+        let mut backups = Vec::new();
         for target in &targets {
             if !target.enabled || !envs.iter().any(|e| e.id == target.env_id) {
                 self.database()?.delete_delivery(&format!("dlv_{}", target.id))?;
@@ -330,10 +332,14 @@ impl Backend {
                         deliver::inspect(&self.paths, env, target, hash)
                     }
                 })
-            } else if (!health || changed.contains(&key))
-                && let Some((marker, files)) = sources.get(&key)
-            {
-                deliver::sync(&self.paths, env, target, files, marker, false)
+            } else if let Some((marker, files)) = sources.get(&key) {
+                // F-309 AC1/AC2：每次检查都把缺失、过期的副本补上；被改动的先备份再覆盖
+                deliver::sync_auto(&self.paths, env, target, files, marker).map(|(delivery, saved)| {
+                    if let Some(saved) = saved {
+                        backups.push(saved);
+                    }
+                    delivery
+                })
             } else {
                 deliver::inspect(&self.paths, env, target, hash)
             };
@@ -357,6 +363,12 @@ impl Backend {
             }
         }
         self.emit_deliveries()?;
+        for saved in &backups {
+            self.backed_up(saved)?;
+        }
+        if !backups.is_empty() && deliver::backup::prune(&self.paths, crate::time::now_secs()).is_err() {
+            log::warn!("CloudLink could not prune old backups");
+        }
         self.database()?
             .prune_before(&crate::time::format_rfc3339(crate::time::now_secs() - 30 * 86_400))?;
         self.emit_guard_status()?;

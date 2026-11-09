@@ -1,7 +1,8 @@
 // Mock 后端的内存数据库与公共逻辑：列入计算、重新编译、同步副本（PRD 3.4、8.2、8.4）
 import { emit } from "@tauri-apps/api/event"
 
-import type { ActivityItem, AgentId, Asset, AssetInput, CliAsset, CompileStatus, EnvId, Inclusion, IpcError, ServerAsset, Target } from "@/bindings"
+import type {
+  TrayCopy, ActivityItem, AgentId, Asset, AssetInput, CliAsset, CompileStatus, EnvId, Inclusion, IpcError, ServerAsset, Target } from "@/bindings"
 import { cliEnvStatus, handleOf } from "@/stores/assets"
 import * as fx from "./fixtures"
 import { compileSkill, toStatus } from "./lint"
@@ -33,6 +34,8 @@ export const db = {
   cloudlinkKeys: new Set<string>(),
   /** 测试通过的连接参数（signature → 测试时间），保存时据此保留验证结果（F-106 AC4） */
   passedTests: new Map<string, { at: string; envId: EnvId }>(),
+  /** 前端交给托盘的文字（F-407），桌面版之外没有托盘 */
+  trayCopy: null as TrayCopy | null,
 }
 
 /**

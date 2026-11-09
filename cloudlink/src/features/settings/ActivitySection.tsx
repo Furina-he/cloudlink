@@ -13,7 +13,6 @@ import { copy, ipcErrorText } from "@/lib/copy"
 import { dayKey, formatDay } from "@/lib/format"
 import { useActivityStore } from "@/stores/activity"
 import { ActivityFilters, ActivityLine } from "./ActivityParts"
-import { Section } from "./Section"
 
 function dayTitle(iso: string) {
   const key = dayKey(iso)
@@ -62,8 +61,8 @@ export function ActivitySection() {
   }, [items])
 
   return (
-    // 类型筛选有 10 项，放宽到 3xl，1280 宽时一行放得下
-    <Section id="activity" title={copy.settings.section.activity} hint={copy.activityView.retention} wide>
+    <section aria-label={copy.settings.activityLog} className="flex min-w-0 flex-col gap-4">
+      <p className="text-xs text-muted-foreground">{copy.activityView.retention}</p>
       <ActivityFilters />
       {error && (
         <Alert variant="destructive">
@@ -117,6 +116,6 @@ export function ActivitySection() {
           )}
         </>
       )}
-    </Section>
+    </section>
   )
 }

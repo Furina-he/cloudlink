@@ -39,6 +39,7 @@ import type {
   SshConfigStatus,
   SshHostList,
   Target,
+  TrayCopy,
   UpdateStatus,
 } from "@/bindings"
 
@@ -127,7 +128,14 @@ export const ipc = {
   listInclusions: () => invoke<Inclusion[]>("list_inclusions"),
   listDeliveries: () => invoke<Delivery[]>("list_deliveries"),
   checkDeliveries: () => invoke<Delivery[]>("check_deliveries"),
-  repairDelivery: (id: string) => invoke<Delivery>("repair_delivery", { id }),
+  /** F-309 AC3「备份并接管」：目录里的同名 Skill 移进备份，再写入 */
+  takeOverTarget: (id: string) => invoke<Delivery>("take_over_target", { id }),
+  /** F-309「撤销」：备份写回原处，这个目标停用（暂停自动同步） */
+  undoBackup: (backupId: string) => invoke<Target>("undo_backup", { backupId }),
+  /** F-407 AC2：处于标准运维的生产资源全部切回只读，返回切回的名称 */
+  allReadOnly: () => invoke<string[]>("all_read_only"),
+  /** F-407：托盘菜单的文字只在 copy.ts，启动时交给 Rust */
+  setTrayCopy: (copy: TrayCopy) => invoke<void>("set_tray_copy", { copy }),
   removeAllDeliveries: () => invoke<void>("remove_all_deliveries"),
   getGuardStatus: () => invoke<GuardStatus[]>("get_guard_status"),
   installGuard: (envId: EnvId) =>

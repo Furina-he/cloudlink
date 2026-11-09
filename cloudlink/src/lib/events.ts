@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 
 import type {
   ActivityItem,
+  BackupEvent,
   CompileStatus,
   ConnectionTestedEvent,
   Delivery,
@@ -10,9 +11,12 @@ import type {
   Inclusion,
   ProbeFinishedEvent,
   ProbeProgressEvent,
+  TrayConfirmMode,
   UpdateStatus,
 } from "@/bindings"
 import { useActivityStore } from "@/stores/activity"
+import { useAssetStore } from "@/stores/assets"
+import { onBackedUp, onTrayConfirmMode } from "@/stores/backups"
 import { useConnectionStore } from "@/stores/connection"
 import { useDeliveryStore } from "@/stores/deliveries"
 import { useGuardStore } from "@/stores/guard"
@@ -50,8 +54,14 @@ export async function subscribeBackendEvents(): Promise<UnlistenFn> {
     listen<{ assetId: string; count: number }>("notes://new", (e) =>
       useNotesStore.getState()._onNew(e.payload.assetId)
     ),
-    listen<{ item: ActivityItem }>("activity://new", (e) =>
+    listen<{ item: ActivityItem }>("activity://new", (e) => {
       useActivityStore.getState()._onNew(e.payload.item)
+      // 托盘里切换的档位（F-407）不经过前端，资源列表跟着刷新
+      if (e.payload.item.kind === "mode") void useAssetStore.getState().refresh()
+    }),
+    listen<BackupEvent>("deliveries://backed-up", (e) => onBackedUp(e.payload)),
+    listen<TrayConfirmMode>("tray://confirm-mode", (e) =>
+      onTrayConfirmMode(e.payload.assetId)
     ),
     listen<{ status: UpdateStatus }>("update://changed", (e) =>
       useUpdateStore.getState()._onChanged(e.payload.status)

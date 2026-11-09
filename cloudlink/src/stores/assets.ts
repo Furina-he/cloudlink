@@ -29,7 +29,7 @@ interface AssetState {
   error: IpcError | null
   /** 本次会话里最近一次保存的时间，详情头部据此显示「已保存，已编译」 */
   lastSaved: Record<string, string>
-  /** 刚新建或导入的资源，回路行只给它们播放进入动画（PRD 7.7）；两秒后清空 */
+  /** 刚新建或导入的资源，资源行只给它们播放进入动画（PRD 7.7）；两秒后清空 */
   freshIds: string[]
 
   load: () => Promise<void>
@@ -230,7 +230,7 @@ export function cliEnvStatus(s: CliEnvState): CliEnvStatus {
   return s.authenticated ? "ready" : "not-logged-in"
 }
 
-/** 第一个有问题的运行环境（Windows 在前）：回路行和详情头部就地给出修复入口；全部就绪时为 null */
+/** 第一个有问题的运行环境（Windows 在前）：资源行和详情头部就地给出修复入口；全部就绪时为 null */
 export function selectCliProblem(asset: Pick<CliAsset, "cli">): { envId: EnvId; status: Exclude<CliEnvStatus, "ready"> } | null {
   const envIds = (Object.keys(asset.cli.envStates) as EnvId[]).sort((a, b) => (a === "windows" ? -1 : b === "windows" ? 1 : a.localeCompare(b)))
   for (const envId of envIds) {
@@ -242,7 +242,7 @@ export function selectCliProblem(asset: Pick<CliAsset, "cli">): { envId: EnvId; 
   return null
 }
 
-/** 回路行上显示的账号：第一个已就绪环境的 whoami */
+/** 资源行上显示的账号：第一个已就绪环境的 whoami */
 export function selectCliAccount(asset: Pick<CliAsset, "cli" | "account">): string | undefined {
   const ready = Object.values(asset.cli.envStates).find((s) => s && cliEnvStatus(s) === "ready")
   return ready && (asset.account ?? ready.account)
@@ -269,7 +269,7 @@ export function selectCanDistribute(asset: Asset): { ok: true } | { ok: false; r
 /** 档位闸刀的琥珀色提醒（DESIGN.md Breaker Row）：生产资源处于标准运维 */
 export const isProdWritable = (a: Pick<Asset, "production" | "agent">) => a.production && a.agent.mode === "standard"
 
-/** 回路行和详情的连接状态。分发时一定验证过，所以「分发给了 Agent 却没有验证结果」就是连接改过（F-106 AC4） */
+/** 资源行和详情的连接状态。分发时一定验证过，所以「分发给了 Agent 却没有验证结果」就是连接改过（F-106 AC4） */
 export type ConnState = "connected" | "unverified" | "failed" | "changed"
 
 export function connState(asset: Pick<ServerAsset, "connection" | "agent">): ConnState {

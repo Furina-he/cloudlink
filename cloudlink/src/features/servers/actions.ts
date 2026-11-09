@@ -1,4 +1,4 @@
-// 资源的即时操作（PRD 6.4）：回路行、右键菜单、命令面板、检视面板共用同一套，确认对话框只挂一份
+// 资源的即时操作（PRD 6.4）：资源行、右键菜单、命令面板、检视面板共用同一套，确认对话框只挂一份
 import { create } from "zustand"
 
 import type { Asset, CliAsset, CliProvider, EnvId, IpcError, ServerAsset } from "@/bindings"
@@ -85,6 +85,17 @@ export const serverActions = {
       return
     }
     void serverActions.setMode(asset, mode)
+  },
+
+  /** F-407 AC2「全部切回只读」：命令面板入口；托盘的入口由 Rust 处理并发系统通知 */
+  async allReadOnly() {
+    try {
+      const names = await ipc.allReadOnly()
+      if (names.length > 0) await useAssetStore.getState().refresh()
+      toast.add({ title: names.length > 0 ? copy.allReadOnly.done(names.length) : copy.allReadOnly.none })
+    } catch (e) {
+      toastError(e)
+    }
   },
 
   async setMode(asset: Asset, mode: Asset["agent"]["mode"]) {

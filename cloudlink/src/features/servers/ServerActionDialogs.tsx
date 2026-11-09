@@ -83,7 +83,7 @@ function DeleteBody({ assetId, close }: { assetId: string; close: () => void }) 
   )
 }
 
-/** 需要确认的资源操作（F-202 AC2、F-101 AC2）。在 App 上挂一份，回路行、右键菜单、命令面板、检视面板共用 */
+/** 需要确认的资源操作（F-202 AC2、F-101 AC2）。在 App 上挂一份，资源行、右键菜单、命令面板、检视面板共用 */
 export function ServerActionDialogs() {
   const pending = usePendingAction((s) => s.pending)
   const asset = useAssetStore((s) => (pending ? s.byId[pending.assetId] : undefined))

@@ -17,14 +17,13 @@ import { useAgentOptions } from "@/features/agents/agentKeys"
 import { copy } from "@/lib/copy"
 import type { ProfileFormValues } from "@/lib/schemas"
 import { selectInclusionsByAsset, useDeliveryStore } from "@/stores/deliveries"
-import { useActivityStore } from "@/stores/activity"
+import { useNotesStore } from "@/stores/notes"
 import { useOperationStore } from "@/stores/operations"
 import { useUIStore } from "@/stores/ui"
 import { useShallow } from "zustand/react/shallow"
 import { AgentPicker } from "./AgentPicker"
 import { ModeToggle } from "./ModeSwitch"
 import { shortId } from "./serverForm"
-import { NotesSection } from "./sections/NotesSection"
 import { OperationLine } from "./sections/OperationsSection"
 import { ValidationError } from "./ValidationError"
 
@@ -230,9 +229,11 @@ export function RulesGroup() {
   )
 }
 
-/** 最近动态：待处理的 Agent 笔记（P7c 移到动态页之前留在这里）+ 最近 3 条操作记录，「查看全部 ›」跳到动态页 */
+/** 最近动态：待确认的笔记提示一行（处理在动态页）+ 最近 3 条操作记录，「查看全部 ›」跳到动态页并按这项资源过滤 */
 export function RecentActivityGroup({ assetId }: { assetId: string }) {
   const ops = useOperationStore((s) => s.recentByAsset[assetId] ?? NO_OPS)
+  const pendingNotes = useNotesStore((s) => s.byAsset[assetId]?.length ?? 0)
+  const openFeed = () => useUIStore.getState().setView("activity", { then: () => void useOperationStore.getState().loadFeed(assetId) })
   useEffect(() => {
     void useOperationStore.getState().load(assetId)
   }, [assetId])
@@ -245,17 +246,24 @@ export function RecentActivityGroup({ assetId }: { assetId: string }) {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() =>
-            // 跳到动态页，按这项资源的 Agent 操作过滤
-            useUIStore.getState().setView("activity", { then: () => void useActivityStore.getState().load({ assetId, kinds: ["agent-op"] }) })
-          }
+          onClick={openFeed}
         >
           {copy.detail.viewAll}
           <ChevronRightIcon data-icon="inline-end" />
         </Button>
       }
     >
-      <NotesSection assetId={assetId} />
+      {pendingNotes > 0 && (
+        <button
+          type="button"
+          onClick={openFeed}
+          className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-[13px] outline-none hover:bg-card-2 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        >
+          <span aria-hidden className="size-1.5 rounded-full bg-signal" />
+          <span className="flex-1">{copy.detail.notesPending(pendingNotes)}</span>
+          <ChevronRightIcon aria-hidden className="size-4 text-faint" />
+        </button>
+      )}
       {recent.length > 0 ? (
         <Trace role="list" aria-label={copy.operations.listLabel} className="px-3.5 py-2">
           {recent.map((op) => (

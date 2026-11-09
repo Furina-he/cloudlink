@@ -13,6 +13,7 @@ import {
   RefreshCwIcon,
   ServerIcon,
   SettingsIcon,
+  ShieldCheckIcon,
   SunMoonIcon,
   WrenchIcon,
   type LucideIcon,
@@ -22,7 +23,6 @@ import { useShallow } from "zustand/react/shallow"
 import { CommandGroup, CommandItem, CommandShortcut } from "@/components/ui/command"
 import { toast } from "@/components/ui/toast"
 import { useAgentOptions } from "@/features/agents/agentKeys"
-import { targetActions } from "@/features/agents/targetActions"
 import { serverActions, toastError } from "@/features/servers/actions"
 import { CLI_PROVIDERS } from "@/lib/cliProviders"
 import { copy, type ViewId } from "@/lib/copy"
@@ -150,9 +150,9 @@ export function RootPage({ close, goPage }: { close: () => void; goPage: (p: Com
           {copy.command.actions.preview}
           <CommandShortcut>{KEY_HINT.preview.join("+")}</CommandShortcut>
         </CommandItem>
-        <CommandItem value={copy.command.actions.checkAll} onSelect={run(() => void targetActions.checkAll())}>
-          <RefreshCwIcon />
-          {copy.command.actions.checkAll}
+        <CommandItem value={copy.command.actions.allReadOnly} onSelect={run(() => void serverActions.allReadOnly())}>
+          <ShieldCheckIcon />
+          {copy.command.actions.allReadOnly}
         </CommandItem>
         <CommandItem value={copy.command.actions.theme} onSelect={() => goPage("theme")}>
           <SunMoonIcon />
