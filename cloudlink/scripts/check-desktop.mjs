@@ -251,7 +251,7 @@ try {
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`)
     page = await waitFor(() => browser.contexts().flatMap((context) => context.pages()).find((item) => item.url().startsWith("http://tauri.localhost")), "application page")
     page.on("pageerror", (error) => consoleErrors.push(error.message))
-    await expect(page.getByText("还没有资源", { exact: true })).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByRole("heading", { name: "添加第一台服务器", exact: true })).toBeVisible({ timeout: 30_000 })
     const settings = await invoke("get_settings")
     assert.equal(settings.dataDir, dataRoot)
     assert.equal(settings.logDir, join(dataRoot, "logs"))
@@ -270,7 +270,7 @@ try {
           throw error
         }
       }
-      for (const name of ["connection://tested", "probe://finished", "compile://finished", "deliveries://changed", "guard://changed", "notes://new", "operations://new"]) {
+      for (const name of ["connection://tested", "probe://finished", "compile://finished", "deliveries://changed", "deliveries://backed-up", "guard://changed", "notes://new", "operations://new"]) {
         const callback = window.__TAURI_INTERNALS__.transformCallback((entry) => window.__cloudlinkDesktopEvents.push(entry))
         await window.__TAURI_INTERNALS__.invoke("plugin:event|listen", { event: name, target: { kind: "Any" }, handler: callback })
       }
@@ -303,30 +303,35 @@ try {
   })
 
   await check("password onboarding trusts fingerprint, converts key, probes and distributes", async () => {
-    await page.getByRole("button", { name: "添加 SSH 服务器", exact: true }).click()
-    const form = page.getByRole("region", { name: "添加 SSH 服务器" })
+    await page.getByRole("button", { name: "添加服务器", exact: true }).click()
+    // The same region changes its title during connection; wait for its removal,
+    // not for the old form title to disappear before key conversion has finished.
+    const form = page.getByRole("region", { name: /^(添加 SSH 服务器|连接 )/ })
     await form.getByLabel("地址").fill(target.host)
     await form.getByLabel("端口", { exact: true }).fill(String(target.port))
     await form.getByLabel("用户").fill(target.user)
-    await form.getByRole("radio", { name: "密码", exact: true }).or(form.getByRole("button", { name: "密码", exact: true })).click()
+    await expect(form.getByRole("button", { name: "密码", exact: true })).toHaveAttribute("aria-pressed", "true")
     await form.getByLabel("密码", { exact: true }).fill(target.password)
     await form.getByLabel(/^名称/).fill("Desktop SSH")
-    await form.getByRole("radio", { name: "生产", exact: true }).or(form.getByRole("button", { name: "生产", exact: true })).click()
-    await form.getByRole("button", { name: /连接并启用/ }).click()
-    const trust = page.getByRole("alertdialog").filter({ hasText: "SHA256:" })
+    await expect(form.getByRole("switch", { name: "生产环境", exact: true })).toBeChecked()
+    await expect(form.getByRole("textbox", { name: "别名", exact: true })).toHaveValue("desktop-ssh")
+    await form.getByRole("button", { name: /^连接并启用/ }).click()
+    const trust = form.getByTestId("connect-fingerprint")
     await expect(trust).toBeVisible({ timeout: 30_000 })
-    await expect(trust).toContainText(target.hostKeyFingerprint)
-    await trust.getByRole("button", { name: /信任/ }).click()
-    const include = page.getByRole("alertdialog").filter({ hasText: "Include" })
+    await expect(trust.getByTestId("connect-fingerprint-value")).toHaveText(target.hostKeyFingerprint)
+    await expect(page.getByRole("alertdialog")).toHaveCount(0)
+    await trust.getByRole("button", { name: "指纹一致，继续", exact: true }).click()
+    const include = form.getByTestId("connect-include")
     await expect(include).toBeVisible({ timeout: 30_000 })
-    await include.getByRole("button", { name: "加入 Include", exact: true }).click()
-    await expect(form).toBeHidden({ timeout: 60_000 })
+    await expect(page.getByRole("alertdialog")).toHaveCount(0)
+    await include.getByRole("button", { name: "加入", exact: true }).click()
+    await expect(form).toHaveCount(0, { timeout: 60_000 })
     saved = (await invoke("list_assets"))[0]
     assert.equal(saved.connection.sshAlias, "desktop-ssh")
     assert.equal(saved.connection.auth.method, "key")
     assert.equal(saved.connection.auth.passwordSaved, false)
     assert.equal(saved.connection.verified.ok, true)
-    assert.equal(saved.envTag, "prod")
+    assert.equal(saved.production, true)
     assert.equal(saved.agent.mode, "read-only")
     assert.deepEqual([...saved.agent.agents].sort(), ["claude-code", "universal"])
     const probed = await event("probe://finished", (entry) => entry.assetId === saved.id)
@@ -456,7 +461,7 @@ try {
     assert.ok(!saved.notes.includes("fixture-password-only"))
   })
 
-  await check("blocked compilation cannot restore revoked copies; repair preserves other skills", async () => {
+  await check("blocked compilation cannot restore revoked copies; automatic repair backs up edits and undo pauses synchronization", async () => {
     saved = await asset(saved.id)
     const input = inputOf(saved)
     input.summary = "password=fixture-compile-block"
@@ -483,10 +488,29 @@ try {
     assert.equal(existing, undefined, "Test move destination must not already exist")
     await rename(universal.path, moved)
     deliveries = await invoke("check_deliveries")
-    assert.equal(deliveries.find((item) => item.id === claude.id).status, "modified")
-    assert.equal(deliveries.find((item) => item.id === universal.id).status, "missing")
-    assert.equal((await invoke("repair_delivery", { id: claude.id })).status, "ok")
-    assert.equal((await invoke("repair_delivery", { id: universal.id })).status, "ok")
+    assert.equal(deliveries.find((item) => item.id === claude.id).status, "ok")
+    assert.equal(deliveries.find((item) => item.id === universal.id).status, "ok")
+    assert.equal(await readFile(join(claude.path, "SKILL.md"), "utf8"), original)
+    assert.equal(await readFile(join(universal.path, "SKILL.md"), "utf8"), await readFile(join(moved, "SKILL.md"), "utf8"))
+    const backup = await event("deliveries://backed-up", (entry) => entry.targetId === claude.targetId && entry.reason === "modified")
+    assert.match(backup.backupId, /^[A-Za-z0-9-]{1,64}$/u)
+    const backupEntry = join(dataRoot, "backups", backup.backupId, claude.targetId)
+    await assertTestRoot(backupEntry, { inspectContents: true })
+    const backupMarker = JSON.parse(await readFile(join(backupEntry, ".cloudlink-backup.json"), "utf8"))
+    assert.equal(backupMarker.managedBy, "cloudlink")
+    assert.equal(backupMarker.targetId, claude.targetId)
+    assert.equal(backupMarker.backupId, backup.backupId)
+    const edited = `${original}\nExternal fixture edit\n`
+    assert.equal(await readFile(join(backupEntry, "cloudlink-servers", "SKILL.md"), "utf8"), edited)
+    const paused = await invoke("undo_backup", { backupId: backup.backupId })
+    assert.equal(paused.id, claude.targetId)
+    assert.equal(paused.enabled, false)
+    assert.equal(await readFile(join(claude.path, "SKILL.md"), "utf8"), edited)
+    await invoke("check_deliveries")
+    assert.equal(await readFile(join(claude.path, "SKILL.md"), "utf8"), edited)
+    assert.ok((await invoke("list_deliveries")).every((item) => item.targetId !== claude.targetId))
+    await invoke("set_target_enabled", { id: claude.targetId, enabled: true })
+    assert.equal(await readFile(join(claude.path, "SKILL.md"), "utf8"), original)
     for (const folder of [".claude", ".agents"]) assert.equal(await readFile(join(userRoot, folder, "skills", "existing", "SKILL.md"), "utf8"), preserved)
   })
 
@@ -534,7 +558,7 @@ try {
     }
     assert.ok((await readFile(join(userRoot, ".ssh", "config"), "utf8")).endsWith(originalConfig))
     await page.reload()
-    await expect(page.getByText("还没有资源", { exact: true })).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByRole("heading", { name: "添加第一台服务器", exact: true })).toBeVisible({ timeout: 30_000 })
     await page.screenshot({ path: join(runRoot, "03-native-reset.png") })
     assert.deepEqual(consoleErrors, [])
   })

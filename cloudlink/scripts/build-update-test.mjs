@@ -4,10 +4,11 @@
 import { spawnSync } from "node:child_process"
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
+import { createServer } from "node:net"
 import { join } from "node:path"
 
 import { assertTestRoot } from "./desktop-ssh-target.mjs"
-import { DATA_HOME, DEBUG_PORT, PROJECT, ROOT, UPDATE_PORT, VERSIONS, installerName } from "./update-test-config.mjs"
+import { DATA_HOME, DEBUG_PORT, PROJECT, ROOT, TEST_IDENTIFIER, TEST_PRODUCT_NAME, TEST_PUBLISHER, UPDATE_PORT, VERSIONS, installerName } from "./update-test-config.mjs"
 
 const tauriCli = join(PROJECT, "node_modules/@tauri-apps/cli/tauri.js")
 const signing = join(ROOT, "signing")
@@ -16,6 +17,12 @@ const password = "cloudlink-update-test"
 const targetDir = join(ROOT, "target")
 
 await assertTestRoot(ROOT)
+// 端口编译进安装包：先确认空闲，避免长时间构建后才发现被别的项目占用。
+for (const port of [UPDATE_PORT, DEBUG_PORT]) {
+  const server = createServer()
+  await new Promise((done, reject) => { server.once("error", reject); server.listen(port, "127.0.0.1", done) })
+  await new Promise((done) => server.close(done))
+}
 await mkdir(signing, { recursive: true })
 await assertTestRoot(signing, { inspectContents: true })
 
@@ -33,6 +40,9 @@ for (const version of VERSIONS) {
   const configPath = join(ROOT, `tauri.update-test-${version}.json`)
   await writeFile(configPath, `${JSON.stringify({
     version,
+    productName: TEST_PRODUCT_NAME,
+    identifier: TEST_IDENTIFIER,
+    bundle: { publisher: TEST_PUBLISHER },
     app: {
       // 安装程序重新打开的新版本也要能被测试驱动，所以调试端口写在配置里，不靠环境变量
       windows: base.app.windows.map((window) => ({

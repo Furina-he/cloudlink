@@ -26,6 +26,14 @@
 
 标签和版本号对不上，或者缺少更新说明，构建会在一开始就失败。工作流失败后可以直接重新运行：草稿已经存在时只替换附件，已经发布的版本不会被改动。
 
+## 本地更新验收
+
+发布前需要验证更新流程时，依次运行 `pnpm --dir cloudlink build:update-test` 和 `pnpm --dir cloudlink e2e:update`。构建与其他 Rust、Vitest、Playwright 全套检查串行执行。
+
+测试安装包使用独立的 `CloudLink Update Test` 产品名、应用标识与发布者，数据目录编译固定在仓库根目录 `test-results/update/` 下；它不会卸载或覆盖本机已安装的正式 CloudLink。脚本会核对安装包身份，并在结束后卸载测试版，比较正式安装、Skills、SSH 配置和注册表的前后快照。
+
+测试用的 0.1.0 和 0.1.1 都由当前源码构建，只验证安装、后台下载、签名拒绝、更新重启和数据保留机制；旧数据库迁移由数据库回归另外覆盖。测试密钥签名的安装包绝不能发布；正式安装包仍由 GitHub Actions 构建和签名。
+
 ## 试运行
 
 在 Actions 页面手动运行 Release 工作流（或者 `gh workflow run release.yml`），它会完整地构建、签名和校验，但不创建 Release。产物在运行页面的 Artifacts 里，保留 7 天。

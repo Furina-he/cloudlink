@@ -1,6 +1,6 @@
 # CloudLink
 
-CloudLink 是一个面向 AI Agent 的全栈基础设施配电盘与安全护栏桌面工具（Windows 优先，v0.1）。你在一个安静、一目了然的界面里接入 **SSH 服务器** 与 **云平台 CLI（Cloudflare `wrangler`、Vercel `vercel`、Oracle Cloud `oci`）**，它把全部已授权资源编译成一个符合 Agent Skills 规范的总 Skill，分发给 Agent 的全局 skills 目录：Claude Code 的 `~/.claude/skills`，以及 Codex、Cursor、Gemini CLI、GitHub Copilot 等十几个 Agent 共用的 `~/.agents/skills`（Trae、Kiro、Continue 等只认自己目录的 Agent 检测到后单独分发）。在 Claude Code 上，它用护栏按档位（只读巡检 / 标准运维）拦下越界的 `ssh` 与云 CLI 命令，并记录 Agent 执行过什么。
+CloudLink 是一个面向 AI Agent 的全栈基础设施配电盘与安全护栏桌面工具（Windows 优先，v0.2）。你在一个安静、一目了然的界面里接入 **SSH 服务器** 与 **云平台 CLI（Cloudflare `wrangler`、Vercel `vercel`、Oracle Cloud `oci`）**，它把全部已授权资源编译成一个符合 Agent Skills 规范的总 Skill，分发给 Agent 的全局 skills 目录：Claude Code 的 `~/.claude/skills`，以及 Codex、Cursor、Gemini CLI、GitHub Copilot 等十几个 Agent 共用的 `~/.agents/skills`（Trae、Kiro、Continue 等只认自己目录的 Agent 检测到后单独分发）。在 Claude Code 上，它用护栏按档位（只读巡检 / 标准运维）拦下越界的 `ssh` 与云 CLI 命令，并记录 Agent 执行过什么。
 
 一句话：在一个安静的小窗口里管好服务器与云平台，让本机的 Agent 知道有哪些资源、彼此怎么关联、怎么连、什么事不能做，再放心地让它在护栏内帮你操作和运维。
 
@@ -21,7 +21,7 @@ CloudLink 是一个面向 AI Agent 的全栈基础设施配电盘与安全护栏
 
 CloudLink v0.1 已完成全部开发阶段（P0 到 P6）：前端和 Rust 核心、真实 IPC 联调、无障碍与性能打磨、应用图标、检测更新（F-406）和安装包配置。首个版本 v0.1.0 通过 [GitHub Releases](https://github.com/Furina-he/cloudlink/releases) 分发，安装包经 minisign 签名，应用内会检测更新。之后的版本在 GitHub Actions 上构建和签名：推送 `v*` 标签后自动创建草稿 Release，流程见 [docs/releases](docs/releases/README.md)。P5 手工验收清单和图标在系统各处的目测仍待维护者完成。
 
-**下一版 v0.2（P7）：** 2026-11-08 对标 CC Switch 与 magpie 完成体验与界面重设计（PRD v4、DESIGN.md「安静钢面」、可点击原型）；P7a、P7b、P7c 已实施（2026-11-09），待发布。2026-11-09 至 11-10 做了四轮界面审查：前三轮的改动已在工作区，第四轮的决定已写进原型、PRD 和 DESIGN.md，应用改动（执行计划 P7d）已在 2026-11-11 实施，同在工作区、未提交。v0.3（P8）计划引入执行通道与命令审批。阶段任务与验收标准见 [执行计划](docs/EXECUTION-PLAN.md)。
+**v0.2（P7）：** 体验与界面重设计（PRD v4、DESIGN.md「安静钢面」）以及四轮界面审查改动均已完成并提交，包含资源 / Agent / 动态 / 设置四个视图、简化的接入流程、自动同步与备份撤销、系统托盘和 GitHub 接入。更新内容见 [v0.2.0 发布说明](docs/releases/v0.2.0.md)。护栏仍只支持 Claude Code 的 SSH 与 Cloudflare / Vercel / Oracle Cloud 命令，GitHub 命令与其他 Agent 尚无强制护栏。下一阶段 v0.3（P8）再引入执行通道、命令审批与 GitHub 护栏规则。阶段任务与验收标准见 [执行计划](docs/EXECUTION-PLAN.md)。
 
 仓库：[Furina-he/cloudlink](https://github.com/Furina-he/cloudlink)（公开，主分支 `main`）。开发环境见执行计划第 1 节；全新检出后，直接运行 Cargo 检查前先执行 `pnpm --dir cloudlink build:guard`，准备 Tauri 所需的护栏 sidecar。
 

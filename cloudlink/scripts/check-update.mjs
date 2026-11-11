@@ -1,10 +1,9 @@
-// 端到端更新实测（EXECUTION-PLAN P6 第 8 项，F-406 AC1–AC6）：静默安装测试版 0.1.0，核对检查节奏、开关、下载取消、
+// 端到端更新实测（EXECUTION-PLAN P6 第 8 项，F-406 AC1–AC6）：静默安装测试版 0.1.0，核对检查节奏、开关、后台下载、
 // 忙碌拦截和签名篡改，再从顶栏提醒更新到 0.1.1，最后卸载。先运行 `pnpm build:update-test`，再运行 `pnpm e2e:update`
 // （需要 WSL Docker 里的 SSH 靶机）。
-//
-// 应用数据全在 test-results/update/data：这个目录编译进了测试安装包（src-tauri/src/paths.rs），安装程序经资源管理器重新
-// 打开的新版本也只认它。按当前用户安装会写真实的 HKCU 卸载项，所以实测结束时卸载，并清掉测试留下的安装位置键。
-// 前后各记一次真实 Skills、ssh 配置、护栏设置、应用数据目录、快捷方式和注册表，必须完全一致。
+// 应用数据全在 test-results/update/data：目录编译进测试安装包，安装程序重新打开的新版本也只认它。
+// 测试包使用独立的 productName、identifier、publisher 和 HKCU 安装键，不卸载或覆盖本机的正式 CloudLink。
+// 前后各记一次真实 Skills、ssh 配置、护栏设置、正式安装、应用数据目录、快捷方式和注册表，必须完全一致。
 import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
@@ -17,12 +16,12 @@ import { setTimeout as delay } from "node:timers/promises"
 import { chromium, expect } from "@playwright/test"
 
 import { assertTestRoot, startSshTarget } from "./desktop-ssh-target.mjs"
-import { DATA_HOME, DEBUG_PORT, INSTALL_DIR, PROJECT, ROOT, UPDATE_PORT, installerName } from "./update-test-config.mjs"
+import { DATA_HOME, DEBUG_PORT, INSTALL_DIR, ROOT, TEST_IDENTIFIER, TEST_PRODUCT_NAME, TEST_PUBLISHER, UPDATE_PORT, VERSIONS, installerName } from "./update-test-config.mjs"
 
 if (process.platform !== "win32") throw new Error("The update check requires Windows")
 
-const OLD = "0.1.0"
-const NEW = "0.1.1"
+const [OLD, NEW] = VERSIONS
+const INSTALLER_URL = `/${encodeURIComponent(installerName(NEW))}`
 const system32 = join(process.env.SystemRoot ?? "C:\\Windows", "System32")
 const powershell = join(system32, "WindowsPowerShell", "v1.0", "powershell.exe")
 const regExe = join(system32, "reg.exe")
@@ -34,11 +33,10 @@ const uninstaller = join(INSTALL_DIR, "uninstall.exe")
 const userHome = join(DATA_HOME, "home")
 const guardDir = join(DATA_HOME, "bin")
 const copiedGuard = join(guardDir, "cloudlink-guard.exe")
-const UNINSTALL_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\CloudLink"
-// NSIS 模板的 MANUKEY / MANUPRODUCTKEY。静默卸载只删「Installer Language」，默认值（安装目录）留着；
-// 不清掉的话，用户以后正式安装时默认目录会指向这里的测试目录
-const MANUFACTURER_KEY = "HKCU\\Software\\cloudlink"
-const INSTALL_LOCATION_KEY = `${MANUFACTURER_KEY}\\CloudLink`
+const UNINSTALL_KEY = `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${TEST_PRODUCT_NAME}`
+// NSIS 模板的 MANUKEY / MANUPRODUCTKEY：只清理独立测试身份留下的键，正式版的键只读快照。
+const MANUFACTURER_KEY = `HKCU\\Software\\${TEST_PUBLISHER}`
+const INSTALL_LOCATION_KEY = `${MANUFACTURER_KEY}\\${TEST_PRODUCT_NAME}`
 const DATA_MARKER = '{"managedBy":"cloudlink","kind":"data"}\n'
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex")
@@ -104,7 +102,7 @@ const http = createServer((request, response) => {
     response.end(JSON.stringify(server.manifest))
     return
   }
-  if (request.method === "GET" && request.url === `/${installerName(NEW)}` && server.installer) {
+  if (request.method === "GET" && request.url === INSTALLER_URL && server.installer) {
     const bytes = server.installer
     const size = Math.ceil(bytes.length / server.chunks)
     const limit = server.stallAt === null ? bytes.length : Math.floor(bytes.length * server.stallAt)
@@ -127,17 +125,22 @@ const http = createServer((request, response) => {
 })
 
 async function manifestFor(version) {
-  const out = join(runRoot, `latest-${version}.json`)
-  const result = spawnSync(process.execPath, [
-    join(PROJECT, "scripts", "release-manifest.mjs"),
-    "--notes", `CloudLink ${version} update test\n- second line`,
-    "--version", version,
-    "--base-url", `http://127.0.0.1:${UPDATE_PORT}`,
-    "--bundle-dir", join(ROOT, version),
-    "--out", out,
-  ], { encoding: "utf8", windowsHide: true })
-  assert.equal(result.status, 0, result.stderr)
-  return JSON.parse(await readFile(out, "utf8"))
+  // 测试安装包名字与正式版不同；本地假更新源不复用正式发布脚本，更不改写正式安装包清单。
+  const signature = (await readFile(join(ROOT, version, `${installerName(version)}.sig`), "utf8")).trim()
+  assert.ok(signature, "The test installer must be signed")
+  const manifest = {
+    version,
+    notes: `CloudLink ${version} update test\n- second line`,
+    pub_date: new Date().toISOString(),
+    platforms: {
+      "windows-x86_64": {
+        signature,
+        url: `http://127.0.0.1:${UPDATE_PORT}/${encodeURIComponent(installerName(version))}`,
+      },
+    },
+  }
+  await writeFile(join(runRoot, `latest-${version}.json`), `${JSON.stringify(manifest, null, 2)}\n`)
+  return manifest
 }
 
 // ---- 真实用户环境的快照：实测前后必须一致 ----
@@ -192,8 +195,20 @@ function powershellLines(script) {
 async function realState() {
   const home = homedir()
   const [desktop, programs] = powershellLines("[Environment]::GetFolderPath('Desktop'); [Environment]::GetFolderPath('Programs')")
+  const productionInstall = regKey("HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\CloudLink")
+  const productionLocation = productionInstall?.values.InstallLocation?.replace(/^"|"$/g, "")
+  const productionFiles = {}
+  if (productionLocation) {
+    for (const name of ["cloudlink.exe", "cloudlink-guard.exe", "uninstall.exe"]) {
+      productionFiles[name] = await hashIfPresent(join(productionLocation, name))
+    }
+  }
   return {
+    productionInstall,
+    productionLocation: regKey("HKCU\\Software\\cloudlink\\CloudLink"),
+    productionFiles,
     cloudlinkData: await listing(join(home, ".cloudlink")),
+    cloudlinkDatabase: await hashIfPresent(join(home, ".cloudlink", "data.db")),
     claudeSkills: await listing(join(home, ".claude", "skills")),
     claudeSettings: await hashIfPresent(join(home, ".claude", "settings.json")),
     windowsAgentSkills: await listing(join(home, ".agents", "skills")),
@@ -203,7 +218,9 @@ async function realState() {
     knownHosts: await hashIfPresent(join(home, ".ssh", "known_hosts")),
     localAppData: await listing(join(process.env.LOCALAPPDATA, "com.cloudlink.desktop")),
     roamingAppData: await listing(join(process.env.APPDATA, "com.cloudlink.desktop")),
-    shortcuts: [join(desktop, "CloudLink.lnk"), join(programs, "CloudLink.lnk"), join(programs, "CloudLink")].filter((path) => existsSync(path)),
+    testLocalAppData: await listing(join(process.env.LOCALAPPDATA, TEST_IDENTIFIER)),
+    testRoamingAppData: await listing(join(process.env.APPDATA, TEST_IDENTIFIER)),
+    shortcuts: ["CloudLink", TEST_PRODUCT_NAME].flatMap((name) => [join(desktop, `${name}.lnk`), join(programs, `${name}.lnk`), join(programs, name)]).filter((path) => existsSync(path)),
     uninstallKey: regKey(UNINSTALL_KEY),
     manufacturerKey: regKey(MANUFACTURER_KEY),
   }
@@ -458,10 +475,23 @@ async function uninstall() {
 
 let installed = false
 try {
-  await check("nothing is installed yet; real user files are recorded; isolated fixtures are ready", async () => {
+  await check("no test edition is installed; the production installation is preserved; isolated fixtures are ready", async () => {
     report.before = await realState()
-    assert.equal(report.before.uninstallKey, null, "CloudLink is installed on this machine: uninstall it before running the update check")
-    assert.equal(report.before.manufacturerKey, null, `${MANUFACTURER_KEY} exists: an earlier installation is left over`)
+    assert.equal(report.before.uninstallKey, null, "An earlier update-test edition is still installed")
+    assert.equal(report.before.manufacturerKey, null, `${MANUFACTURER_KEY} exists: an earlier test installation is left over`)
+    for (const version of VERSIONS) {
+      const config = JSON.parse(await readFile(join(ROOT, `tauri.update-test-${version}.json`), "utf8"))
+      assert.equal(config.productName, TEST_PRODUCT_NAME)
+      assert.equal(config.identifier, TEST_IDENTIFIER)
+      assert.equal(config.bundle.publisher, TEST_PUBLISHER)
+      assert.deepEqual(config.plugins.updater.endpoints, [`http://127.0.0.1:${UPDATE_PORT}/latest.json`], "Rebuild after changing the test update port")
+      const identity = spawnSync(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "(Get-Item -LiteralPath $env:CLOUDLINK_TEST_INSTALLER).VersionInfo.ProductName"], {
+        encoding: "utf8", windowsHide: true,
+        env: { ...process.env, CLOUDLINK_TEST_INSTALLER: join(ROOT, version, installerName(version)) },
+      })
+      assert.equal(identity.status, 0, identity.stderr)
+      assert.equal(identity.stdout.trim(), TEST_PRODUCT_NAME, "Never run a production installer in the update test")
+    }
     assert.deepEqual(installedProcesses(), [])
     assert.ok(!existsSync(INSTALL_DIR), `${INSTALL_DIR} is left over from an earlier run`)
     assert.equal(await debugEndpoint(), false, `Port ${DEBUG_PORT} is already in use`)
@@ -489,7 +519,7 @@ try {
     launch()
     await connect()
     report.pid = installedProcesses()[0]
-    await expect(page.getByText("还没有资源", { exact: true })).toBeVisible()
+    await expect(page.getByRole("heading", { name: "添加第一台服务器" })).toBeVisible()
     // 装好后的第一次启动要新建 WebView2 的配置目录，只记录，不算进冷启动
     await startupTiming("first launch after install", started)
     const settings = await invoke("get_settings")
@@ -507,26 +537,31 @@ try {
 
   await check("a verified server, two delivered copies, the managed ssh config and the guard hook exist", async () => {
     target = await startSshTarget({ root: runRoot })
-    await page.getByRole("button", { name: "添加 SSH 服务器", exact: true }).click()
-    const form = page.getByRole("region", { name: "添加 SSH 服务器" })
+    await page.getByRole("button", { name: "添加服务器", exact: true }).click()
+    // 同一 region 在开始连接后会改标题，不能把旧标题消失当成流程完成。
+    const form = page.getByRole("region", { name: /^(添加 SSH 服务器|连接 )/ })
     await form.getByLabel("地址").fill(target.host)
     await form.getByLabel("端口", { exact: true }).fill(String(target.port))
     await form.getByLabel("用户").fill(target.user)
-    await form.getByRole("radio", { name: "密码", exact: true }).or(form.getByRole("button", { name: "密码", exact: true })).click()
+    await expect(form.getByRole("button", { name: "密码", exact: true })).toHaveAttribute("aria-pressed", "true")
     await form.getByLabel("密码", { exact: true }).fill(target.password)
     await form.getByLabel(/^名称/).fill("Update SSH")
+    await expect(form.getByRole("textbox", { name: "别名", exact: true })).toHaveValue("update-ssh")
     await form.getByRole("button", { name: /连接并启用/ }).click()
-    const trust = page.getByRole("alertdialog").filter({ hasText: "SHA256:" })
+    const trust = form.getByTestId("connect-fingerprint")
     await expect(trust).toBeVisible({ timeout: 30_000 })
     await expect(trust).toContainText(target.hostKeyFingerprint)
-    await trust.getByRole("button", { name: /信任/ }).click()
-    const include = page.getByRole("alertdialog").filter({ hasText: "Include" })
+    await expect(page.getByRole("alertdialog")).toHaveCount(0)
+    await trust.getByRole("button", { name: "指纹一致，继续", exact: true }).click()
+    const include = form.getByTestId("connect-include")
     await expect(include).toBeVisible({ timeout: 30_000 })
-    await include.getByRole("button", { name: "加入 Include", exact: true }).click()
-    await expect(form).toBeHidden({ timeout: 60_000 })
+    await expect(page.getByRole("alertdialog")).toHaveCount(0)
+    await include.getByRole("button", { name: "加入", exact: true }).click()
+    await expect(form).toHaveCount(0, { timeout: 60_000 })
     // 保存后自动探测；活动记录在发布之后才写，等到它说明这一轮编译和分发都结束了
     await waitFor(async () => (await activityCount("probe")) > 0, "first probe is published", 120_000)
     const [saved] = await invoke("list_assets")
+    assert.equal(saved.connection.auth.method, "key")
     assert.equal(saved.connection.verified.ok, true)
     assert.equal(saved.probe.status, "ok")
     const deliveries = await invoke("check_deliveries")
@@ -540,7 +575,7 @@ try {
 
   await check("AC6: turning checks off stops requests across a restart; turning them on checks at once", async () => {
     await page.keyboard.press("Control+4")
-    await expect(page.getByText(`当前版本 ${OLD}`)).toBeVisible()
+    await expect(page.getByText(`当前 v${OLD}`)).toBeVisible()
     const toggle = page.getByRole("switch", { name: "自动下载更新" })
     await expect(toggle).toBeChecked()
     await toggle.click()
@@ -741,7 +776,7 @@ try {
     assert.deepEqual(report.after, report.before)
     assert.deepEqual(pageErrors, [])
     report.requests = server.requests.map(({ method, url, userAgent }) => `${method} ${url} (${userAgent})`)
-    assert.ok(server.requests.every((item) => item.url === "/latest.json" || item.url === `/${installerName(NEW)}`))
+    assert.ok(server.requests.every((item) => item.url === "/latest.json" || item.url === INSTALLER_URL))
   })
 } catch (error) {
   report.error = String(error)
