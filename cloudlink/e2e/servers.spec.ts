@@ -302,6 +302,37 @@ test.describe("添加 SSH 服务器：连接并启用（PRD 6.5、F-106、F-108�
     await expect(row(page, "esc-box")).toBeVisible()
   })
 
+  // 2026-11-11 CI 偶发失败：卡片插进 DOM 与防误关登记之间有一帧空隙，这一帧里按 Esc 会直接关掉弹窗、丢掉草稿。
+  // 这里在卡片出现的那一个微任务里直接派发 Esc（不等 useEffect 跑完），与机器快慢无关地卡住这个时序。
+  test("加入 SSH 配置的卡片刚出现的那一帧按 Esc：仍然先问要不要放弃", async ({ page }) => {
+    await ready(page)
+    await fillNew(page, "Race Box", "203.0.113.10")
+    const race = page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          const fire = () => {
+            if (!document.querySelector("[data-testid=connect-include]")) return false
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }))
+            resolve()
+            return true
+          }
+          const observer = new MutationObserver(() => {
+            if (fire()) observer.disconnect()
+          })
+          observer.observe(document.documentElement, { childList: true, subtree: true })
+          fire()
+        })
+    )
+    await connectEnable(page).click()
+    await race
+    const leave = page.getByRole("alertdialog", { name: "放弃未保存的修改？" })
+    await expect(leave).toBeVisible()
+    await leave.getByRole("button", { name: "继续编辑" }).click()
+    await expect(includeAsk(page)).toBeVisible()
+    await includeAsk(page).getByRole("button", { name: "暂不加入" }).click()
+    await expect(row(page, "race-box")).toBeVisible()
+  })
+
   for (const [name, host, user, text, file] of [
     ["超时", "timeout.example.com", "root", /超时（10 秒）/, "ssh-02-timeout"],
     ["拒绝连接", "refused.example.com", "root", /SSH 端口拒绝连接/, "ssh-03-refused"],

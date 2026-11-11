@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useLayoutEffect, useState } from "react"
 
 import {
   AlertDialog,
@@ -19,7 +19,11 @@ import { setLeaveGuard } from "@/stores/ui"
  */
 export function useLeaveGuard(dirty: boolean, onDiscard: () => void) {
   const [pending, setPending] = useState<(() => void) | null>(null)
-  useEffect(() => {
+  // 必须用 useLayoutEffect：登记要和「让离开变得有风险」的那次渲染在同一帧完成。
+  // 用 useEffect 会在 DOM 已经更新、被动效果还没跑的间隙留一个窗口——连接过程里
+  // 「加入 SSH 配置」卡片一出现的那一刻按 Esc，就会绕过确认直接关掉弹窗、丢掉草稿
+  // （2026-11-11 CI 偶发失败）。布局效果在提交阶段同步执行，任何按键都不可能在它之前到达。
+  useLayoutEffect(() => {
     if (!dirty) return
     setLeaveGuard((proceed) => {
       setPending(() => proceed)
