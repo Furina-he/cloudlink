@@ -22,11 +22,6 @@ export function toEnvPath(path: string, envId: EnvId): string {
 /** WSL 中位于 /mnt/ 下的私钥：ssh 会因为权限过宽拒绝使用（F-108） */
 export const isUnderMnt = (path: string) => /^\/mnt\/[a-z]\//i.test(path.trim())
 
-/** 只显示最后一级文件夹名（操作记录的工作目录，PRD 6.4） */
-export function folderName(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).pop() ?? path
-}
-
 /** WSL 里的 /mnt/c/… 换回 Windows 路径（「复制到 WSL」的源文件）；不在 /mnt/ 下返回 null */
 export function mntToWindows(path: string): string | null {
   const m = /^\/mnt\/([a-z])\/(.*)$/i.exec(path.trim())

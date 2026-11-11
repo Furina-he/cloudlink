@@ -92,7 +92,7 @@ export interface AliasContext {
  * 服务器表单（PRD 6.4、6.5）。managed 才校验连接字段；imported 的连接信息由用户的 ssh config 维护。
  * 云厂商和地域用空串表示「未填」
  */
-export function serverFormSchema(ctx: AliasContext) {
+export function serverFormSchema(ctx: AliasContext, opts: { nameOptional?: boolean } = {}) {
   return z
     .object({
       source: z.enum(["managed", "imported"]),
@@ -109,7 +109,8 @@ export function serverFormSchema(ctx: AliasContext) {
         proxyJump: z.string().trim(),
         definedIn: z.array(z.string()),
       }),
-      name: z.string().trim().min(1, "name-required"),
+      // 添加表单里名称可空，保存时用地址（PRD 6.5）
+      name: opts.nameOptional ? z.string().trim() : z.string().trim().min(1, "name-required"),
       production: z.boolean(),
       summary: z.string(),
       tags: z.array(z.string()),

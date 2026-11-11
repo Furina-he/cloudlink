@@ -5,7 +5,7 @@ import { useShallow } from "zustand/react/shallow"
 import type { Asset, EnvId, InclusionReasonId } from "@/bindings"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { compileLabel, useAgentOptions } from "@/features/agents/agentKeys"
+import { compileLabel, compileShort, useAgentOptions } from "@/features/agents/agentKeys"
 import { copy } from "@/lib/copy"
 import { cn } from "@/lib/utils"
 import { useAssetStore } from "@/stores/assets"
@@ -31,7 +31,10 @@ export interface InclusionProblem {
   key: string
   envId: EnvId
   reasonId: InclusionReasonId
-  text: string
+  /** 「WSL Ubuntu-24.04 里的 Claude Code 还用不了这台服务器」 */
+  title: string
+  /** 原因，不再重复运行环境：「这里没有配置私钥」 */
+  reason: string
 }
 
 /**
@@ -43,17 +46,18 @@ export function useInclusionProblems(asset: Asset): InclusionProblem[] {
   const { compileTargets } = useAgentOptions()
   const selected = asset.agent.agents
   return useMemo(() => {
-    const groups = new Map<string, InclusionProblem & { labels: string[] }>()
+    const groups = new Map<string, Omit<InclusionProblem, "title"> & { names: string[] }>()
     for (const inc of inclusions) {
       if (inc.included || !inc.reason || !selected.includes(inc.agentKey)) continue
       const key = `${inc.envId}|${inc.reason.id}`
-      const label = compileLabel(compileTargets, inc)
+      const name = compileShort(compileTargets, inc)
       const found = groups.get(key)
-      if (found) found.labels.push(label)
-      else groups.set(key, { key, envId: inc.envId, reasonId: inc.reason.id, text: copy.inclusionReason[inc.reason.id](inc.reason.params), labels: [label] })
+      if (found) found.names.push(name)
+      else groups.set(key, { key, envId: inc.envId, reasonId: inc.reason.id, reason: copy.inclusionReasonInEnv[inc.reason.id](inc.reason.params), names: [name] })
     }
-    return [...groups.values()].map(({ labels, ...p }) => ({ ...p, text: `${copy.inclusion.excluded}：${p.text}（${labels.join("、")}）` }))
-  }, [inclusions, selected, compileTargets])
+    const kind = asset.type === "cli" ? "cli" : "server"
+    return [...groups.values()].map(({ names, ...p }) => ({ ...p, title: copy.inclusion.cannotUse(copy.env.long(p.envId), names.join("、"), kind) }))
+  }, [inclusions, selected, compileTargets, asset.type])
 }
 
 /** 编译摘要（PRD 6.4）：受阻或有警告时显示一行，点击打开预览并定位到 Lint；刚保存时显示「已保存，已编译」 */

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 
 import { WSL } from "@/mocks/fixtures"
 import { serverFormSchema, type AliasContext, type ServerFormValues } from "@/lib/schemas"
-import { baseAlias, connectionInputOfForm, firstError, newServerValues, uniqueAlias } from "./serverForm"
+import { baseAlias, connectionInputOfForm, firstError, newServerValues, toAssetInput, uniqueAlias } from "./serverForm"
 
 const ctx: AliasContext = {
   taken: ["hk-edge", "SG-DB"],
@@ -13,7 +13,7 @@ const ctx: AliasContext = {
   ],
 }
 
-/** 一份能通过校验的新建表单：私钥只配了 Windows，写入 Windows 和 WSL */
+/** 一份能通过校验的新建表单：私钥方式，私钥只配了 Windows，写入 Windows 和 WSL */
 const valid = (patch: Partial<ServerFormValues> = {}, conn: Partial<ServerFormValues["connection"]> = {}): ServerFormValues => {
   const v = newServerValues(["windows", WSL])
   return {
@@ -21,7 +21,7 @@ const valid = (patch: Partial<ServerFormValues> = {}, conn: Partial<ServerFormVa
     name: "东京中转机",
     alias: "tokyo",
     ...patch,
-    connection: { ...v.connection, host: "198.51.100.20", identityFile: { windows: "C:\\Users\\me\\.ssh\\id_ed25519" }, ...conn },
+    connection: { ...v.connection, host: "198.51.100.20", method: "key", identityFile: { windows: "C:\\Users\\me\\.ssh\\id_ed25519" }, ...conn },
   }
 }
 
@@ -36,6 +36,17 @@ function errorsOf(values: ServerFormValues, context = ctx): Record<string, strin
 describe("服务器表单校验（PRD 6.5）", () => {
   it("合法输入通过", () => {
     expect(errorsOf(valid())).toEqual({})
+  })
+
+  it("新建时先选中密码（PRD 6.5，2026-11-10）", () => {
+    expect(newServerValues(["windows", WSL]).connection.method).toBe("password")
+  })
+
+  it("添加表单里名称可空，不报「请填写名称」；保存时用地址", () => {
+    const r = serverFormSchema(ctx, { nameOptional: true }).safeParse(valid({ name: " " }))
+    expect(r.success).toBe(true)
+    expect(toAssetInput(valid({ name: " " }), undefined).name).toBe("198.51.100.20")
+    expect(toAssetInput(valid({ name: " 东京 " }), undefined).name).toBe("东京")
   })
 
   it("名称、地址、用户必填；地址不收 URL；端口在 1 到 65535 之间", () => {
@@ -126,8 +137,9 @@ describe("保存校验失败时定位第一个出错字段（PRD 6.4）", () => 
   const leaf = { type: "custom", message: "x" }
   const at = (errors: object) => firstError(errors as FieldErrors<ServerFormValues>)
 
-  it("按界面顺序：「连接配置」Tab 在「画像与规则」之前，名称在连接字段之前，别名在「高级」里", () => {
-    expect(at({ name: leaf, connection: { user: leaf } })).toEqual({ advanced: false, path: "name" })
+  it("按界面顺序：地址、端口、用户在名称之前（添加表单，PRD 6.5），连接字段在画像之前，别名在连接编辑的「高级」里", () => {
+    expect(at({ name: leaf, connection: { user: leaf } })).toEqual({ advanced: false, path: "connection.user" })
+    expect(at({ name: leaf, connection: { password: leaf } })).toEqual({ advanced: false, path: "name" })
     expect(at({ connection: { user: leaf }, rules: [{ text: leaf }] })).toEqual({ advanced: false, path: "connection.user" })
     expect(at({ alias: leaf, servedHostnames: [leaf] })).toEqual({ advanced: true, path: "alias" })
   })

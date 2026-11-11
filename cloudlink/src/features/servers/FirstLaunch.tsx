@@ -1,12 +1,13 @@
 import { CopyIcon, FileInputIcon, PlusIcon, ServerIcon } from "lucide-react"
-import { useEffect } from "react"
+import { useEffect, type ReactNode } from "react"
 
-import { AgentMark } from "@/components/app/AgentMark"
+import type { AgentBrand } from "@/bindings"
+import { AgentMark, BrandMark } from "@/components/app/AgentMark"
 import { ViewShell } from "@/components/app/ViewShell"
 import { Button } from "@/components/ui/button"
 import { toast } from "@/components/ui/toast"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { useAgentOptions } from "@/features/agents/agentKeys"
+import { useAgentOptions, type AgentOption } from "@/features/agents/agentKeys"
 import { copy } from "@/lib/copy"
 import { useTargetStore } from "@/stores/targets"
 import { useUIStore } from "@/stores/ui"
@@ -21,6 +22,24 @@ export function useImportableCount(): number {
 }
 
 /**
+ * 「检测到 …」列的是 Agent，不列目录（PRD 6.9）：通用目录换成把它当主要目录的、检测到的 Agent（Codex、Cursor…），
+ * 自定义目录用它的名字。只剩没人读的通用目录时退回目录名，免得说成「没有检测到 Agent」
+ */
+function detectedAgents(agents: AgentOption[]): { key: string; name: string; mark: ReactNode }[] {
+  const out = new Map<string, { key: string; name: string; mark: ReactNode }>()
+  for (const a of agents) {
+    if (a.agent === "custom") {
+      out.set(a.key, { key: a.key, name: a.label, mark: <AgentMark agent="custom" label={a.label} lit={false} className="size-3.5" /> })
+      continue
+    }
+    const brands: AgentBrand[] = a.agent === "universal" ? a.readers : [a.agent]
+    for (const b of brands) if (!out.has(b)) out.set(b, { key: b, name: copy.brand[b], mark: <BrandMark brand={b} className="size-3.5" /> })
+  }
+  if (out.size > 0) return [...out.values()]
+  return agents.map((a) => ({ key: a.key, name: a.label, mark: <AgentMark agent={a.agent} label={a.label} lit={false} className="size-3.5" /> }))
+}
+
+/**
  * 空状态 = 首次使用引导（PRD 6.9）：品牌方块 → 标题 → 一句话 → 可复制的示例话术 → 添加 / 导入 → 检测到的 Agent。
  * 空状态时顶栏不显示 `+`
  */
@@ -28,6 +47,7 @@ export function FirstLaunch({ focusTitle }: { focusTitle: boolean }) {
   const ui = useUIStore.getState
   const importable = useImportableCount()
   const { known, agents } = useAgentOptions()
+  const detected = detectedAgents(agents)
   const example = copy.onboarding.example
   const copyExample = () =>
     void navigator.clipboard
@@ -37,7 +57,8 @@ export function FirstLaunch({ focusTitle }: { focusTitle: boolean }) {
 
   return (
     <ViewShell view="servers" title={copy.nav.servers} focusTitle={focusTitle} titleHidden>
-      <div className="mx-auto flex w-full max-w-md flex-col items-center gap-4 pt-[12vh] pb-8 text-center">
+      {/* 在可视高度里上下居中（PRD 6.9）：ViewShell 的内容区是撑满一屏的 flex 列 */}
+      <div className="mx-auto my-auto flex w-full max-w-md flex-col items-center gap-4 py-8 text-center">
         <div aria-hidden className="flex size-13 items-center justify-center rounded-[12px] border border-line bg-card text-fg-2">
           <ServerIcon className="size-6" />
         </div>
@@ -66,22 +87,24 @@ export function FirstLaunch({ focusTitle }: { focusTitle: boolean }) {
             </Button>
           )}
         </div>
+        {/* 图标一行、文字一行：检测到的 Agent 多时，图标和名字挤在一行会折成三行 */}
         {known && (
-          <p className="mt-4 flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
-            {agents.length > 0 ? (
+          <div className="mt-4 flex flex-col items-center gap-1.5 text-xs text-muted-foreground">
+            {detected.length > 0 ? (
               <>
-                <span>{copy.onboarding.detectedLead}</span>
-                <span className="inline-flex items-center gap-1" aria-hidden>
-                  {agents.map((a) => (
-                    <AgentMark key={a.key} agent={a.agent} label={a.label} lit className="size-3.5" />
+                <span className="inline-flex flex-wrap items-center justify-center gap-1.5" aria-hidden>
+                  {detected.map((a) => (
+                    <span key={a.key} className="inline-flex">
+                      {a.mark}
+                    </span>
                   ))}
                 </span>
-                <span>{copy.onboarding.detected(agents.map((a) => a.label).join("、"))}</span>
+                <p>{copy.onboarding.detected(detected.map((a) => a.name))}</p>
               </>
             ) : (
-              <span>{copy.onboarding.noAgents}</span>
+              <p>{copy.onboarding.noAgents}</p>
             )}
-          </p>
+          </div>
         )}
       </div>
     </ViewShell>

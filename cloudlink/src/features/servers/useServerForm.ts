@@ -42,7 +42,8 @@ export function useAliasContext(selfId: string | undefined): AliasContext {
  * 用 values 同步，keepDirtyValues 保留用户正在改的字段；失焦时校验（6.4）
  */
 export function useServerForm(asset: ServerAsset | undefined, ctx: AliasContext): UseFormReturn<ServerFormValues> {
-  const schema = useMemo(() => serverFormSchema(ctx), [ctx])
+  const isNew = !asset
+  const schema = useMemo(() => serverFormSchema(ctx, { nameOptional: isNew }), [ctx, isNew])
   const envs = useAvailableEnvs()
   const values = useMemo(() => (asset ? formValuesOf(asset) : newServerValues(sortEnvs(envs.map((e) => e.id)))), [asset, envs])
   return useForm<ServerFormValues>({
@@ -56,7 +57,7 @@ export function useServerForm(asset: ServerAsset | undefined, ctx: AliasContext)
 
 /**
  * 新建时别名跟随名称（6.5，2026-10-31 用户确认）：名称里没有英文字母和数字时改用地址，重名追加 -2。
- * 用户在「高级」里改过别名后不再跟随；清空别名会恢复跟随
+ * 用户在别名行里改过之后不再跟随；清空别名会恢复跟随
  */
 export function useAliasFollow(form: UseFormReturn<ServerFormValues>, ctx: AliasContext) {
   const touched = useRef(false)
@@ -65,7 +66,8 @@ export function useAliasFollow(form: UseFormReturn<ServerFormValues>, ctx: Alias
       if (touched.current) return
       const { name, connection } = form.getValues()
       const alias = uniqueAlias(baseAlias(name, connection.host), [...ctx.taken, ...ctx.sshHosts.map((h) => h.alias)])
-      form.setValue("alias", alias, { shouldDirty: true, shouldValidate: form.formState.isSubmitted })
+      // 自动生成之后清掉「请填写别名」这类旧错误（PRD 6.5）
+      form.setValue("alias", alias, { shouldDirty: true, shouldValidate: form.formState.isSubmitted || !!form.getFieldState("alias").error })
     },
     markTouched: (value: string) => {
       touched.current = value.trim() !== ""

@@ -1,8 +1,19 @@
 import { create } from "zustand"
 
-import type { ActivityItem, ActivityQuery, IpcError } from "@/bindings"
+import type { ActivityItem, ActivityKind, ActivityQuery, IpcError } from "@/bindings"
 import { ipc, toIpcError } from "@/lib/ipc"
 import type { LoadStatus } from "./assets"
+
+/**
+ * 活动日志只记 CloudLink 自己做的事（F-402，2026-11-10）：Agent 执行的命令（agent-op）只在「动态」页。
+ * 「全部类型」就是这一组；查询时总是带上，后端不用改
+ */
+export const OWN_ACTIVITY_KINDS: ActivityKind[] = ["connection", "probe", "compile", "deliver", "remove", "repair", "ssh-config", "guard", "mode", "cli", "note", "update"]
+
+const ownKinds = (kinds: ActivityKind[] | null | undefined): ActivityKind[] => {
+  const own = (kinds ?? []).filter((k) => OWN_ACTIVITY_KINDS.includes(k))
+  return own.length ? own : OWN_ACTIVITY_KINDS
+}
 
 /** 每页条数（PRD 6.8） */
 export const ACTIVITY_PAGE = 100
@@ -30,7 +41,7 @@ export const useActivityStore = create<ActivityState>()((set, get) => ({
     set({ status: "loading", error: null, query })
     const before = append ? get().items.at(-1)?.at : undefined
     try {
-      const page = await ipc.listActivity({ ...query, before, limit: ACTIVITY_PAGE })
+      const page = await ipc.listActivity({ ...query, kinds: ownKinds(query.kinds), before, limit: ACTIVITY_PAGE })
       set((s) => ({
         items: append ? [...s.items, ...page] : page,
         hasMore: page.length === ACTIVITY_PAGE,
@@ -43,7 +54,7 @@ export const useActivityStore = create<ActivityState>()((set, get) => ({
 
   _onNew: (item) => {
     const { kinds, assetId } = get().query
-    if (kinds?.length && !kinds.includes(item.kind)) return
+    if (!ownKinds(kinds).includes(item.kind)) return
     if (assetId && item.assetId !== assetId) return
     set((s) => ({ items: [item, ...s.items] }))
   },

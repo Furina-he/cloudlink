@@ -29,8 +29,10 @@ interface AssetState {
   error: IpcError | null
   /** 本次会话里最近一次保存的时间，详情头部据此显示「已保存，已编译」 */
   lastSaved: Record<string, string>
-  /** 刚新建或导入的资源，资源行只给它们播放进入动画（PRD 7.7）；两秒后清空 */
+  /** 刚新建或导入的资源：资源行短暂高亮（中性底色，约 2.4 秒，PRD 6.5、7.7） */
   freshIds: string[]
+  /** 再高亮一次：添加流程在保存之后还要装密钥、同步，关闭弹窗时才让新行亮起来 */
+  flash: (ids: string[]) => void
 
   load: () => Promise<void>
   /** 不显示加载中，静默拉一次全集（测试连接、探测之后） */
@@ -51,7 +53,7 @@ interface AssetState {
 
 const markFresh = (set: (fn: (s: AssetState) => Partial<AssetState>) => void, ids: string[]) => {
   set(() => ({ freshIds: ids }))
-  setTimeout(() => set((s) => (s.freshIds === ids ? { freshIds: [] } : {})), 2000)
+  setTimeout(() => set((s) => (s.freshIds === ids ? { freshIds: [] } : {})), 2400)
 }
 
 export const useAssetStore = create<AssetState>()((set, get) => ({
@@ -61,6 +63,7 @@ export const useAssetStore = create<AssetState>()((set, get) => ({
   error: null,
   lastSaved: {},
   freshIds: [],
+  flash: (ids) => markFresh(set, ids),
 
   load: async () => {
     set({ status: "loading", error: null })

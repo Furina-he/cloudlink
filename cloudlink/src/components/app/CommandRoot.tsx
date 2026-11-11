@@ -20,6 +20,7 @@ import {
 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 
+import type { Asset } from "@/bindings"
 import { CommandGroup, CommandItem, CommandShortcut } from "@/components/ui/command"
 import { toast } from "@/components/ui/toast"
 import { useAgentOptions } from "@/features/agents/agentKeys"
@@ -30,7 +31,7 @@ import { KEY_HINT } from "@/lib/hotkeys"
 import { handleOf, useAssetStore } from "@/stores/assets"
 import { isProbing, useProbeStore } from "@/stores/probe"
 import { openPreviewHere, useUIStore, VIEWS } from "@/stores/ui"
-import { hasUpdate, useUpdateStore } from "@/stores/update"
+import { showReminder, useUpdateStore } from "@/stores/update"
 import type { CommandPage } from "./CommandMenu"
 import { ProviderMark } from "./ProviderMark"
 
@@ -48,15 +49,57 @@ function openServer(id: string) {
   else ui.setView("servers", { then: () => useUIStore.getState().selectAsset(id, { force: true }) })
 }
 
+/**
+ * 针对打开着的那项资源的命令：写出它的标识，输入标识也能搜到（value 里带上标识）；
+ * 没打开任何资源时整组不出现，不再留一排灰掉的「当前资源」（2026-11-10）
+ */
+function CurrentActions({ asset, probing, close }: { asset: Asset; probing: boolean; close: () => void }) {
+  const { agents } = useAgentOptions()
+  const handle = handleOf(asset)
+  const nextMode = asset.agent.mode === "standard" ? "read-only" : "standard"
+  const run = (fn: () => void) => () => {
+    fn()
+    close()
+  }
+  const test = asset.type === "cli" ? copy.command.actions.recheckCli(handle) : copy.command.actions.testCurrent(handle)
+  const mode = copy.command.actions.setMode(handle, copy.mode[nextMode])
+  return (
+    <>
+      <CommandItem value={`${test} ${asset.name}`} onSelect={run(() => (asset.type === "cli" ? serverActions.recheckCli(asset) : serverActions.test(asset)))}>
+        {asset.type === "cli" ? <RefreshCwIcon /> : <PlugIcon />}
+        {test}
+      </CommandItem>
+      {asset.type === "vps" && (
+        <CommandItem value={`${copy.command.actions.probeCurrent(handle)} ${asset.name}`} disabled={probing} onSelect={run(() => serverActions.probe(asset))}>
+          <RadarIcon />
+          {copy.command.actions.probeCurrent(handle)}
+        </CommandItem>
+      )}
+      {agents.map((a) => {
+        const on = asset.agent.agents.includes(a.key)
+        const label = on ? copy.command.actions.stopTo(a.label, handle) : copy.command.actions.distributeTo(a.label, handle)
+        return (
+          <CommandItem key={a.key} value={`${label} ${asset.name}`} onSelect={run(() => serverActions.toggleAgent(asset, a, !on))}>
+            {on ? <FolderMinusIcon /> : <FolderSyncIcon />}
+            {label}
+          </CommandItem>
+        )
+      })}
+      <CommandItem value={`${mode} ${asset.name}`} onSelect={run(() => serverActions.requestMode(asset, nextMode))}>
+        {nextMode === "standard" ? <WrenchIcon /> : <EyeIcon />}
+        {mode}
+      </CommandItem>
+    </>
+  )
+}
+
 /** 命令面板的首页（PRD 6.9）。「当前资源」是资源视图里选中的那项 */
 export function RootPage({ close, goPage }: { close: () => void; goPage: (p: CommandPage) => void }) {
   const assets = useAssetStore(useShallow((s) => s.ids.map((id) => s.byId[id])))
   const selectedId = useUIStore((s) => (s.creating ? null : s.selectedAssetId))
   const current = useAssetStore((s) => (selectedId ? s.byId[selectedId] : undefined))
   const probing = useProbeStore((s) => (current ? isProbing(s, current.id) : false))
-  const nextMode = current?.agent.mode === "standard" ? "read-only" : "standard"
-  const { agents } = useAgentOptions()
-  const update = useUpdateStore((s) => (hasUpdate(s.status) ? s.status.version : null))
+  const update = useUpdateStore((s) => (showReminder(s.status) ? s.status.version : null))
   const ui = useUIStore.getState
   const run = (fn: () => void) => () => {
     fn()
@@ -105,44 +148,11 @@ export function RootPage({ close, goPage }: { close: () => void; goPage: (p: Com
           <FileInputIcon />
           {copy.command.actions.importSsh}
         </CommandItem>
-        <CommandItem
-          value={current?.type === "cli" ? copy.command.actions.recheckCli : copy.command.actions.testCurrent}
-          disabled={!current}
-          onSelect={run(() => current && (current.type === "cli" ? serverActions.recheckCli(current) : serverActions.test(current)))}
-        >
-          {current?.type === "cli" ? <RefreshCwIcon /> : <PlugIcon />}
-          {current?.type === "cli" ? copy.command.actions.recheckCli : copy.command.actions.testCurrent}
-        </CommandItem>
-        <CommandItem
-          value={copy.command.actions.probeCurrent}
-          disabled={current?.type !== "vps" || probing}
-          onSelect={run(() => current?.type === "vps" && serverActions.probe(current))}
-        >
-          <RadarIcon />
-          {copy.command.actions.probeCurrent}
-        </CommandItem>
         <CommandItem value={copy.command.actions.probeAll} onSelect={run(probeAll)}>
           <RadarIcon />
           {copy.command.actions.probeAll}
         </CommandItem>
-        {agents.map((a) => {
-          const on = !!current?.agent.agents.includes(a.key)
-          const label = on ? copy.command.actions.stopTo(a.label) : copy.command.actions.distributeTo(a.label)
-          return (
-            <CommandItem key={a.key} value={label} disabled={!current} onSelect={run(() => current && serverActions.toggleAgent(current, a, !on))}>
-              {on ? <FolderMinusIcon /> : <FolderSyncIcon />}
-              {label}
-            </CommandItem>
-          )
-        })}
-        <CommandItem
-          value={copy.command.actions.setMode(copy.mode[nextMode])}
-          disabled={!current}
-          onSelect={run(() => current && serverActions.requestMode(current, nextMode))}
-        >
-          {nextMode === "standard" ? <WrenchIcon /> : <EyeIcon />}
-          {copy.command.actions.setMode(copy.mode[nextMode])}
-        </CommandItem>
+        {current && <CurrentActions asset={current} probing={probing} close={close} />}
       </CommandGroup>
       <CommandGroup heading={copy.command.groups.system}>
         <CommandItem value={copy.command.actions.preview} onSelect={run(openPreviewHere)}>
@@ -158,7 +168,7 @@ export function RootPage({ close, goPage }: { close: () => void; goPage: (p: Com
           <SunMoonIcon />
           {copy.command.actions.theme}
         </CommandItem>
-        {/* 有新版本时才出现，打开同一个更新对话框（F-406） */}
+        {/* 和顶栏提醒同时出现，打开同一个更新对话框（F-406） */}
         {update && (
           <CommandItem value={copy.update.command(update)} onSelect={run(() => useUpdateStore.getState().setDialogOpen(true))}>
             <CircleArrowUpIcon />

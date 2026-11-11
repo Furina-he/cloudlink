@@ -178,8 +178,11 @@ export interface IpcError {
   params?: Record<string, string | number>
 }
 
-/** idle：没有新版本、尚未检查或已关闭检查，界面不显示任何更新元素（F-406） */
-export type UpdateState = "idle" | "available" | "downloading" | "installing"
+/**
+ * F-406：发现新版本后在后台下载并校验，下好（ready）才在顶栏提醒。
+ * idle：没有新版本、尚未检查或已关闭检查，界面不显示任何更新元素；available 只有带着失败原因时才提醒
+ */
+export type UpdateState = "idle" | "available" | "downloading" | "ready" | "installing"
 
 /** 检测更新的完整快照：getUpdateStatus 的返回值和 update://changed 的载荷（PRD 7.8） */
 export interface UpdateStatus {
@@ -192,6 +195,6 @@ export interface UpdateStatus {
   /** downloading 时的字节数；total 可能未知 */
   downloaded?: number
   total?: number
-  /** 上次安装没有完成的原因，此时 state 回到 available */
+  /** 后台下载失败时 state 回到 available；安装失败时回到 ready（安装包还在） */
   error?: IpcError
 }

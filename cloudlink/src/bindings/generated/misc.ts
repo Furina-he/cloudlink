@@ -61,18 +61,19 @@ export type TrayConfirmMode = { assetId: string, };
  */
 export type TrayCopy = { tooltip: string, guardOn: string, guardOff: string, modesHeader: string, readOnly: string, standard: string, allReadOnly: string, 
 /**
- * 「{n} 台生产在运维档」
+ * 「{n} 项在标准运维」，跟在「生产资源全部切回只读」右边
  */
 prodInStandard: string, open: string, quit: string, 
 /**
- * 系统通知标题与正文「{n} 台生产服务器已切回只读」
+ * 系统通知标题与正文「{n} 项生产资源已切回只读」
  */
 notifyTitle: string, notifyAllReadOnly: string, };
 
 /**
- * F-406：idle 时界面不显示任何更新元素（没有新版本、尚未检查或已关闭检查）
+ * F-406：发现新版本后在后台下载并校验，下好（ready）才在顶栏提醒。
+ * idle 时界面不显示任何更新元素（没有新版本、尚未检查或已关闭检查）；available 只有带着失败原因时才提醒
  */
-export type UpdateState = "idle" | "available" | "downloading" | "installing";
+export type UpdateState = "idle" | "available" | "downloading" | "ready" | "installing";
 
 /**
  * `update://changed` 推送的完整快照（PRD 7.8）

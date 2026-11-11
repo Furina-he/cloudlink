@@ -7,12 +7,12 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/u
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
-import { Trace } from "@/components/ui/trace"
 import { useDelayedFlag } from "@/hooks/use-delayed-flag"
 import { copy, ipcErrorText } from "@/lib/copy"
 import { dayKey, formatDay } from "@/lib/format"
 import { useActivityStore } from "@/stores/activity"
-import { ActivityFilters, ActivityLine } from "./ActivityParts"
+import { useUIStore } from "@/stores/ui"
+import { ActivityLine } from "./ActivityParts"
 
 function dayTitle(iso: string) {
   const key = dayKey(iso)
@@ -27,16 +27,14 @@ function ActivitySkeleton() {
   return (
     <div className="flex flex-col gap-3" aria-busy="true" aria-label={copy.activityView.loading}>
       <Skeleton className="h-4 w-24" />
-      {Array.from({ length: 6 }, (_, i) => (
-        <Skeleton key={i} className="h-5 w-2/3" />
-      ))}
+      <Skeleton className="h-40 rounded-list" />
     </div>
   )
 }
 
 /**
- * 活动（PRD 6.7、F-402）：按天分组的 Trace，每次加载 100 条，按类型和服务器筛选。
- * 「Agent 操作」来自护栏记录（F-307）；从服务器详情「在活动中查看全部」进来时已经按服务器筛选好
+ * 活动日志（PRD 6.8、F-402）：按天分组，每天一张列表卡，每次加载 100 条；筛选在面板标题行（ActivityFilters）。
+ * 只记 CloudLink 自己做的事，Agent 执行的命令在「动态」页，底部一句话指过去
  */
 export function ActivitySection() {
   const items = useActivityStore((s) => s.items)
@@ -62,8 +60,6 @@ export function ActivitySection() {
 
   return (
     <section aria-label={copy.settings.activityLog} className="flex min-w-0 flex-col gap-4">
-      <p className="text-xs text-muted-foreground">{copy.activityView.retention}</p>
-      <ActivityFilters />
       {error && (
         <Alert variant="destructive">
           <CircleXIcon />
@@ -94,15 +90,15 @@ export function ActivitySection() {
           {groups.map((list) => {
             const key = dayKey(list[0].at)
             return (
-              <section key={key} aria-labelledby={`day-${key}`} className="flex flex-col gap-2">
-                <h3 id={`day-${key}`} className="text-xs font-medium text-muted-foreground">
+              <section key={key} aria-labelledby={`day-${key}`} className="flex flex-col gap-1.5">
+                <h3 id={`day-${key}`} className="px-1 text-xs font-medium text-muted-foreground">
                   {dayTitle(list[0].at)}
                 </h3>
-                <Trace role="list">
+                <div role="list" className="divide-y divide-line-2 overflow-hidden rounded-list border border-line bg-card">
                   {list.map((item) => (
                     <ActivityLine key={item.id} item={item} />
                   ))}
-                </Trace>
+                </div>
               </section>
             )
           })}
@@ -116,6 +112,20 @@ export function ActivitySection() {
           )}
         </>
       )}
+      <p className="px-1 text-xs leading-relaxed text-muted-foreground">
+        {copy.activityView.footLead}
+        <button
+          type="button"
+          className="rounded-sm underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => {
+            useUIStore.getState().setActivityLogOpen(false)
+            useUIStore.getState().setView("activity")
+          }}
+        >
+          {copy.nav.activity}
+        </button>
+        {copy.activityView.footTail}
+      </p>
     </section>
   )
 }

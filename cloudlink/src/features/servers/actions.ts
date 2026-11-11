@@ -13,7 +13,9 @@ import { announceTest, useConnectionStore } from "@/stores/connection"
 import { useDeliveryStore } from "@/stores/deliveries"
 import { selectActiveRun, useProbeStore } from "@/stores/probe"
 import { useSettingsStore } from "@/stores/settings"
+import { useTargetStore } from "@/stores/targets"
 import { useUIStore } from "@/stores/ui"
+import { missingIncludeEnvs, syncedDirs } from "./includeState"
 import { connectionInputOf } from "./serverForm"
 
 export type PendingAction = { kind: "mode" | "delete"; assetId: string } | null
@@ -75,6 +77,25 @@ export const serverActions = {
         )
       )
       .catch(toastError)
+  },
+
+  /**
+   * 资源行的「加入 SSH 配置」（PRD 6.5）：把还没加入的运行环境都加上；
+   * 添加时选了「暂不加入」的服务器还没同步给任何 Agent，这时一并同步给全部已启用的 Agent
+   */
+  async joinSshConfig(asset: ServerAsset, agentKeys: string[]) {
+    try {
+      for (const env of missingIncludeEnvs(asset, useTargetStore.getState().environments)) await useTargetStore.getState().addSshInclude(env)
+      if (asset.agent.agents.length === 0 && selectCanDistribute(asset).ok) {
+        for (const key of agentKeys) await useAssetStore.getState().setDistribute(asset.id, key, true)
+      }
+      // 加入之后各份 Skill 都重新算过，列入情况以后端为准
+      await useDeliveryStore.getState().load()
+      const current = useAssetStore.getState().byId[asset.id] ?? asset
+      toast.add({ title: copy.include.joined(current.name, syncedDirs(useDeliveryStore.getState().inclusions, current)), type: "success" })
+    } catch (e) {
+      toastError(e)
+    }
   },
 
   /** 档位闸刀（PRD 6.4）：生产资源切到标准运维前确认（F-202 AC2）；切回只读巡检一键完成 */

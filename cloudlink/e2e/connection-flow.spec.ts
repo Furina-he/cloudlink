@@ -7,8 +7,8 @@ const sshForm = (page: Page) =>
   page.getByRole("region", { name: /^(添加 SSH 服务器|连接 )/ })
 const connectEnable = (page: Page) =>
   sshForm(page).getByRole("button", { name: /^(连接并启用|重新连接)/ })
-const includeDialog = (page: Page) =>
-  page.getByRole("alertdialog", { name: "把托管配置加入 ~/.ssh/config？" })
+// 「让 Agent 能用别名连接」在连接过程里就地问，不再叠一层对话框（PRD 6.5）
+const includeDialog = (page: Page) => sshForm(page).getByTestId("connect-include")
 
 async function fillNew(page: Page, name: string, password = false) {
   await page.keyboard.press("Control+n")
@@ -113,7 +113,7 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
       path: testInfo.outputPath("startup-recovered.png"),
       animations: "disabled",
     })
-    // 连接完成事件必须推进到 Include 确认，验证重试后真正恢复了事件订阅。
+    // 连接完成事件必须推进到「加入 SSH 配置」这一步，验证重试后真正恢复了事件订阅。
     await fillNew(page, "Startup Recovery")
     await connectEnable(page).click()
     await expect(includeDialog(page)).toBeVisible()
@@ -229,11 +229,13 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
       animations: "disabled",
     })
     await saveError.getByRole("button", { name: "重试", exact: true }).click()
-    const converting = sshForm(page).getByRole("button", {
-      name: "正在生成并安装免密密钥…",
-    })
-    await expect(converting).toBeVisible()
-    await expect(converting).toBeDisabled()
+    // 忙碌时按钮只写一句，阶段写在步骤列表里
+    await expect(
+      sshForm(page).locator("[data-step=convert]")
+    ).toHaveAttribute("data-state", "running")
+    await expect(
+      sshForm(page).getByRole("button", { name: "正在添加…" })
+    ).toBeDisabled()
     await expect(sshForm(page)).toHaveCount(0)
     await expect(row(page, "save-recovery")).toHaveAccessibleName(/已连接/)
     await expect(
@@ -242,7 +244,7 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
     expect(errors).toEqual([])
   })
 
-  test("关闭 Include 确认会结束本次流水线，草稿保留且可以重试", async ({
+  test("在加入 SSH 配置这一步「返回修改」会结束本次流水线，草稿保留且可以重试", async ({
     page,
   }, testInfo) => {
     const errors = collectConsoleErrors(page)
@@ -251,12 +253,10 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
     await connectEnable(page).click()
     const include = includeDialog(page)
     await expect(include).toBeVisible()
-    await include.evaluate(async (element) => {
-      await Promise.all(
-        element.getAnimations().map((animation) => animation.finished)
-      )
-    })
-    await page.keyboard.press("Escape")
+    await expect(
+      sshForm(page).locator("[data-step=include]")
+    ).toHaveAttribute("data-state", "attention")
+    await sshForm(page).getByRole("button", { name: "返回修改" }).click()
     await expect(include).toBeHidden()
     await expect(connectEnable(page)).toBeEnabled()
     await expect(sshForm(page).getByLabel(/^名称/)).toHaveValue(
@@ -274,7 +274,7 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
     expect(errors).toEqual([])
   })
 
-  test("加入 Include 失败不保存资源，连接按钮恢复后可重试成功", async ({
+  test("加入 SSH 配置失败不保存资源，连接按钮恢复后可重试成功", async ({
     page,
   }, testInfo) => {
     const errors = collectConsoleErrors(page)
@@ -283,7 +283,7 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
     await rejectOnce(page, "addSshInclude")
     await connectEnable(page).click()
     await includeDialog(page)
-      .getByRole("button", { name: "加入 Include" })
+      .getByRole("button", { name: "加入", exact: true })
       .click()
     await expect(
       toastText(page, "fixture addSshInclude rejection")
@@ -296,7 +296,7 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
     })
     await connectEnable(page).click()
     await includeDialog(page)
-      .getByRole("button", { name: "加入 Include" })
+      .getByRole("button", { name: "加入", exact: true })
       .click()
     await expect(sshForm(page)).toHaveCount(0)
     await expect(row(page, "include-recovery")).toHaveAccessibleName(/已连接/)

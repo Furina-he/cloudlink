@@ -149,7 +149,6 @@ pub fn run() {
             ipc::commands::reset_data,
             ipc::commands::get_update_status,
             ipc::commands::install_update,
-            ipc::commands::cancel_update,
             ipc::commands::all_read_only,
             ipc::commands::set_tray_copy,
         ])

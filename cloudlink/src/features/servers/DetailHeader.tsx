@@ -87,7 +87,7 @@ export function ServerProblems({ asset, onTest, onConvert, onEdit }: { asset: Se
       {state === "changed" && <ProblemRow title={copy.connChangedHint} action={copy.test.button} onAction={onTest} />}
       {shown.map((p) => {
         const fix = fixOf(p)
-        return <ProblemRow key={p.key} title={p.text} action={fix?.label} onAction={fix?.run} />
+        return <ProblemRow key={p.key} title={p.title} reason={p.reason} action={fix?.label} onAction={fix?.run} />
       })}
       {agentKey && <ProblemRow title={copy.agentSection.agentKeyWarning} />}
     </>

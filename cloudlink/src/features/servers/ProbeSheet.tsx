@@ -165,15 +165,24 @@ function ProbeBody({ asset, run, starting, onViewScript }: { asset: ServerAsset;
             : copy.probeSheet.description}
         </SheetDescription>
       </SheetHeader>
-      <ScrollArea className="min-h-0 flex-1">
-        <div role="status" className="flex flex-col gap-4 px-4 pb-4">
-          {state === "idle" && <IdleNote asset={asset} />}
-          {shown && state !== "ok" && <Steps run={shown} />}
-          {state === "failed" && shown && <Failure asset={asset} error={shown.error} />}
-          {state === "cancelled" && <Note>{copy.probeSheet.cancelled}</Note>}
-          {state === "ok" && shown && <Result run={shown} selected={selected} onSelect={select} />}
+      {state === "ok" || state === "running" ? (
+        <ScrollArea className="min-h-0 flex-1">
+          <div role="status" className="flex flex-col gap-4 px-4 pb-4">
+            {shown && state === "running" && <Steps run={shown} />}
+            {state === "ok" && shown && <Result run={shown} selected={selected} onSelect={select} />}
+          </div>
+        </ScrollArea>
+      ) : (
+        // 失败、取消、还没探测：内容只有几行，放在面板的垂直中间，不在顶上留半个面板的空白（PRD 6.4）
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <div role="status" className="my-auto flex flex-col gap-4 px-4 py-4">
+            {state === "idle" && <IdleNote asset={asset} />}
+            {shown && <Steps run={shown} />}
+            {state === "failed" && shown && <Failure asset={asset} error={shown.error} />}
+            {state === "cancelled" && <Note>{copy.probeSheet.cancelled}</Note>}
+          </div>
         </div>
-      </ScrollArea>
+      )}
       <SheetFooter className="flex-row flex-wrap items-center border-t">
         <Button variant="ghost" size="sm" onClick={onViewScript}>
           <FileCodeIcon data-icon="inline-start" />

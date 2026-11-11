@@ -11,8 +11,7 @@ import {
   TraceTitle,
 } from "@/components/ui/trace"
 import { copy } from "@/lib/copy"
-import { formatDateTime } from "@/lib/format"
-import { folderName } from "@/lib/paths"
+import { formatDateTime, formatRelative } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
 /** 结果图标（PRD 6.4）：放行、拦下 */
@@ -21,7 +20,10 @@ const DECISION: Record<OperationDecision, { icon: LucideIcon; className: string 
   denied: { icon: ShieldXIcon, className: "text-destructive" },
 }
 
-/** 一条护栏记录：时间、结果图标、命令（等宽、截断，可以展开）、工作目录（只显示文件夹名） */
+/**
+ * 一条护栏记录：结果图标、相对时间（和动态页一致）、命令（等宽、截断，可以展开）。
+ * 工作目录只在展开后显示完整路径：放在行尾只有一个文件夹名，在资源详情里看不出是什么
+ */
 export function OperationLine({ op }: { op: Operation }) {
   const { icon: Icon, className } = DECISION[op.decision]
   const reason = op.reasonId ? copy.guardReason[op.reasonId] : null
@@ -32,10 +34,9 @@ export function OperationLine({ op }: { op: Operation }) {
           <TraceIcon>
             <Icon className={className} />
           </TraceIcon>
-          <TraceDescription>{formatDateTime(op.at)}</TraceDescription>
+          <TraceDescription className="shrink-0">{formatRelative(op.at)}</TraceDescription>
           <TraceTitle className="font-mono text-xs text-foreground">{op.command}</TraceTitle>
           <span className="sr-only">{copy.decision[op.decision]}</span>
-          <TraceDescription className="font-mono">{folderName(op.cwd)}</TraceDescription>
         </TraceLine>
       </TraceCollapsibleTrigger>
       <TraceCollapsibleContent className="flex flex-col gap-1 text-xs">
@@ -45,9 +46,7 @@ export function OperationLine({ op }: { op: Operation }) {
           {op.decision === "allowed" && op.reasonId === "unparsed" ? copy.unparsedAllowed : reason ? `${copy.decision[op.decision]}：${reason}` : copy.decision[op.decision]}
         </span>
         <span className="font-mono">{op.cwd}</span>
-        <span>
-          {copy.env.long(op.envId)} · {copy.operations.session(op.sessionId)}
-        </span>
+        <span>{copy.operations.meta(formatDateTime(op.at), copy.env.long(op.envId), op.sessionId)}</span>
       </TraceCollapsibleContent>
     </TraceCollapsible>
   )

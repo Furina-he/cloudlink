@@ -1,4 +1,5 @@
-//! 检测更新（F-406，PRD 8.1 `update`）：按设置开关定时检查；下载、校验签名并安装；推送 `update://changed` 快照。
+//! 检测更新（F-406，PRD 8.1 `update`）：按设置开关定时检查；发现新版本就在后台下载并校验签名，下好才提醒；
+//! 用户点「重启以更新」时安装；推送 `update://changed` 快照。
 //! 检查周期只在这里决定：启动 10 秒后一次，之后每 24 小时一次，失败后 1 小时重试，前端不自建定时器。
 //! 更新源可注入。单元测试只用假的更新源；`cfg!(test)` 下真实更新源直接报错，不访问网络。
 
@@ -46,7 +47,7 @@ pub enum Failure {
 }
 
 impl Failure {
-    /// 取消不是错误，界面只回到「有新版本」
+    /// 取消（下载期间关闭了检查）不是错误
     pub fn error(self) -> Option<IpcError> {
         let id = match self {
             Failure::Cancelled => return None,
@@ -100,6 +101,8 @@ struct State {
     /// 开关每切换一次加一：开关切换前就已发出的检查，结果直接丢弃
     generation: u64,
     download: Option<Arc<AtomicBool>>,
+    /// 下好并通过签名校验、等用户重启安装的安装包（ready）
+    package: Option<Vec<u8>>,
 }
 
 pub struct Updates {
@@ -121,6 +124,7 @@ impl Updates {
                 checking: false,
                 generation: 0,
                 download: None,
+                package: None,
             }),
             wake: Condvar::new(),
         }
@@ -164,7 +168,7 @@ impl Updates {
         }
     }
 
-    /// F-406 AC6：关闭时立即停止检查并隐藏提醒（进行中的下载一并取消）；重新打开时立即检查一次
+    /// F-406 AC6：关闭时立即停止检查并隐藏提醒（进行中的下载一并取消，下好的安装包丢弃）；重新打开时立即检查一次
     pub fn set_enabled(&self, enabled: bool, now: Instant) {
         let mut state = self.lock();
         if state.enabled == enabled {
@@ -180,6 +184,7 @@ impl Updates {
                 cancel.store(true, Ordering::SeqCst);
             }
             if state.status.state != UpdateState::Installing {
+                state.package = None;
                 let idle = UpdateStatus::idle(&state.status.current_version);
                 self.publish(&mut state, idle);
             }
@@ -187,7 +192,7 @@ impl Updates {
         self.wake.notify_all();
     }
 
-    /// 检查到期时执行一次检查，返回是否执行了。下载或安装期间不检查
+    /// 检查到期时执行一次检查，返回是否执行了。下载中、已下好或安装期间不检查
     pub fn check_if_due(&self, now: Instant) -> bool {
         let generation = {
             let mut state = self.lock();
@@ -252,7 +257,10 @@ impl Updates {
             .name("cloudlink-updates".into())
             .spawn(move || {
                 loop {
-                    updates.check_if_due(Instant::now());
+                    // 发现新版本（或上次下载失败后又检查到它）就接着在这个线程里下载，下好才提醒
+                    if updates.check_if_due(Instant::now()) {
+                        updates.download_pending();
+                    }
                     let state = updates.lock();
                     let wait = match state.next_check {
                         Some(due) if state.enabled => due.saturating_duration_since(Instant::now()).max(MIN_WAIT),
@@ -269,12 +277,24 @@ impl Updates {
             .map(drop)
     }
 
-    /// 「有新版本」→「下载中」。已经在下载或安装时返回 `None`；没有可安装的版本时返回 `NotFound`
+    /// 下载并校验最近一次检查到的版本，成功后进入「已下好」。调度线程发现新版本后、用户在下载失败后点「重试」时调用；
+    /// 已经在下载、已下好、正在安装或没有新版本时什么也不做
+    pub fn download_pending(&self) {
+        let Ok(Some(cancel)) = self.begin_download() else {
+            return;
+        };
+        match self.download(&cancel) {
+            Ok(package) => self.mark_ready(&cancel, package),
+            Err(failure) => self.abort(failure.error()),
+        }
+    }
+
+    /// 「有新版本」→「下载中」。已经在下载、已下好或正在安装时返回 `None`；没有可下载的版本时返回 `NotFound`
     pub fn begin_download(&self) -> crate::error::Result<Option<Arc<AtomicBool>>> {
         let mut state = self.lock();
         match state.status.state {
             UpdateState::Available if state.enabled => {}
-            UpdateState::Downloading | UpdateState::Installing => return Ok(None),
+            UpdateState::Downloading | UpdateState::Ready | UpdateState::Installing => return Ok(None),
             _ => return Err(crate::error::AppError::ipc(IpcErrorId::NotFound)),
         }
         let cancel = Arc::new(AtomicBool::new(false));
@@ -329,35 +349,51 @@ impl Updates {
         self.wake.notify_all();
     }
 
-    /// 「下载中」→「正在安装」，返回要安装的版本号。下载已取消或检查已关闭时返回 `None`
-    pub fn mark_installing(&self) -> Option<String> {
+    /// 「下载中」→「已下好」：顶栏这时才出现「更新」。下载期间关闭了检查时安装包直接丢弃
+    fn mark_ready(&self, cancel: &AtomicBool, package: Vec<u8>) {
         let mut state = self.lock();
-        let cancelled = state
-            .download
-            .as_ref()
-            .is_none_or(|cancel| cancel.load(Ordering::SeqCst));
-        if !state.enabled || cancelled || state.status.state != UpdateState::Downloading {
+        if !state.enabled || cancel.load(Ordering::SeqCst) || state.status.state != UpdateState::Downloading {
+            drop(state);
+            return self.abort(None);
+        }
+        state.download = None;
+        state.package = Some(package);
+        let mut status = state.status.clone();
+        status.state = UpdateState::Ready;
+        status.error = None;
+        self.publish(&mut state, status);
+    }
+
+    /// 「已下好」→「正在安装」，交出版本号和安装包。没有下好的安装包或检查已关闭时返回 `None`
+    pub fn mark_installing(&self) -> Option<(String, Vec<u8>)> {
+        let mut state = self.lock();
+        if !state.enabled || state.status.state != UpdateState::Ready {
             return None;
         }
+        let package = state.package.take()?;
         let mut status = state.status.clone();
         status.state = UpdateState::Installing;
         status.error = None;
         self.publish(&mut state, status);
-        state.status.version.clone()
+        Some((state.status.version.clone()?, package))
     }
 
     pub fn install(&self, package: &[u8]) -> Result<(), Failure> {
         self.source().install(package)
     }
 
-    /// 只能取消下载阶段，取消后回到「有新版本」
-    pub fn cancel(&self) {
-        let state = self.lock();
-        if state.status.state == UpdateState::Downloading
-            && let Some(cancel) = &state.download
-        {
-            cancel.store(true, Ordering::SeqCst);
+    /// 安装没有完成：留着安装包回到「已下好」并带上原因，用户可以再点一次「重启以更新」
+    pub fn install_failed(&self, error: Option<IpcError>, package: Vec<u8>) {
+        let mut state = self.lock();
+        if !state.enabled || state.status.state != UpdateState::Installing {
+            let idle = UpdateStatus::idle(&state.status.current_version);
+            return self.publish(&mut state, idle);
         }
+        state.package = Some(package);
+        let mut status = state.status.clone();
+        status.state = UpdateState::Ready;
+        status.error = error;
+        self.publish(&mut state, status);
     }
 }
 

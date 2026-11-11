@@ -4,7 +4,7 @@ import { Controller, useFieldArray, useFormContext, useWatch } from "react-hook-
 
 import type { Service } from "@/bindings"
 import { StateBadge } from "@/components/app/StateBadge"
-import { Badge } from "@/components/ui/badge"
+import { Truncate } from "@/components/app/Truncate"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -31,7 +31,11 @@ import { ServiceDialog } from "../ServiceDialog"
 
 const DASH = <span className="text-muted-foreground">—</span>
 
-/** 服务分段（PRD 6.4）：探测得到的和手动添加的服务；角色、关键是人工标注 */
+/**
+ * 服务分段（PRD 6.4）：探测得到的和手动添加的服务；角色、关键是人工标注。
+ * 2026-11-10 由 9 列压成 6 列：类型和「手动」写在名称下面，「未发现」「已清洗」跟在名称后面，
+ * 「探测」是常态不显示；固定列宽，760 宽窗口里不用横向滚动就能看到「关键」开关
+ */
 export function ServicesSection() {
   const { control, register } = useFormContext<ServerFormValues>()
   const { fields, append, update, remove } = useFieldArray({ control, name: "services", keyName: "key" })
@@ -69,17 +73,22 @@ export function ServicesSection() {
 
         {fields.length > 0 ? (
           <div className="rounded-lg border">
-            <Table>
+            <Table className="table-fixed">
+              <colgroup>
+                <col className="w-[24%]" />
+                <col className="w-[16%]" />
+                <col className="w-[18%]" />
+                <col />
+                <col className="w-14" />
+                <col className="w-10" />
+              </colgroup>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
                   <TableHead>{copy.services.columns.name}</TableHead>
-                  <TableHead>{copy.services.columns.kind}</TableHead>
                   <TableHead>{copy.services.columns.image}</TableHead>
                   <TableHead>{copy.services.columns.ports}</TableHead>
                   <TableHead>{copy.services.columns.role}</TableHead>
                   <TableHead>{copy.services.columns.critical}</TableHead>
-                  <TableHead>{copy.services.columns.source}</TableHead>
-                  <TableHead>{copy.services.columns.status}</TableHead>
                   <TableHead>
                     <span className="sr-only">{copy.services.columns.actions}</span>
                   </TableHead>
@@ -90,29 +99,40 @@ export function ServicesSection() {
                   const s = services[i] ?? f
                   return (
                     <TableRow key={f.key}>
-                      <TableCell className="font-mono text-[0.8125rem]">
-                        <span className="flex items-center gap-1.5">
-                          {s.name}
-                          {s.sanitized && (
-                            <Tooltip>
-                              <TooltipTrigger render={<span tabIndex={0} className="rounded-4xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50" />}>
-                                <StateBadge tone="warning" icon={ShieldCheckIcon} className="font-sans">
-                                  {copy.services.sanitized}
-                                </StateBadge>
-                              </TooltipTrigger>
-                              <TooltipContent>{copy.services.sanitizedTip}</TooltipContent>
-                            </Tooltip>
-                          )}
-                        </span>
-                      </TableCell>
                       <TableCell>
-                        <Badge variant="secondary">{copy.services.kind[s.kind]}</Badge>
+                        <div className="flex min-w-0 flex-col gap-0.5">
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <Truncate text={s.name} className="font-mono text-[0.8125rem]" />
+                            {s.sanitized && (
+                              <Tooltip>
+                                <TooltipTrigger render={<span tabIndex={0} className="shrink-0 rounded-4xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50" />}>
+                                  <StateBadge tone="warning" icon={ShieldCheckIcon}>
+                                    {copy.services.sanitized}
+                                  </StateBadge>
+                                </TooltipTrigger>
+                                <TooltipContent>{copy.services.sanitizedTip}</TooltipContent>
+                              </Tooltip>
+                            )}
+                            {s.missing && (
+                              <Tooltip>
+                                <TooltipTrigger render={<span tabIndex={0} className="shrink-0 rounded-4xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50" />}>
+                                  <StateBadge tone="warning" icon={SearchXIcon}>
+                                    {copy.services.missing}
+                                  </StateBadge>
+                                </TooltipTrigger>
+                                <TooltipContent>{copy.services.missingTip}</TooltipContent>
+                              </Tooltip>
+                            )}
+                          </span>
+                          <span className="text-xs text-muted-foreground">{copy.services.meta(copy.services.kind[s.kind], s.source === "manual")}</span>
+                        </div>
                       </TableCell>
-                      <TableCell className="font-mono text-xs">{s.image || DASH}</TableCell>
-                      <TableCell className="font-mono text-xs">{s.ports.length ? formatPorts(s.ports) : DASH}</TableCell>
+                      <TableCell className="font-mono text-xs">{s.image ? <Truncate text={s.image} /> : DASH}</TableCell>
+                      <TableCell className="font-mono text-xs">{s.ports.length ? <Truncate text={formatPorts(s.ports)} /> : DASH}</TableCell>
                       <TableCell>
                         <Input
-                          className="h-7 min-w-28"
+                          className="h-7 w-full"
+                          placeholder={copy.services.rolePlaceholder}
                           aria-label={copy.services.roleAria(s.name)}
                           {...register(`services.${i}.role`)}
                         />
@@ -130,23 +150,6 @@ export function ServicesSection() {
                             />
                           )}
                         />
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{copy.services.source[s.source]}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        {s.missing ? (
-                          <Tooltip>
-                            <TooltipTrigger render={<span tabIndex={0} className="rounded-4xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50" />}>
-                              <StateBadge tone="warning" icon={SearchXIcon}>
-                                {copy.services.missing}
-                              </StateBadge>
-                            </TooltipTrigger>
-                            <TooltipContent>{copy.services.missingTip}</TooltipContent>
-                          </Tooltip>
-                        ) : (
-                          DASH
-                        )}
                       </TableCell>
                       <TableCell>
                         <DropdownMenu>

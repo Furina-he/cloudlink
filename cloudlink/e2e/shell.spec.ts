@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test"
 
-import { collectConsoleErrors, detailTitle, ready, row, shot } from "./helpers"
+import { collectConsoleErrors, detailTitle, openServer, ready, row, shot } from "./helpers"
 
 // 应用外壳（PRD 6.2、6.11、6.12）：顶栏或侧栏、四项导航与标记、快捷键、命令面板
 const VIEWS = ["资源", "Agent", "动态", "设置"]
@@ -78,11 +78,37 @@ test.describe("应用外壳", () => {
     expect(errors).toEqual([])
   })
 
+  test("命令面板：针对当前资源的命令写出标识，输入标识就能搜到；没打开资源时不出现", async ({ page }) => {
+    await ready(page)
+    await page.keyboard.press("Control+k")
+    const dialog = page.getByRole("dialog")
+    await expect(dialog.getByRole("option", { name: /^测试 .+ 的连接$/ })).toHaveCount(0)
+    await expect(dialog.getByRole("option", { name: "添加 GitHub" })).toHaveCount(1)
+    await expect(dialog.getByRole("option", { name: /云平台 CLI/ })).toHaveCount(0)
+    await expect(dialog.getByRole("option", { name: "生产资源全部切回只读" })).toHaveCount(1)
+    await page.keyboard.press("Escape")
+    await expect(dialog).toBeHidden()
+
+    await openServer(page, "hk-edge")
+    await page.keyboard.press("Control+k")
+    await page.keyboard.type("hk-edge")
+    await expect(dialog.getByRole("option", { name: "测试 hk-edge 的连接" })).toBeVisible()
+    await expect(dialog.getByRole("option", { name: "探测 hk-edge" })).toBeVisible()
+    await expect(dialog.getByRole("option", { name: /^把 hk-edge 切换为/ })).toBeVisible()
+  })
+
   test("Ctrl+\\ 打开和关闭预览；设置页会先切到 Agent 页", async ({ page }) => {
     await ready(page)
     await page.keyboard.press("Control+Backslash")
     const sheet = page.getByRole("dialog", { name: "预览 Skill" })
     await expect(sheet).toBeVisible()
+    // 文件用下拉切换，不再是一排标签
+    const files = sheet.getByRole("combobox", { name: "文件" })
+    await expect(files).toContainText("SKILL.md")
+    await expect(sheet.getByRole("tab")).toHaveCount(0)
+    await files.click()
+    await page.getByRole("option", { name: "health-check.md" }).click()
+    await expect(files).toContainText("health-check.md")
     await page.keyboard.press("Control+Backslash")
     await expect(sheet).toBeHidden()
 
@@ -193,7 +219,7 @@ test.describe("键盘焦点（P6 无障碍复查）", () => {
     await page.keyboard.press("Control+2")
     await page.getByRole("button", { name: /^护栏规则/ }).click()
     await expect(page.getByRole("heading", { level: 1, name: "护栏规则" })).toBeFocused()
-    await expect(page.getByText("只读巡检：只放行这些命令")).toBeVisible()
+    await expect(page.getByRole("heading", { name: "只读巡检时" })).toBeVisible()
     await page.keyboard.press("Escape")
     await expect(page.getByRole("button", { name: /^护栏规则/ })).toBeVisible()
   })

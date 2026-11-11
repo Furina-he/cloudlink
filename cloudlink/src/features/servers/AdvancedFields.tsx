@@ -13,22 +13,111 @@ import { Required } from "./Required"
 import { useAvailableEnvs } from "./useServerForm"
 import { ValidationError } from "./ValidationError"
 
+/** 跳板机：候选是其他服务器的别名和 ssh config 里的 Host */
+function ProxyJumpField({ ctx }: { ctx: AliasContext }) {
+  const { control } = useFormContext<ServerFormValues>()
+  const alias = useWatch({ control, name: "alias" })
+  const jumpOptions = useMemo(
+    () => [...new Set([...ctx.taken, ...ctx.sshHosts.map((h) => h.alias)])].sort().map((a) => ({ value: a, label: a })),
+    [ctx]
+  )
+  return (
+    <Field>
+      <FieldLabel htmlFor="server-proxy-jump">
+        {copy.serverForm.proxyJump}
+        <span className="font-normal text-muted-foreground">{copy.common.optional}</span>
+      </FieldLabel>
+      <Controller
+        name="connection.proxyJump"
+        control={control}
+        render={({ field }) => (
+          <CreatableCombobox
+            id="server-proxy-jump"
+            value={field.value}
+            onChange={field.onChange}
+            onBlur={field.onBlur}
+            inputRef={field.ref}
+            options={jumpOptions.filter((o) => o.value !== alias.trim())}
+            placeholder={copy.serverForm.proxyJumpPlaceholder}
+            describedBy="server-proxy-jump-hint"
+            inputClassName="font-mono"
+            clearable
+          />
+        )}
+      />
+      <FieldDescription id="server-proxy-jump-hint">{copy.serverForm.proxyJumpHint}</FieldDescription>
+    </Field>
+  )
+}
+
+/** 在哪些运行环境里可用（F-107 AC5） */
+function EnvsField() {
+  const {
+    control,
+    formState: { errors },
+  } = useFormContext<ServerFormValues>()
+  const envs = useAvailableEnvs()
+  const error = errors.connection?.definedIn
+  return (
+    <FieldSet className="min-w-0 gap-2" data-invalid={!!error || undefined}>
+      <FieldLegend variant="label" className="mb-0">
+        {copy.serverForm.envs} <Required />
+      </FieldLegend>
+      <FieldDescription>{copy.serverForm.envsHint}</FieldDescription>
+      <Controller
+        name="connection.definedIn"
+        control={control}
+        render={({ field }) => (
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            {envs.map((env, i) => {
+              const id = `server-env-${i}`
+              const checked = field.value.includes(env.id)
+              return (
+                <Field key={env.id} orientation="horizontal" className="w-auto">
+                  <Checkbox
+                    id={id}
+                    ref={i === 0 ? field.ref : undefined}
+                    checked={checked}
+                    aria-invalid={!!error || undefined}
+                    onCheckedChange={(on) => field.onChange(on ? [...field.value, env.id] : field.value.filter((x) => x !== env.id))}
+                  />
+                  <FieldLabel htmlFor={id} className="font-normal">
+                    {copy.env.long(env.id)}
+                  </FieldLabel>
+                </Field>
+              )
+            })}
+          </div>
+        )}
+      />
+      <ValidationError error={error} />
+    </FieldSet>
+  )
+}
+
+/** 添加表单里的「高级」（PRD 6.5）：只有跳板机和运行环境，放在折叠行里；别名在名称下面的别名行 */
+export function AdvancedExtras({ ctx }: { ctx: AliasContext }) {
+  return (
+    <FieldGroup className="gap-4 px-3.5 py-3">
+      <ProxyJumpField ctx={ctx} />
+      <EnvsField />
+    </FieldGroup>
+  )
+}
+
 /**
- * 「高级」（PRD 6.5）：别名、跳板机、写入的运行环境。折叠标题实时显示别名；
+ * 连接编辑里的「高级」（PRD 6.4）：别名、跳板机、运行环境。折叠标题实时显示别名；
  * 展开状态由外层控制，保存校验失败时可以展开到出错的字段
  */
 export function AdvancedFields({
   open,
   onOpenChange,
   ctx,
-  onAliasChange,
   children,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   ctx: AliasContext
-  /** 新建时：用户改过别名就不再跟随名称 */
-  onAliasChange?: (alias: string) => void
   /** 详情编辑态追加的内容（导出开关） */
   children?: ReactNode
 }) {
@@ -38,13 +127,6 @@ export function AdvancedFields({
     formState: { errors },
   } = useFormContext<ServerFormValues>()
   const alias = useWatch({ control, name: "alias" })
-  const envs = useAvailableEnvs()
-  const e = errors.connection
-  // 跳板机候选：其他服务器的别名和 ssh config 里的 Host
-  const jumpOptions = useMemo(
-    () => [...new Set([...ctx.taken, ...ctx.sshHosts.map((h) => h.alias)])].sort().map((a) => ({ value: a, label: a })),
-    [ctx]
-  )
 
   return (
     <Collapsible open={open} onOpenChange={onOpenChange} className="flex flex-col gap-3">
@@ -67,73 +149,13 @@ export function AdvancedFields({
               className="font-mono"
               spellCheck={false}
               autoComplete="off"
-              {...register("alias", { onChange: (ev: { target: { value: string } }) => onAliasChange?.(ev.target.value) })}
+              {...register("alias")}
             />
             <FieldDescription id="server-alias-hint">{copy.serverForm.aliasHint}</FieldDescription>
             <ValidationError error={errors.alias} />
           </Field>
-
-          <Field>
-            <FieldLabel htmlFor="server-proxy-jump">
-              {copy.serverForm.proxyJump}
-              <span className="font-normal text-muted-foreground">{copy.common.optional}</span>
-            </FieldLabel>
-            <Controller
-              name="connection.proxyJump"
-              control={control}
-              render={({ field }) => (
-                <CreatableCombobox
-                  id="server-proxy-jump"
-                  value={field.value}
-                  onChange={field.onChange}
-                  onBlur={field.onBlur}
-                  inputRef={field.ref}
-                  options={jumpOptions.filter((o) => o.value !== alias.trim())}
-                  placeholder={copy.serverForm.proxyJumpPlaceholder}
-                  describedBy="server-proxy-jump-hint"
-                  inputClassName="font-mono"
-                  clearable
-                />
-              )}
-            />
-            <FieldDescription id="server-proxy-jump-hint">{copy.serverForm.proxyJumpHint}</FieldDescription>
-          </Field>
-
-          <FieldSet className="min-w-0 gap-2" data-invalid={!!e?.definedIn || undefined}>
-            <FieldLegend variant="label" className="mb-0">
-              {copy.serverForm.envs} <Required />
-            </FieldLegend>
-            <FieldDescription>{copy.serverForm.envsHint}</FieldDescription>
-            <Controller
-              name="connection.definedIn"
-              control={control}
-              render={({ field }) => (
-                <div className="flex flex-wrap gap-x-4 gap-y-2">
-                  {envs.map((env, i) => {
-                    const id = `server-env-${i}`
-                    const checked = field.value.includes(env.id)
-                    return (
-                      <Field key={env.id} orientation="horizontal" className="w-auto">
-                        <Checkbox
-                          id={id}
-                          ref={i === 0 ? field.ref : undefined}
-                          checked={checked}
-                          aria-invalid={!!e?.definedIn || undefined}
-                          onCheckedChange={(on) =>
-                            field.onChange(on ? [...field.value, env.id] : field.value.filter((x) => x !== env.id))
-                          }
-                        />
-                        <FieldLabel htmlFor={id} className="font-normal">
-                          {copy.env.long(env.id)}
-                        </FieldLabel>
-                      </Field>
-                    )
-                  })}
-                </div>
-              )}
-            />
-            <ValidationError error={e?.definedIn} />
-          </FieldSet>
+          <ProxyJumpField ctx={ctx} />
+          <EnvsField />
           {children}
         </FieldGroup>
       </CollapsibleContent>

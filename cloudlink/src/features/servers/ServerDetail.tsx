@@ -1,10 +1,10 @@
 import { PencilIcon, RadarIcon } from "lucide-react"
 import { useRef, useState } from "react"
-import { FormProvider, useWatch, type FieldPath } from "react-hook-form"
+import { FormProvider, useFormContext, useWatch, type FieldPath } from "react-hook-form"
 import { useHotkeys } from "react-hotkeys-hook"
 
 import type { ServerAsset } from "@/bindings"
-import { CopyValue, ListGroup, PrefRow } from "@/components/app/SettingsList"
+import { CopyValue, FoldRow, ListGroup, PrefRow } from "@/components/app/SettingsList"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { copy } from "@/lib/copy"
@@ -82,19 +82,43 @@ function ConnectionGroup({ asset, onEdit }: { asset: ServerAsset; onEdit: () => 
   )
 }
 
-/** Agent 需要知道的（SSH）：名称、用途、承载的站点、其他信息、笔记；服务与关键目录（探测结果）在下面 */
+/**
+ * Agent 需要知道的（SSH）：你写给 Agent 的字段——名称、用途、承载的站点直接显示；
+ * 标签、云厂商、地域、笔记收进最后一行「更多信息」，默认收起，副行写摘要（PRD 6.4，2026-11-10）
+ */
 function KnowledgeGroup({ asset }: { asset: ServerAsset }) {
+  const { control } = useFormContext<ServerFormValues>()
+  const [tags, provider, region, notes] = useWatch({ control, name: ["tags", "provider", "region", "notes"] })
+  const summary = [tags.length > 0 && copy.basic.tagCount(tags.length), provider.trim(), region.trim(), notes.trim() && copy.detail.hasNotes].filter((x): x is string => !!x)
   return (
-    <ListGroup id="detail-knowledge" title={copy.detail.groups.knowledge} action={<ProbeButton asset={asset} />}>
+    <ListGroup id="detail-knowledge" title={copy.detail.groups.knowledge}>
       <NameRow placeholder={asset.connection.sshAlias} />
       <SummaryRow />
       <div className="px-3.5 py-3">
         <SitesField />
       </div>
-      <div className="px-3.5 py-3">
-        <OtherFields />
-      </div>
-      <NotesRow />
+      <FoldRow label={copy.detail.more} hint={summary.length ? copy.basic.summaryLine(summary) : copy.detail.moreEmpty}>
+        <div className="px-3.5 py-3">
+          <OtherFields />
+        </div>
+        <NotesRow />
+      </FoldRow>
+    </ListGroup>
+  )
+}
+
+/**
+ * 服务与目录（PRD 6.4，2026-11-10 从「Agent 需要知道的」里拆出）：探测到的服务、关键目录和监听端口，
+ * 「重新探测」在组标题右边。角色、关键、手动添加的服务和目录照常可以改。
+ * 整组收在一行「探测结果」里，默认收起，副行写有几个服务、目录和端口（2026-11-10）
+ */
+function ProbedGroup({ asset }: { asset: ServerAsset }) {
+  const { control } = useFormContext<ServerFormValues>()
+  const [services, paths] = useWatch({ control, name: ["services", "paths"] })
+  const summary = copy.detail.probedSummary(services.length, services.filter((x) => x.critical).length, paths.length, asset.listeningPorts.length)
+  return (
+    <ListGroup id="detail-probed" title={copy.detail.groups.probed} action={<ProbeButton asset={asset} />}>
+      <FoldRow label={copy.detail.probedRow} hint={summary}>
       <PrefRow label={copy.detail.groups.services} block>
         <ServicesSection />
       </PrefRow>
@@ -104,6 +128,7 @@ function KnowledgeGroup({ asset }: { asset: ServerAsset }) {
       <PrefRow label={copy.connection.listening} block>
         <ListeningPorts asset={asset} />
       </PrefRow>
+      </FoldRow>
     </ListGroup>
   )
 }
@@ -147,6 +172,7 @@ export function ServerDetail({ asset }: { asset: ServerAsset }) {
         <PermissionGroup asset={asset} problems={<ServerProblems asset={asset} onTest={runTest} onConvert={convert} onEdit={edit} />} />
         <ConnectionGroup asset={asset} onEdit={edit} />
         <KnowledgeGroup asset={asset} />
+        <ProbedGroup asset={asset} />
         <RulesGroup />
         <RecentActivityGroup assetId={asset.id} />
       </DetailPage>

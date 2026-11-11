@@ -1,8 +1,8 @@
-import { FolderMinusIcon, Trash2Icon } from "lucide-react"
+import { CirclePauseIcon, Trash2Icon } from "lucide-react"
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react"
 
 import type { EnvId, IpcError, Settings } from "@/bindings"
-import { CopyValue, ListGroup, ListNote, PrefRow } from "@/components/app/SettingsList"
+import { CopyValue, FoldRow, ListGroup, PrefRow } from "@/components/app/SettingsList"
 import { useScrollRestore, useViewTitleFocus } from "@/components/app/ViewShell"
 import { useTheme } from "@/components/theme-provider"
 import { Button } from "@/components/ui/button"
@@ -21,7 +21,8 @@ import { useDeliveryStore } from "@/stores/deliveries"
 import { useSettingsStore } from "@/stores/settings"
 import { useTargetStore } from "@/stores/targets"
 import { useUIStore } from "@/stores/ui"
-import { useUpdateStore } from "@/stores/update"
+import { downloadPercent, hasUpdate, useUpdateStore } from "@/stores/update"
+import { ActivityFilters } from "./ActivityParts"
 import { ActivitySection } from "./ActivitySection"
 import { TypedConfirm, useDangerActions } from "./DangerSection"
 import { update } from "./settingsUpdate"
@@ -42,7 +43,7 @@ function Segmented<T extends string>({ label, value, options, onChange }: { labe
 }
 
 /** 数字设置：失焦时校验范围再保存，超出范围恢复原值 */
-function NumberSetting({ id, value, min, max, onSave }: { id: string; value: number; min: number; max: number; onSave: (v: number) => void }) {
+function NumberSetting({ id, value, min, max, unit, onSave }: { id: string; value: number; min: number; max: number; unit: string; onSave: (v: number) => void }) {
   const [text, setText] = useState(String(value))
   const [last, setLast] = useState(value)
   if (value !== last) {
@@ -61,17 +62,20 @@ function NumberSetting({ id, value, min, max, onSave }: { id: string; value: num
     }
   }
   return (
-    <Input
-      id={id}
-      type="number"
-      inputMode="numeric"
-      min={min}
-      max={max}
-      value={text}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={commit}
-      className="h-7 w-20 font-mono tabular-nums"
-    />
+    <>
+      <Input
+        id={id}
+        type="number"
+        inputMode="numeric"
+        min={min}
+        max={max}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        className="h-7 w-18 font-mono tabular-nums"
+      />
+      <span className="text-xs text-muted-foreground">{unit}</span>
+    </>
   )
 }
 
@@ -112,6 +116,15 @@ function AppearanceGroup() {
 
 function StartupGroup({ settings }: { settings: Settings }) {
   const version = useUpdateStore((s) => s.status?.currentVersion ?? null)
+  const release = useUpdateStore((s) => s.status)
+  // 后台下载的进度只在这里显示，顶栏不出现（magpie 式，PRD 6.15）
+  const updateLine = !hasUpdate(release)
+    ? null
+    : release.state === "downloading"
+      ? copy.update.settingsDownloading(release.version, downloadPercent(release))
+      : release.state === "ready"
+        ? copy.update.settingsReady(release.version)
+        : null
   return (
     <ListGroup id="settings-startup" title={copy.settings.groups.startup}>
       <PrefRow label={copy.settings.closeWindow} hint={copy.settings.closeHint}>
@@ -135,22 +148,26 @@ function StartupGroup({ settings }: { settings: Settings }) {
         hint={
           <>
             {copy.settings.autoCheckUpdatesHint}
-            {version && <span className="block tabular-nums">{copy.settings.currentVersion(version)}</span>}
+            {updateLine && <span className="block tabular-nums">{updateLine}</span>}
           </>
         }
       >
+        {version && <span className="text-xs text-muted-foreground tabular-nums">{copy.settings.currentVersion(version)}</span>}
         <Switch id="auto-check-updates" checked={settings.autoCheckUpdates} onCheckedChange={(on) => update({ autoCheckUpdates: on })} />
       </PrefRow>
     </ListGroup>
   )
 }
 
-/** 连接：每个运行环境一行 ssh 配置（托管文件与 Include 状态，未加入时「加入 Include」）；探测超时；探测脚本 */
-function ConnectionGroup({ settings }: { settings: Settings }) {
+/**
+ * SSH 配置（PRD 6.8）：都生效时只有一行；哪个运行环境还没加入，就多一条问题行 +「加入」，
+ * 手动添加的说明（Include 那一行）默认收起
+ */
+function SshConfigRows() {
   const list = useTargetStore((s) => s.sshConfig)
   const [adding, setAdding] = useState<EnvId | null>(null)
-  const [script, setScript] = useState({ open: false, mounted: false })
-  // 托管文件和用户 config 可能在外部被改过：每次打开设置重新读取
+  const [manual, setManual] = useState<EnvId | null>(null)
+  // 用户 config 可能在外部被改过：每次打开设置重新读取
   useEffect(() => {
     void useTargetStore.getState().loadSshConfig().catch(() => {})
   }, [])
@@ -163,63 +180,54 @@ function ConnectionGroup({ settings }: { settings: Settings }) {
       .catch((e: IpcError) => toast.add({ title: ipcErrorText(e.id, e.params), type: "error" }))
       .finally(() => setAdding(null))
   }
-  return (
-    <ListGroup id="settings-connection" title={copy.settings.groups.connection}>
-      {list.map((c) => (
-        <div key={c.envId}>
-          <PrefRow
-            warn={!c.included}
-            label={copy.settings.sshConfig(copy.env.long(c.envId))}
-            hint={c.included ? copy.settings.sshIncludedHint(c.managedPath) : copy.settings.sshMissingHint(c.managedPath)}
-          >
-            {c.included ? (
-              <Button variant="outline" size="sm" onClick={() => void ipc.revealInDir(c.managedPath)}>
-                {copy.settings.open}
-              </Button>
-            ) : (
-              <Button variant="outline" size="sm" disabled={adding !== null} onClick={() => add(c.envId)}>
-                {adding === c.envId && <Spinner data-icon="inline-start" aria-hidden />}
-                {copy.settings.sshAddInclude}
-              </Button>
-            )}
-          </PrefRow>
-          {!c.included && (
-            <ListNote>
-              <span className="flex flex-col gap-1">
-                {copy.settings.sshManual}
-                <CopyValue value={c.includeLine} />
-              </span>
-            </ListNote>
-          )}
-        </div>
-      ))}
-      <PrefRow label={copy.settings.probeTimeout} labelFor="probe-timeout" hint={copy.settings.probeTimeoutHint}>
-        <NumberSetting id="probe-timeout" value={settings.probeTimeoutSec} min={10} max={120} onSave={(v) => update({ probeTimeoutSec: v })} />
-      </PrefRow>
-      <PrefRow label={copy.settings.probeScript} hint={copy.settings.probeScriptHint}>
-        <Button variant="outline" size="sm" onClick={() => setScript({ open: true, mounted: true })}>
-          {copy.probeSheet.viewScript}
+  const missing = list.filter((c) => !c.included)
+  if (list.length === 0) return null
+  if (missing.length === 0) {
+    return (
+      <PrefRow label={copy.settings.sshConfig} hint={copy.settings.sshConfigOk(list.map((c) => copy.env.long(c.envId)))}>
+        <Button variant="outline" size="sm" aria-label={copy.settings.sshConfigOpen} onClick={() => void ipc.revealInDir(list[0].managedPath)}>
+          {copy.settings.open}
         </Button>
       </PrefRow>
-      {script.mounted && (
-        <Suspense fallback={null}>
-          <ProbeScriptDialog open={script.open} onOpenChange={(open) => setScript((s) => ({ ...s, open }))} />
-        </Suspense>
-      )}
-    </ListGroup>
-  )
-}
-
-function CompileGroup({ settings }: { settings: Settings }) {
+    )
+  }
   return (
-    <ListGroup id="settings-compile" title={copy.settings.groups.compile}>
-      <PrefRow label={copy.settings.bodyLineLimit} labelFor="body-line-limit" hint={copy.settings.bodyLineLimitHint}>
-        <NumberSetting id="body-line-limit" value={settings.bodyLineLimit} min={20} max={500} onSave={(v) => update({ bodyLineLimit: v })} />
-      </PrefRow>
-      <PrefRow label={copy.settings.snapshot} labelFor="write-snapshot" hint={copy.settings.snapshotHint}>
-        <Switch id="write-snapshot" checked={settings.writeSnapshotTime} onCheckedChange={(on) => update({ writeSnapshotTime: on })} />
-      </PrefRow>
-    </ListGroup>
+    <>
+      {missing.map((c) => {
+        const open = manual === c.envId
+        return (
+          <PrefRow
+            key={c.envId}
+            warn
+            label={copy.settings.sshConfigMissing(copy.env.long(c.envId))}
+            hint={
+              <>
+                {copy.settings.sshConfigMissingHint(copy.env.short(c.envId))}
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  className="rounded-sm underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => setManual(open ? null : c.envId)}
+                >
+                  {open ? copy.settings.sshManualHide : copy.settings.sshManualShow}
+                </button>
+                {open && (
+                  <span className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                    {copy.settings.sshManual(copy.env.short(c.envId))}
+                    <CopyValue value={c.includeLine} />
+                  </span>
+                )}
+              </>
+            }
+          >
+            <Button variant="outline" size="sm" aria-label={copy.settings.sshJoinLabel(copy.env.long(c.envId))} disabled={adding !== null} onClick={() => add(c.envId)}>
+              {adding === c.envId && <Spinner data-icon="inline-start" aria-hidden />}
+              {copy.include.add}
+            </Button>
+          </PrefRow>
+        )
+      })}
+    </>
   )
 }
 
@@ -229,13 +237,9 @@ function DataGroup({ settings }: { settings: Settings }) {
   const backups = join(settings.dataDir, "backups")
   return (
     <ListGroup id="settings-data" title={copy.settings.groups.data}>
-      <PrefRow label={copy.settings.dataDir} hint={<CopyValue value={settings.dataDir} />}>
-        <Button variant="outline" size="sm" onClick={() => void ipc.revealInDir(settings.dataDir)}>
-          {copy.settings.open}
-        </Button>
-      </PrefRow>
-      <PrefRow label={copy.settings.backups} hint={copy.settings.backupsHint(backups)}>
-        <Button variant="outline" size="sm" onClick={() => void ipc.revealInDir(backups).catch(() => ipc.revealInDir(settings.dataDir))}>
+      <SshConfigRows />
+      <PrefRow label={copy.settings.backups} hint={copy.settings.backupsHint}>
+        <Button variant="outline" size="sm" aria-label={copy.settings.backupsOpen} onClick={() => void ipc.revealInDir(backups).catch(() => ipc.revealInDir(settings.dataDir))}>
           {copy.settings.open}
         </Button>
       </PrefRow>
@@ -244,12 +248,42 @@ function DataGroup({ settings }: { settings: Settings }) {
           {copy.settings.activityLogOpen}
         </Button>
       </PrefRow>
-      <PrefRow label={copy.settings.importExport} hint={copy.settings.importExportLater}>
-        <Button variant="outline" size="sm" disabled>
-          {copy.settings.importExport}
-        </Button>
-      </PrefRow>
     </ListGroup>
+  )
+}
+
+/** 底部折叠的「高级」（PRD 6.8）：探测、Skill 篇幅、数据目录，默认收起 */
+function AdvancedGroup({ settings }: { settings: Settings }) {
+  const [script, setScript] = useState({ open: false, mounted: false })
+  return (
+    <section aria-label={copy.settings.advanced} className="overflow-hidden rounded-list border border-line bg-card">
+      <FoldRow label={copy.settings.advanced} hint={copy.settings.advancedHint}>
+        <PrefRow label={copy.settings.probeTimeout} labelFor="probe-timeout" hint={copy.settings.probeTimeoutHint}>
+          <NumberSetting id="probe-timeout" value={settings.probeTimeoutSec} min={10} max={120} unit={copy.settings.unitSeconds} onSave={(v) => update({ probeTimeoutSec: v })} />
+        </PrefRow>
+        <PrefRow label={copy.settings.probeScript} hint={copy.settings.probeScriptHint}>
+          <Button variant="outline" size="sm" aria-label={copy.probeSheet.viewScript} onClick={() => setScript({ open: true, mounted: true })}>
+            {copy.settings.activityLogOpen}
+          </Button>
+        </PrefRow>
+        <PrefRow label={copy.settings.bodyLineLimit} labelFor="body-line-limit" hint={copy.settings.bodyLineLimitHint}>
+          <NumberSetting id="body-line-limit" value={settings.bodyLineLimit} min={20} max={500} unit={copy.settings.unitLines} onSave={(v) => update({ bodyLineLimit: v })} />
+        </PrefRow>
+        <PrefRow label={copy.settings.snapshot} labelFor="write-snapshot" hint={copy.settings.snapshotHint}>
+          <Switch id="write-snapshot" checked={settings.writeSnapshotTime} onCheckedChange={(on) => update({ writeSnapshotTime: on })} />
+        </PrefRow>
+        <PrefRow label={copy.settings.dataDir} hint={<CopyValue value={settings.dataDir} />}>
+          <Button variant="outline" size="sm" aria-label={copy.settings.dataDirOpen} onClick={() => void ipc.revealInDir(settings.dataDir)}>
+            {copy.settings.open}
+          </Button>
+        </PrefRow>
+      </FoldRow>
+      {script.mounted && (
+        <Suspense fallback={null}>
+          <ProbeScriptDialog open={script.open} onOpenChange={(open) => setScript((s) => ({ ...s, open }))} />
+        </Suspense>
+      )}
+    </section>
   )
 }
 
@@ -261,8 +295,8 @@ function DangerGroup() {
   return (
     <ListGroup id="settings-danger" title={copy.settings.groups.danger}>
       <PrefRow label={copy.settings.removeAll} hint={copy.settings.removeAllHint}>
-        <Button variant="outline" size="sm" className="text-destructive" disabled={!hasDeliveries && !hasEnabled} onClick={() => setDialog("remove")}>
-          {copy.settings.removeAll}…
+        <Button variant="outline" size="sm" disabled={!hasDeliveries && !hasEnabled} onClick={() => setDialog("remove")}>
+          {copy.settings.removeAllButton}…
         </Button>
       </PrefRow>
       <PrefRow label={copy.settings.reset} hint={copy.settings.resetHint}>
@@ -273,10 +307,11 @@ function DangerGroup() {
       <TypedConfirm
         open={dialog === "remove"}
         onOpenChange={(o) => !o && setDialog(null)}
-        icon={FolderMinusIcon}
+        icon={CirclePauseIcon}
         title={copy.settings.removeAll}
         description={copy.settings.removeAllHint}
         phrase={copy.settings.removeAllConfirm}
+        confirmLabel={copy.settings.removeAllButton}
         onConfirm={removeAll}
       />
       <TypedConfirm
@@ -292,14 +327,15 @@ function DangerGroup() {
   )
 }
 
-/** 设置 → 数据 →「活动日志」：应用自己的活动，不混进 Agent 的操作记录（6.7） */
+/** 设置 → 数据 →「活动日志」（DESIGN.md Activity Log Sheet）：560px 宽，标题行里两个筛选；只有 CloudLink 自己的活动（6.8） */
 function ActivityLogSheet() {
   const open = useUIStore((s) => s.activityLogOpen)
   return (
     <Sheet open={open} onOpenChange={(o) => useUIStore.getState().setActivityLogOpen(o)}>
-      <SheetContent side="right" closeLabel={copy.common.close} className="gap-0 data-[side=right]:w-[min(640px,80vw)] data-[side=right]:sm:max-w-none">
-        <SheetHeader className="pr-12">
-          <SheetTitle>{copy.settings.activityLog}</SheetTitle>
+      <SheetContent side="right" closeLabel={copy.common.close} className="gap-0 bg-background data-[side=right]:w-[min(560px,calc(100vw-2.5rem))] data-[side=right]:sm:max-w-none">
+        <SheetHeader className="flex-row flex-wrap items-center gap-2 py-3 pr-12">
+          <SheetTitle className="mr-auto">{copy.settings.activityLog}</SheetTitle>
+          <ActivityFilters />
         </SheetHeader>
         <ScrollArea className="min-h-0 flex-1">
           <div className="px-4 pb-6">
@@ -325,7 +361,7 @@ function SettingsGate({ children }: { children: (settings: Settings) => ReactNod
   ) : null
 }
 
-/** 设置视图（PRD 6.8，v0.2）：一页往下滚，外观、启动与托盘、连接、编译、数据、危险操作 */
+/** 设置视图（PRD 6.8）：一页往下滚，外观、启动与托盘、数据、危险操作，最下面是折叠的「高级」 */
 export function SettingsView({ focusTitle }: { focusTitle: boolean }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const titleRef = useRef<HTMLHeadingElement>(null)
@@ -342,13 +378,12 @@ export function SettingsView({ focusTitle }: { focusTitle: boolean }) {
           {(s) => (
             <>
               <StartupGroup settings={s} />
-              <ConnectionGroup settings={s} />
-              <CompileGroup settings={s} />
               <DataGroup settings={s} />
             </>
           )}
         </SettingsGate>
         <DangerGroup />
+        <SettingsGate>{(s) => <AdvancedGroup settings={s} />}</SettingsGate>
       </div>
       <ActivityLogSheet />
     </ScrollArea>

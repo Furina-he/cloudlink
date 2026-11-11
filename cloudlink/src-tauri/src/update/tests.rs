@@ -1,4 +1,4 @@
-//! F-406：用假的更新源覆盖定时、开关、失败重试、下载进度、取消和签名失败；不访问网络。
+//! F-406：用假的更新源覆盖定时、开关、失败重试、后台下载、已下好、安装失败和签名失败；不访问网络。
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -38,6 +38,7 @@ pub(crate) enum FakeDownload {
 pub(crate) struct FakeSource {
     pub checks: Mutex<VecDeque<Result<Option<Release>, String>>>,
     pub calls: AtomicUsize,
+    pub downloads: AtomicUsize,
     pub download: Mutex<FakeDownload>,
     pub started: AtomicBool,
     pub installed: Mutex<Vec<Vec<u8>>>,
@@ -49,6 +50,7 @@ impl FakeSource {
         Arc::new(FakeSource {
             checks: Mutex::new(VecDeque::new()),
             calls: AtomicUsize::new(0),
+            downloads: AtomicUsize::new(0),
             download: Mutex::new(download),
             started: AtomicBool::new(false),
             installed: Mutex::new(Vec::new()),
@@ -76,6 +78,7 @@ impl Source for FakeSource {
         progress: &mut dyn FnMut(u64, Option<u64>),
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<u8>, Failure> {
+        self.downloads.fetch_add(1, Ordering::SeqCst);
         let package = match &*self.download.lock().unwrap() {
             FakeDownload::Package(package) => package.clone(),
             FakeDownload::Fail(failure) => return Err(*failure),
@@ -257,28 +260,35 @@ fn a_check_running_while_switched_off_is_discarded() {
 }
 
 #[test]
-fn download_reports_progress_then_installs() {
+fn a_found_release_downloads_in_the_background_and_waits_for_a_restart() {
     let start = Instant::now();
     let package = vec![7u8; 3 * 1024];
     let (updates, source, events) = available(start, FakeDownload::Package(package.clone()));
 
-    let cancel = updates.begin_download().unwrap().expect("download starts");
-    // 已经在下载时，再点一次不会开始第二次下载
-    assert!(updates.begin_download().unwrap().is_none());
-    // 下载期间不检查
-    assert!(!updates.check_if_due(start + CHECK_INTERVAL * 2));
-
-    let downloaded = updates.download(&cancel).unwrap();
-    assert_eq!(downloaded, package);
+    updates.download_pending();
     let pushed = events.take();
     assert_eq!(pushed[0]["state"], "downloading");
     assert_eq!(pushed[0]["downloaded"], 0);
     let last = pushed.last().unwrap();
+    assert_eq!(last["state"], "ready");
     assert_eq!(last["downloaded"], 3 * 1024);
     assert_eq!(last["total"], 3 * 1024);
+    assert_eq!(updates.status().state, UpdateState::Ready);
 
-    assert_eq!(updates.mark_installing().as_deref(), Some("0.2.0"));
+    // 已下好时不再下载，也不再检查
+    updates.download_pending();
+    assert_eq!(source.downloads.load(Ordering::SeqCst), 1);
+    assert!(updates.begin_download().unwrap().is_none());
+    assert!(!updates.check_if_due(start + CHECK_INTERVAL * 2));
+    // 下好之后不会自己安装，要等用户点「重启以更新」
+    assert!(source.installed.lock().unwrap().is_empty());
+
+    let (version, downloaded) = updates.mark_installing().unwrap();
+    assert_eq!(version, "0.2.0");
+    assert_eq!(downloaded, package);
     assert_eq!(updates.status().state, UpdateState::Installing);
+    // 安装包只交出一次
+    assert!(updates.mark_installing().is_none());
     updates.install(&downloaded).unwrap();
     assert_eq!(*source.installed.lock().unwrap(), vec![package]);
 }
@@ -287,10 +297,7 @@ fn download_reports_progress_then_installs() {
 fn signature_failure_returns_to_available_with_the_reason() {
     let start = Instant::now();
     let (updates, source, events) = available(start, FakeDownload::Fail(Failure::Signature));
-    let cancel = updates.begin_download().unwrap().unwrap();
-    let failure = updates.download(&cancel).unwrap_err();
-    assert_eq!(failure, Failure::Signature);
-    updates.abort(failure.error());
+    updates.download_pending();
 
     let status = updates.status();
     assert_eq!(status.state, UpdateState::Available);
@@ -301,6 +308,8 @@ fn signature_failure_returns_to_available_with_the_reason() {
         Some(IpcErrorId::UpdateSignatureInvalid)
     );
     assert_eq!(events.take().last().unwrap()["error"]["id"], "update-signature-invalid");
+    assert!(updates.mark_installing().is_none());
+    assert!(source.installed.lock().unwrap().is_empty());
 
     // 同一个版本的定时检查保留失败原因；重试会清掉它
     source.answer(Ok(Some(release("0.2.0"))));
@@ -308,6 +317,22 @@ fn signature_failure_returns_to_available_with_the_reason() {
     assert!(updates.status().error.is_some());
     updates.begin_download().unwrap().unwrap();
     assert_eq!(updates.status().error, None);
+}
+
+#[test]
+fn a_failed_install_keeps_the_package_for_another_restart() {
+    let start = Instant::now();
+    let (updates, source, _events) = available(start, FakeDownload::Package(vec![5]));
+    updates.download_pending();
+    let (_, package) = updates.mark_installing().unwrap();
+    updates.install_failed(Failure::Install.error(), package);
+
+    let status = updates.status();
+    assert_eq!(status.state, UpdateState::Ready);
+    assert_eq!(status.error.map(|e| e.id), Some(IpcErrorId::UpdateInstallFailed));
+    let (_, again) = updates.mark_installing().unwrap();
+    assert_eq!(again, vec![5]);
+    assert_eq!(source.downloads.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -321,64 +346,48 @@ fn download_and_install_failures_map_to_their_error_ids() {
     assert_eq!(Failure::Install.error().unwrap().id, IpcErrorId::UpdateInstallFailed);
 }
 
-fn run_until_cancelled(
-    updates: &Arc<Updates>,
-    source: &FakeSource,
-) -> std::thread::JoinHandle<Result<Vec<u8>, Failure>> {
-    let cancel = updates.begin_download().unwrap().unwrap();
+#[test]
+fn switching_off_during_a_download_cancels_it_and_hides_the_reminder() {
+    let start = Instant::now();
+    let (updates, source, _events) = available(start, FakeDownload::UntilCancelled);
     let worker = {
         let updates = updates.clone();
-        std::thread::spawn(move || updates.download(&cancel))
+        std::thread::spawn(move || updates.download_pending())
     };
     let deadline = Instant::now() + Duration::from_secs(5);
     while !source.started.load(Ordering::SeqCst) {
         assert!(Instant::now() < deadline, "download never started");
         std::thread::sleep(Duration::from_millis(5));
     }
-    worker
-}
-
-#[test]
-fn cancelling_a_download_returns_to_available_without_an_error() {
-    let start = Instant::now();
-    let (updates, source, events) = available(start, FakeDownload::UntilCancelled);
-    let worker = run_until_cancelled(&updates, &source);
     assert_eq!(updates.status().downloaded, Some(1024));
-    updates.cancel();
-    let failure = worker.join().unwrap().unwrap_err();
-    assert_eq!(failure, Failure::Cancelled);
-    updates.abort(failure.error());
-
-    let status = updates.status();
-    assert_eq!(status.state, UpdateState::Available);
-    assert_eq!(status.error, None);
-    assert_eq!(status.downloaded, None);
-    assert_eq!(events.take().last().unwrap()["state"], "available");
-}
-
-#[test]
-fn switching_off_during_a_download_cancels_it_and_hides_the_reminder() {
-    let start = Instant::now();
-    let (updates, source, _events) = available(start, FakeDownload::UntilCancelled);
-    let worker = run_until_cancelled(&updates, &source);
     updates.set_enabled(false, Instant::now());
     assert_eq!(updates.status().state, UpdateState::Idle);
-    let failure = worker.join().unwrap().unwrap_err();
-    assert_eq!(failure, Failure::Cancelled);
-    assert_eq!(updates.mark_installing(), None);
-    updates.abort(failure.error());
+    worker.join().unwrap();
     assert_eq!(updates.status(), UpdateStatus::idle("0.1.0"));
+    assert!(updates.mark_installing().is_none());
     assert!(source.installed.lock().unwrap().is_empty());
 }
 
 #[test]
-fn nothing_to_install_without_a_new_version() {
+fn switching_off_after_the_download_drops_the_package() {
     let start = Instant::now();
-    let (updates, _source, _events) = setup(true, FakeDownload::Fail(Failure::Download), start);
+    let (updates, _source, _events) = available(start, FakeDownload::Package(vec![1]));
+    updates.download_pending();
+    assert_eq!(updates.status().state, UpdateState::Ready);
+    updates.set_enabled(false, start);
+    assert_eq!(updates.status(), UpdateStatus::idle("0.1.0"));
+    updates.set_enabled(true, start);
+    assert!(updates.mark_installing().is_none());
+}
+
+#[test]
+fn nothing_to_download_without_a_new_version() {
+    let start = Instant::now();
+    let (updates, source, _events) = setup(true, FakeDownload::Fail(Failure::Download), start);
     let error = updates.begin_download().unwrap_err();
     assert!(error.is_ipc(IpcErrorId::NotFound));
-    // 没有下载时取消什么也不做
-    updates.cancel();
+    updates.download_pending();
+    assert_eq!(source.downloads.load(Ordering::SeqCst), 0);
     assert_eq!(updates.status(), UpdateStatus::idle("0.1.0"));
 }
 

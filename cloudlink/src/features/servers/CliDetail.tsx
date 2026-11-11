@@ -20,7 +20,7 @@ import { copy } from "@/lib/copy"
 import { HOTKEY_OPTIONS, HOTKEYS, isModalOpen } from "@/lib/hotkeys"
 import { detailFileOf } from "@/lib/paths"
 import { cliFormSchema, type CliFormValues } from "@/lib/schemas"
-import { selectCanDistribute, selectCliAccount, selectCliProblem, useAssetStore } from "@/stores/assets"
+import { cliEnvStatus, selectCanDistribute, selectCliAccount, selectCliProblem, useAssetStore } from "@/stores/assets"
 import { useCliStore } from "@/stores/cli"
 import { selectInclusionsByAsset, useDeliveryStore } from "@/stores/deliveries"
 import { useUIStore } from "@/stores/ui"
@@ -73,7 +73,10 @@ function CliPreview({ asset, control, dirty }: { asset: CliAsset; control: Contr
 /** 标题行 + 状态行：右边「重新检测」和「⋯」（刷新范围、预览 Skill、在文件夹中显示、删除） */
 function CliHeader({ asset, name, production, titleRef }: { asset: CliAsset; name: string; production: boolean; titleRef: React.RefObject<HTMLHeadingElement | null> }) {
   const detecting = useCliStore((s) => !!s.byProvider[asset.cliProvider]?.detecting)
-  const problem = selectCliProblem(asset)
+  // 状态行只写整体（2026-11-10，和服务器详情一致）：有一个运行环境就绪就是「已就绪」，
+  // 单个环境的问题交给「Agent 权限」卡里带修复按钮的问题行；所有环境都用不了才写出第一个问题
+  const anyReady = Object.values(asset.cli.envStates).some((s) => !!s && cliEnvStatus(s) === "ready")
+  const problem = anyReady ? null : selectCliProblem(asset)
   const account = selectCliAccount(asset)
   const linked = useLinkedAliases(asset)
   const word = problem ? copy.cli.envProblem(copy.env.long(problem.envId), copy.cli.status[problem.status]) : copy.cli.status.ready
@@ -281,14 +284,15 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
             <>
               {blocked && <ProblemRow title={copy.distributeBlock["cli-not-ready"]} action={copy.cli.recheck} busy={detecting} onAction={() => serverActions.recheckCli(asset)} />}
               {problems.map((p) => (
-                <ProblemRow key={p.key} title={p.text} action={copy.inclusionFix[p.reasonId]} onAction={() => serverActions.openCliTerminal(asset, p.envId)} />
+                <ProblemRow key={p.key} title={p.title} reason={p.reason} action={copy.inclusionFix[p.reasonId]} onAction={() => serverActions.openCliTerminal(asset, p.envId)} />
               ))}
             </>
           }
         />
         <AccountGroup asset={asset} onScope={() => setScopeOpen(true)} />
         {asset.cliProvider === "github" && <ReposGroup asset={asset} onScope={() => setScopeOpen(true)} />}
-        <ListGroup id="detail-envs" title={copy.detail.groups.envs} action={<RecheckButton detecting={detecting} onClick={() => serverActions.recheckCli(asset)} />}>
+        {/* 「重新检测」只在标题行：这里再放一个是重复的；登录后切回窗口也会自动刷新 */}
+        <ListGroup id="detail-envs" title={copy.detail.groups.envs}>
           <div className="flex flex-col gap-2 px-3.5 py-3">
             <CliEnvList
               provider={asset.cliProvider}

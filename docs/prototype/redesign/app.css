@@ -436,3 +436,83 @@ button.guard:hover { background: var(--pill); color: var(--fg); }
 /* 键盘焦点 */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* 2026-11-10 详情折叠草案 */
+details.fold > summary { list-style: none; cursor: pointer; }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary:hover { background: var(--card-2, rgba(0,0,0,.02)); }
+details.fold > summary svg { transition: transform .15s; color: var(--muted); }
+details.fold[open] > summary svg { transform: rotate(180deg); }
+details.fold > .pref, details.fold > table { border-top: 1px solid var(--line-2); }
+.list > details.fold { border-top: 1px solid var(--line-2); }
+.list > details.fold:first-child { border-top: 0; }
+table.svc { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.svc th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; padding: 8px 14px 6px; }
+table.svc td { padding: 7px 14px; border-top: 1px solid var(--line-2); vertical-align: middle; }
+table.svc td b { font-family: var(--code); font-weight: 500; display: block; }
+table.svc td small { color: var(--muted); font-size: 11.5px; }
+.mono { font-family: var(--code); font-size: 12px; color: var(--fg-2); }
+.inp.sm { height: 26px; font-size: 12px; width: 100%; }
+
+/* 2026-11-10 第四轮：添加表单、过程里的 SSH 配置一步、护栏规则、设置高级、活动日志 */
+.dialog { display: flex; flex-direction: column; overflow: hidden; }
+.dialog .dbody { overflow-y: auto; min-height: 0; }
+.dialog header .ib:first-child { margin-left: -8px; }
+.dialog footer { align-items: center; }
+.foot-hint { margin-right: auto; font-size: 12px; color: var(--muted); }
+.dialog .list { border-radius: 10px; }
+.dialog .row { min-height: 52px; }
+.row .tag { font-size: 11.5px; color: var(--accent); white-space: nowrap; }
+.form2 { display: flex; flex-direction: column; gap: 12px; }
+.frow { display: flex; gap: 10px; align-items: flex-end; }
+.frow .grow, .frow > .inp { flex: 1; min-width: 0; }
+.fld.w96 { width: 96px; flex: none; }
+.fld.w140 { width: 140px; flex: none; }
+.opt-tag { font-weight: 400; color: var(--muted); margin-left: 6px; }
+.alias-line { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; margin-top: -4px; }
+.alias-inp { height: 24px; padding: 0 7px; width: auto; flex: none; border-radius: 6px; font-size: 12px; color: var(--fg); background: var(--card-2); }
+.list.inset { margin-top: 2px; }
+.list.inset .pref { min-height: 46px; padding: 8px 12px; }
+.checks { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--fg-2); }
+.checks .ck { width: 15px; height: 15px; border-radius: 4px; display: grid; place-items: center; border: 1px solid var(--faint); margin-left: 8px; }
+.checks .ck.on { background: var(--ink); border-color: var(--ink); color: var(--ink-fg); }
+.step .when { margin-left: 4px; }
+.fp details.more > summary { list-style: none; cursor: pointer; display: inline-block; font-size: 12px; }
+.fp details.more > summary::-webkit-details-marker { display: none; }
+.fp details.more > div { margin-top: 6px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+
+/* 新加的行短暂高亮：用中性色，不占用信号青 */
+.row.flash { animation: flash 2.4s var(--ease); }
+@keyframes flash { 0%, 55% { background: var(--pill-hover); } 100% { background: transparent; } }
+
+/* Agent 页 */
+.turn { display: inline-flex; transition: transform .15s; }
+.turn.up { transform: rotate(180deg); }
+.others { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 12px; padding: 10px 14px 12px; border-top: 1px solid var(--line-2); font-size: 12px; color: var(--muted); }
+
+/* 护栏规则：每条命令一块，整条换行，不从词中间断；小圆角，不做胶囊 */
+.pref.top { align-items: flex-start; }
+.exs { display: flex; flex-wrap: wrap; gap: 5px 6px; margin-top: 7px; }
+.exs code { font-family: var(--code); font-size: 11.5px; color: var(--fg-2); background: var(--pill); border-radius: 5px; padding: 2px 7px; white-space: nowrap; user-select: text; }
+
+/* 活动日志侧板 */
+.scrim.side { place-items: stretch end; }
+.sheet { width: 560px; height: 100%; background: var(--bg); border-left: 1px solid var(--line); display: flex; flex-direction: column; box-shadow: var(--shadow); animation: sheet .22s var(--ease); }
+@keyframes sheet { from { transform: translateX(16px); opacity: 0; } }
+.sheet header { display: flex; align-items: center; gap: 8px; padding: 12px 10px 10px 16px; border-bottom: 1px solid var(--line); }
+.sheet header h3 { font-size: 14px; font-weight: 600; flex: 1; }
+.sheet .sbody { overflow-y: auto; min-height: 0; padding: 0 16px 20px; }
+.sheet .daylabel:first-child { margin-top: 12px; }
+.row.log { min-height: 40px; gap: 10px; font-size: 12.5px; padding: 6px 14px; }
+.row.log svg { color: var(--muted); }
+.row.log .txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row.log .when { width: 44px; text-align: right; }
+.foot-note { font-size: 12px; color: var(--muted); margin: 12px 4px 0; }
+/* 表单和过程页固定高度（类型页按内容定高），内容多了在中间滚动 */
+.dialog.fixed { height: 600px; }
+.dialog .dbody { flex: 1; }
+.dialog .dbody::-webkit-scrollbar { width: 10px; }
+.dialog .dbody::-webkit-scrollbar-thumb { background: var(--line); border-radius: 10px; border: 3px solid var(--card); }
+.fp .more code { word-break: normal; white-space: nowrap; }
+:root[data-theme="dark"] .inp { border-color: #434950; }
+:root[data-theme="dark"] .checks .ck { border-color: #6b727a; }

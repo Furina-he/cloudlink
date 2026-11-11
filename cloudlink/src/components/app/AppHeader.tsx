@@ -13,7 +13,7 @@ import { useGuardStore } from "@/stores/guard"
 import { useNotesStore } from "@/stores/notes"
 import { VIEWS, useUIStore } from "@/stores/ui"
 
-/** 资源数（muted）与「动态」的待确认圆点（PRD 6.2） */
+/** 资源数（muted，没有资源时不显示 0）与「动态」的待确认圆点（PRD 6.2） */
 function useNavMarks() {
   const count = useAssetStore((s) => (s.status === "ready" ? s.ids.length : null))
   const pending = useNotesStore((s) => Object.values(s.byAsset).some((list) => list.length > 0))
@@ -22,7 +22,7 @@ function useNavMarks() {
 
 function NavMark({ id }: { id: ViewId }) {
   const { count, pending } = useNavMarks()
-  if (id === "servers" && count !== null)
+  if (id === "servers" && count)
     return (
       <>
         <span aria-hidden className="text-xs text-muted-foreground tabular-nums">
@@ -192,33 +192,39 @@ function NavItemsTop() {
   )
 }
 
-/** 顶栏模式（PRD 6.2）：左 CloudLink、正中分段导航、右操作和窗口按钮；空白处可拖动窗口 */
+/**
+ * 顶栏模式（PRD 6.2）：左 CloudLink、正中分段导航、右操作和窗口按钮；空白处可拖动窗口。
+ * 三列网格：两侧列至少放得下自己的内容、其余平分，导航在空间够时正中，右侧变宽（更新按钮、展开的搜索）时导航往左让，不会被盖住
+ */
 export function AppHeader() {
   const side = useUIStore((s) => s.navPosition === "side")
   const view = useUIStore((s) => s.view)
   return (
-    <header data-tauri-drag-region className="relative flex h-12 shrink-0 items-center gap-3 border-b border-line bg-background px-3 select-none">
+    <header
+      data-tauri-drag-region
+      className={cn(
+        "h-12 shrink-0 items-center gap-3 border-b border-line bg-background px-3 select-none",
+        side ? "flex" : "grid grid-cols-[minmax(max-content,1fr)_auto_minmax(max-content,1fr)]"
+      )}
+    >
       {side ? (
-        <h2 data-tauri-drag-region className="text-[15px] font-semibold">
+        <h2 data-tauri-drag-region className="flex-1 text-[15px] font-semibold">
           {copy.nav[view]}
         </h2>
       ) : (
         <>
-          <span data-tauri-drag-region className="text-sm font-semibold">
+          <span data-tauri-drag-region className="flex h-full items-center text-sm font-semibold">
             {copy.app.name}
           </span>
-          <div className="pointer-events-none absolute inset-x-0 flex justify-center">
-            <div className="pointer-events-auto">
-              <NavItemsTop />
-            </div>
-          </div>
+          <NavItemsTop />
         </>
       )}
-      <div data-tauri-drag-region className="h-full flex-1" />
-      <div className="relative">
-        <Actions />
+      <div data-tauri-drag-region className="flex h-full items-center justify-end">
+        <div className="relative">
+          <Actions />
+        </div>
+        <WindowControls />
       </div>
-      <WindowControls />
     </header>
   )
 }

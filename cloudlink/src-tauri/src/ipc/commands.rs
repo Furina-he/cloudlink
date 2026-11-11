@@ -401,15 +401,6 @@ pub async fn install_update(state: State<'_, Arc<Backend>>) -> Result<()> {
     blocking(state, |backend| backend.install_update()).await
 }
 
-#[tauri::command]
-pub async fn cancel_update(state: State<'_, Arc<Backend>>) -> Result<()> {
-    early(state, |backend| {
-        backend.cancel_update();
-        Ok(())
-    })
-    .await
-}
-
 /// F-407：托盘菜单的文字（只在 copy.ts 里），收到后创建或重建托盘
 #[tauri::command]
 pub fn set_tray_copy(app: tauri::AppHandle, copy: crate::tray::TrayCopy) {

@@ -7,20 +7,18 @@ import type { ProbeRun } from "./probe"
 const fake = vi.hoisted(() => ({
   status: vi.fn(),
   install: vi.fn(),
-  cancel: vi.fn(),
 }))
 
 vi.mock("@/lib/ipc", () => ({
   ipc: {
     getUpdateStatus: fake.status,
     installUpdate: fake.install,
-    cancelUpdate: fake.cancel,
   },
   toIpcError: (error: unknown) => error,
 }))
 
 import { ipcErrorText, updateWaitText } from "@/lib/copy"
-import { downloadPercent, findUpdateBlocker, hasUpdate, useUpdateStore } from "./update"
+import { downloadPercent, findUpdateBlocker, hasUpdate, showReminder, useUpdateStore } from "./update"
 
 const state = useUpdateStore.getState
 
@@ -89,16 +87,19 @@ describe("更新状态缓存（F-406）", () => {
     expect(state().dialogOpen).toBe(false)
   })
 
-  it("取消失败时不抛出，进度仍由事件推送", async () => {
-    fake.cancel.mockRejectedValueOnce({ id: "internal" })
-    await expect(state().cancel()).resolves.toBeUndefined()
-  })
-
-  it("只有带版本号的非 idle 状态才显示提醒；总大小未知时没有百分比", () => {
+  it("顶栏只在下好、正在安装或后台下载失败时提醒；后台下载期间不显示；总大小未知时没有百分比", () => {
     expect(hasUpdate(null)).toBe(false)
     expect(hasUpdate({ state: "idle", currentVersion: "0.1.0" })).toBe(false)
     expect(hasUpdate(available)).toBe(true)
     expect(hasUpdate({ ...available, state: "installing" })).toBe(true)
+
+    expect(showReminder(null)).toBe(false)
+    expect(showReminder({ state: "idle", currentVersion: "0.1.0" })).toBe(false)
+    expect(showReminder(available)).toBe(false)
+    expect(showReminder({ ...available, state: "downloading", downloaded: 0 })).toBe(false)
+    expect(showReminder({ ...available, state: "ready" })).toBe(true)
+    expect(showReminder({ ...available, state: "installing" })).toBe(true)
+    expect(showReminder({ ...available, error: { id: "update-signature-invalid" } })).toBe(true)
 
     expect(downloadPercent({ ...available, state: "downloading", downloaded: 1024 })).toBeNull()
     expect(downloadPercent({ ...available, state: "downloading", downloaded: 0, total: 8192 })).toBe(0)

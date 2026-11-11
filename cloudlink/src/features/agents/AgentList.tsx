@@ -200,6 +200,15 @@ function AgentRow({ group, envs, allTargets }: { group: AgentGroup; envs: Enviro
           on && <GuardState group={group} guards={guards} />
         )}
         <Switch checked={on} disabled={busy} onCheckedChange={(v) => targetActions.toggle(group.targets, v)} aria-label={copy.agents.enable(label)} />
+        {/* 只有「在文件夹中显示」一项时直接放图标按钮，不留单项菜单（PRD 6.6） */}
+        {!isClaude && first.agent !== "custom" ? (
+          <Tooltip>
+            <TooltipTrigger render={<Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={copy.agents.revealLabel(label)} onClick={reveal} />}>
+              <FolderOpenIcon />
+            </TooltipTrigger>
+            <TooltipContent>{copy.agents.reveal}</TooltipContent>
+          </Tooltip>
+        ) : (
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={copy.agents.rowActions(label)} />}>
             <EllipsisIcon />
@@ -237,6 +246,7 @@ function AgentRow({ group, envs, allTargets }: { group: AgentGroup; envs: Enviro
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+        )}
       </div>
     </div>
   )
@@ -307,12 +317,19 @@ export function AgentList() {
             {others.length > 0 && (
               <Collapsible>
                 <CollapsibleTrigger className="group/fold flex w-full items-center justify-center gap-1 px-3.5 py-2.5 text-xs text-muted-foreground outline-none hover:bg-card-2 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
-                  <span className="group-data-panel-open/fold:hidden">{copy.agents.others(others.length)}</span>
-                  <span className="hidden group-data-panel-open/fold:inline">{copy.agents.othersCollapse}</span>
+                  {/* 文字不变，只有箭头翻转（PRD 6.6） */}
+                  {copy.agents.others(others.length)}
                   <ChevronDownIcon aria-hidden className="size-3.5 transition-transform group-data-panel-open/fold:rotate-180" />
                 </CollapsibleTrigger>
-                <CollapsibleContent>
-                  <p className="border-t border-line-2 px-3.5 py-2.5 text-xs text-muted-foreground">{others.map((b) => copy.brand[b]).join("、")}</p>
+                <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-200 data-ending-style:h-0 data-starting-style:h-0">
+                  <ul aria-label={copy.agents.others(others.length)} className="grid grid-cols-3 gap-x-4 gap-y-2 border-t border-line-2 px-3.5 py-3 text-xs text-muted-foreground">
+                    {others.map((b) => (
+                      <li key={b} className="flex min-w-0 items-center gap-1.5">
+                        <BrandMark brand={b} className="size-3.5 shrink-0 opacity-70 grayscale" />
+                        <span className="truncate">{copy.brand[b]}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </CollapsibleContent>
               </Collapsible>
             )}

@@ -25,8 +25,10 @@ const VIEWS: { name: string; query?: string; empty?: boolean; open: (page: Page)
       await expect(page.getByRole("textbox", { name: /^地址/ })).toBeFocused()
       // 截图前会移走焦点，失焦即校验：先填好必填项，免得截到「请填写地址」
       await page.getByRole("textbox", { name: /^地址/ }).fill("203.0.113.10")
-      await page.getByRole("button", { name: "ssh-agent", exact: true }).or(page.getByRole("radio", { name: "ssh-agent" })).click()
       await page.getByRole("textbox", { name: /^名称/ }).fill("香港边缘节点")
+      // 门槛（EXECUTION-PLAN P7d）：760×520 下「名称」和别名行不用滚动就看得到
+      await expect(page.getByRole("textbox", { name: /^名称/ })).toBeInViewport({ ratio: 1 })
+      await expect(page.getByRole("textbox", { name: "别名" })).toBeInViewport({ ratio: 1 })
     },
   },
   {

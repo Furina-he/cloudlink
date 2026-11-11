@@ -2,7 +2,7 @@ import { expect, type Page } from "@playwright/test"
 
 // P3.6 验收的公共部分。状态截图是验收证据，放仓库根目录 test-results/p3.7（本目录的 test-results 每次运行前会被清空）；
 // 门槛要求的视图截图放 e2e/__screenshots__，随提交
-export const SHOTS = "../test-results/p3.7"
+export const SHOTS = "../test-results/p7d"
 export const GATE = "e2e/__screenshots__"
 
 export function collectConsoleErrors(page: Page) {

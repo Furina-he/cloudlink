@@ -1,10 +1,11 @@
-import { FileInputIcon, ServerIcon } from "lucide-react"
+import { ChevronRightIcon, FileInputIcon, ServerIcon } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 
 import type { CliProvider } from "@/bindings"
 import { PreviewSheet } from "@/components/app/PreviewSheet"
 import { ProviderMark } from "@/components/app/ProviderMark"
+import { BrandTile } from "@/components/app/StatusDot"
 import { useScrollRestore, useViewTitleFocus } from "@/components/app/ViewShell"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -28,39 +29,41 @@ function WholePreview() {
   return <PreviewSheet scope="all" draft={{}} dirty={false} defaultFile="SKILL.md" />
 }
 
-/** 一张可点的选项块（DESIGN.md「Add Dialog」）：品牌方块 + 名称 + 一句话 + 一行状态 */
-function TypeTile({ icon, title, blurb, status, tone = "signal", first = false, onPick }: { icon: React.ReactNode; title: string; blurb: string; status?: string; tone?: "signal" | "muted"; first?: boolean; onPick: () => void }) {
+/**
+ * 添加对话框里的一行（DESIGN.md「Add Dialog」，2026-11-09 由两列选项块改为分组列表）：
+ * 品牌方块 + 名称 + 一句话，右边是状态和 ›，整行可点。和资源行、Agent 行、设置行用同一种列表卡，项数多少都不会落单
+ */
+function TypeRow({ icon, title, blurb, status, tone = "signal", first = false, onPick }: { icon: React.ReactNode; title: string; blurb: string; status?: string; tone?: "signal" | "muted"; first?: boolean; onPick: () => void }) {
   return (
     <button
       type="button"
       onClick={onPick}
       data-autofocus={first || undefined}
-      className="flex min-h-16 items-start gap-3 rounded-list border border-line bg-card px-3 py-2.5 text-left outline-none transition-colors hover:bg-card-2 focus-visible:ring-3 focus-visible:ring-ring/50"
+      className="group/pick flex min-h-14 w-full items-center gap-3 px-3.5 py-2.5 text-left outline-none transition-colors hover:bg-card-2 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
     >
-      <span aria-hidden className="flex size-8 shrink-0 items-center justify-center rounded-tile border border-line bg-card text-fg-2">
-        {icon}
-      </span>
+      <BrandTile>{icon}</BrandTile>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="text-[13px] font-medium">{title}</span>
+        <span className="text-[13.5px] font-medium">{title}</span>
         <span className="text-xs text-muted-foreground">{blurb}</span>
-        {status && <span className={cn("text-xs", tone === "signal" ? "text-signal" : "text-muted-foreground")}>{status}</span>}
       </span>
+      {status && <span className={cn("shrink-0 text-xs", tone === "signal" ? "text-signal" : "text-muted-foreground")}>{status}</span>}
+      <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-faint group-hover/pick:text-muted-foreground" />
     </button>
   )
 }
 
-function TileGroup({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
+function RowGroup({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
     <section aria-labelledby={id} className="flex flex-col gap-2">
       <h3 id={id} className="px-1 text-[13px] font-semibold">
         {title}
       </h3>
-      <div className="grid gap-2 sm:grid-cols-2">{children}</div>
+      <div className="divide-y divide-line-2 overflow-hidden rounded-list border border-line bg-card">{children}</div>
     </section>
   )
 }
 
-/** 选项块上的状态行：已接入的资源或这次检测的结果；还没检测过时打开选择器就检测一次 */
+/** 每一行右边的状态：已接入的资源或这次检测的结果；还没检测过时打开选择器就检测一次 */
 function useCliStatus(provider: CliProvider): { text?: string; ok: boolean } {
   const assetStates = useAssetStore(useShallow((s) => s.ids.map((id) => s.byId[id]).flatMap((a) => (a.type === "cli" && a.cliProvider === provider ? Object.values(a.cli.envStates) : []))))
   const detection = useCliStore((s) => s.byProvider[provider])
@@ -77,7 +80,7 @@ function useCliStatus(provider: CliProvider): { text?: string; ok: boolean } {
 function ProviderTile({ provider }: { provider: CliProvider }) {
   const status = useCliStatus(provider)
   return (
-    <TypeTile
+    <TypeRow
       icon={<ProviderMark provider={provider} className="size-4.5" />}
       title={copy.cli.name[provider]}
       blurb={copy.create.pickBlurb[provider]}
@@ -88,7 +91,7 @@ function ProviderTile({ provider }: { provider: CliProvider }) {
   )
 }
 
-/** 添加资源的第一步（PRD 6.5，Ctrl+N）：分组「服务器」「云平台」「代码托管」，每项一张选项块 */
+/** 添加资源的第一步（PRD 6.5，Ctrl+N）：分组「服务器」「云平台」「代码托管」，每组一张列表卡、每项一行 */
 function TypePicker() {
   const importable = useImportableCount()
   const ui = useUIStore.getState
@@ -102,12 +105,13 @@ function TypePicker() {
   return (
     <section aria-labelledby="detail-title" className="flex h-full min-h-0 flex-col">
       <CreateHeader title={copy.create.title} back={false} />
-      <ScrollArea className="min-h-0 flex-1">
+      {/* 对话框这一步只限最大高度（按内容定高），视口的 100% 高度算不出来，改由 flex 分配，内容超出时才能滚动 */}
+      <ScrollArea className="flex min-h-0 flex-1 flex-col *:data-[slot=scroll-area-viewport]:min-h-0 *:data-[slot=scroll-area-viewport]:flex-1">
         <div className="flex flex-col gap-5 p-4 pb-6">
-          <TileGroup id="pick-servers" title={copy.create.groups.servers}>
-            <TypeTile icon={<ServerIcon className="size-4" />} title={copy.create.ssh} blurb={copy.create.sshPick} first onPick={() => ui().startCreate("ssh")} />
+          <RowGroup id="pick-servers" title={copy.create.groups.servers}>
+            <TypeRow icon={<ServerIcon className="size-4" />} title={copy.create.ssh} blurb={copy.create.sshPick} first onPick={() => ui().startCreate("ssh")} />
             {importable > 0 && (
-              <TypeTile
+              <TypeRow
                 icon={<FileInputIcon className="size-4" />}
                 title={copy.create.importPick}
                 blurb={copy.create.importPickBlurb}
@@ -115,17 +119,17 @@ function TypePicker() {
                 onPick={() => ui().setImportOpen(true)}
               />
             )}
-          </TileGroup>
-          <TileGroup id="pick-clouds" title={copy.create.groups.clouds}>
+          </RowGroup>
+          <RowGroup id="pick-clouds" title={copy.create.groups.clouds}>
             {CLOUD_PROVIDERS.map((p) => (
               <ProviderTile key={p} provider={p} />
             ))}
-          </TileGroup>
-          <TileGroup id="pick-code" title={copy.create.groups.codeHosts}>
+          </RowGroup>
+          <RowGroup id="pick-code" title={copy.create.groups.codeHosts}>
             {CODE_HOSTS.map((p) => (
               <ProviderTile key={p} provider={p} />
             ))}
-          </TileGroup>
+          </RowGroup>
         </div>
       </ScrollArea>
     </section>
@@ -157,7 +161,11 @@ function CreateDialog() {
         // 选类型时落在第一张卡片上；SSH 表单自己把焦点放到地址（有预填时放到用户），其余先落在弹窗本身
         initialFocus={() => popupRef.current?.querySelector<HTMLElement>("[data-autofocus]") ?? popupRef.current}
         showCloseButton={false}
-        className="flex h-[min(600px,calc(100svh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[580px]"
+        // 选类型这一步按内容定高（底部不留空白），之后的表单固定高度，连接过程逐步展开时对话框不跳动
+        className={cn(
+          "flex flex-col gap-0 overflow-hidden p-0 sm:max-w-[580px]",
+          shown === "pick" ? "max-h-[min(600px,calc(100svh-2rem))]" : "h-[min(600px,calc(100svh-2rem))]"
+        )}
       >
         {shown && <Creating kind={shown} />}
       </DialogContent>

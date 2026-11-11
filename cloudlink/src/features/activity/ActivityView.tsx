@@ -1,4 +1,4 @@
-import { CircleXIcon, CopyIcon, TriangleAlertIcon } from "lucide-react"
+import { ChevronDownIcon, CircleXIcon, CopyIcon, TriangleAlertIcon } from "lucide-react"
 import { AnimatePresence, motion } from "motion/react"
 import { useEffect, useMemo, useState } from "react"
 
@@ -19,6 +19,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useDelayedFlag } from "@/hooks/use-delayed-flag"
 import { copy, ipcErrorText } from "@/lib/copy"
 import { dayKey, formatDay, formatRelative } from "@/lib/format"
+import { cn } from "@/lib/utils"
 import { toastError } from "@/features/servers/actions"
 import { handleOf, useAssetStore } from "@/stores/assets"
 import { useNotesStore } from "@/stores/notes"
@@ -127,22 +128,39 @@ function AskCard({ note }: { note: AgentNote }) {
   )
 }
 
+/** 默认只展开这么多条，其余折叠，免得把操作记录挤出首屏 */
+const ASKS_SHOWN = 2
+
 function Asks() {
   const byAsset = useNotesStore((s) => s.byAsset)
   const notes = useMemo(() => Object.values(byAsset).flat().sort((a, b) => b.writtenAt.localeCompare(a.writtenAt)), [byAsset])
+  const [expanded, setExpanded] = useState(false)
   if (notes.length === 0) return null
+  const hidden = notes.length - ASKS_SHOWN
+  const shown = expanded || hidden <= 0 ? notes : notes.slice(0, ASKS_SHOWN)
   return (
     <ListGroup id="feed-asks" title={copy.feed.asks} count={notes.length}>
       <div role="list" aria-labelledby="feed-asks" className="divide-y divide-line-2">
         {/* 处理后离场：淡出并上移 4px，120ms（PRD 7.7） */}
         <AnimatePresence initial={false}>
-          {notes.map((n) => (
+          {shown.map((n) => (
             <motion.div key={n.id} layout exit={{ opacity: 0, y: -4, transition: { duration: 0.12 } }}>
               <AskCard note={n} />
             </motion.div>
           ))}
         </AnimatePresence>
       </div>
+      {hidden > 0 && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+          className="flex w-full items-center justify-center gap-1 border-t border-line-2 px-3.5 py-2.5 text-xs text-muted-foreground outline-none hover:bg-card-2 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        >
+          {expanded ? copy.feed.asksCollapse : copy.feed.asksMore(hidden)}
+          <ChevronDownIcon aria-hidden className={cn("size-3.5 transition-transform", expanded && "rotate-180")} />
+        </button>
+      )}
     </ListGroup>
   )
 }

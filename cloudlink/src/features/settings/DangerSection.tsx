@@ -45,6 +45,7 @@ export function TypedConfirm({
   title,
   description,
   phrase,
+  confirmLabel,
   onConfirm,
 }: {
   open: boolean
@@ -53,6 +54,8 @@ export function TypedConfirm({
   title: string
   description: string
   phrase: string
+  /** 确认按钮的文字，缺省用标题 */
+  confirmLabel?: string
   onConfirm: () => Promise<void>
 }) {
   const [text, setText] = useState("")
@@ -89,7 +92,7 @@ export function TypedConfirm({
             }}
           >
             {busy && <Spinner data-icon="inline-start" aria-hidden />}
-            {title}
+            {confirmLabel ?? title}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -97,7 +100,7 @@ export function TypedConfirm({
   )
 }
 
-/** 危险操作（PRD 6.8）：移除全部分发；重置 CloudLink。CloudLink 只删除自己创建的副本、配置和数据 */
+/** 危险操作（PRD 6.8）：停止全部同步；重置 CloudLink。CloudLink 只删除自己创建的副本、配置和数据 */
 export function useDangerActions() {
   const { setTheme } = useTheme()
   const removeAll = () =>

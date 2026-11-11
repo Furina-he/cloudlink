@@ -29,6 +29,8 @@ export interface CompileTarget {
   agentKey: string
   /** 「Claude Code（Windows）」 */
   label: string
+  /** 「Claude Code」，不带运行环境 */
+  short: string
 }
 
 const shortOf = (t: Pick<Target, "agent" | "label">) => (t.agent === "custom" ? t.label : copy.agentShort[t.agent])
@@ -71,15 +73,21 @@ export function selectCompileTargets(targets: Target[], envIds: EnvId[]): Compil
   const enabled = targets
     .filter((t) => t.enabled && envIds.includes(t.envId))
     .sort((a, b) => order.indexOf(a.envId) - order.indexOf(b.envId) || byAgent(a, b))
-  return firstBy(enabled, compileKey).map((t) => ({ key: compileKey(t), envId: t.envId, agentKey: t.agentKey, label: copy.agentInEnv(shortOf(t), copy.env.long(t.envId)) }))
+  return firstBy(enabled, compileKey).map((t) => ({ key: compileKey(t), envId: t.envId, agentKey: t.agentKey, label: copy.agentInEnv(shortOf(t), copy.env.long(t.envId)), short: shortOf(t) }))
 }
 
 /** 目标已经不在列表里时（例如刚移除），从 AgentKey 推出名称 */
 export function compileLabel(list: CompileTarget[], s: { envId: EnvId; agentKey: string }): string {
   const found = list.find((t) => t.key === compileKey(s))
   if (found) return found.label
-  const agent = s.agentKey.startsWith("custom:") ? s.agentKey.slice("custom:".length) : (copy.agentShort[s.agentKey as Exclude<AgentId, "custom">] ?? s.agentKey)
-  return copy.agentInEnv(agent, copy.env.long(s.envId))
+  return copy.agentInEnv(compileShort(list, s), copy.env.long(s.envId))
+}
+
+/** 同上，只要 Agent 名称，不带运行环境 */
+export function compileShort(list: CompileTarget[], s: { envId: EnvId; agentKey: string }): string {
+  const found = list.find((t) => t.key === compileKey(s))
+  if (found) return found.short
+  return s.agentKey.startsWith("custom:") ? s.agentKey.slice("custom:".length) : (copy.agentShort[s.agentKey as Exclude<AgentId, "custom">] ?? s.agentKey)
 }
 
 /** 可用运行环境里的 Agent 和每一份总 Skill；目标、运行环境变化时才重新计算 */

@@ -1,4 +1,4 @@
-import { CopyIcon, RefreshCwIcon, ServerIcon, SquareTerminalIcon } from "lucide-react"
+import { CopyIcon, PlusIcon, RefreshCwIcon, ServerIcon, SquareTerminalIcon } from "lucide-react"
 import { motion } from "motion/react"
 import { useState } from "react"
 
@@ -190,6 +190,7 @@ export function CliScopeList({
   items,
   loading,
   waiting,
+  allBound,
   onChange,
   onAddAsServer,
 }: {
@@ -198,6 +199,8 @@ export function CliScopeList({
   loading: boolean
   /** 还没有就绪的运行环境，拉取不了 */
   waiting: boolean
+  /** 这次登录下的账号都已接入：上面已经写了怎么换账号，这里不再说「就绪后才能拉取」 */
+  allBound?: boolean
   onChange: (selectedIds: string[]) => void
   onAddAsServer?: (item: CliScopeItem) => void
 }) {
@@ -215,6 +218,7 @@ export function CliScopeList({
       </div>
     )
   }
+  if (!items && allBound) return <p className="text-xs text-muted-foreground">{copy.cli.scopeAllBound}</p>
   if (!items) return <p className="text-xs text-muted-foreground">{waiting ? copy.cli.scopeWaiting : copy.cli.scopeLoading}</p>
   if (items.length === 0) return <p className="text-xs text-muted-foreground">{copy.cli.scopeEmpty}</p>
 
@@ -254,7 +258,8 @@ export function CliScopeList({
                       </Badge>
                     )}
                     {x.kind === "instance" && onAddAsServer && (
-                      <Button variant="ghost" size="xs" className="shrink-0" onClick={() => onAddAsServer(x)}>
+                      <Button variant="secondary" size="xs" className="shrink-0" onClick={() => onAddAsServer(x)}>
+                        <PlusIcon data-icon="inline-start" />
                         {copy.cli.addAsServer}
                       </Button>
                     )}

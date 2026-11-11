@@ -14,10 +14,12 @@ import { cn } from "@/lib/utils"
 import { connState, handleOf, isProdWritable, selectCanDistribute, selectCliAccount, selectCliProblem, type ConnState } from "@/stores/assets"
 import { useCliStore } from "@/stores/cli"
 import { useConnectionStore } from "@/stores/connection"
+import { useTargetStore } from "@/stores/targets"
 import { isProbing, useProbeStore } from "@/stores/probe"
 import { useUIStore } from "@/stores/ui"
 import { serverActions, useConverting } from "./actions"
 import { AgentPicker } from "./AgentPicker"
+import { isUnreachableByAgents } from "./includeState"
 
 /** 状态点（DESIGN.md The Dot Not Stripe Rule）：实心带 3px 同色 soft 光晕；未验证是空心圈 */
 const DOT: Record<ConnState, string> = {
@@ -175,7 +177,15 @@ function RowShell({
   const { agents } = useAgentOptions()
   const prod = asset.production
   return (
-    <motion.div role="listitem" initial={fresh ? { opacity: 0 } : false} animate={{ opacity: 1 }} transition={{ duration: 0.18 }}>
+    <motion.div
+      role="listitem"
+      data-fresh={fresh || undefined}
+      initial={fresh ? { opacity: 0 } : false}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.18 }}
+      // 新加的行短暂高亮：中性底色，不用信号青（PRD 6.5）
+      className="transition-colors duration-500 data-fresh:bg-pill-hover"
+    >
       <ContextMenu>
         <ContextMenuTrigger
           render={
@@ -240,7 +250,15 @@ export function ServerRow({ asset, fresh }: { asset: ServerAsset; fresh: boolean
   const state = connState(asset)
   const can = selectCanDistribute(asset)
   const passwordOnly = !can.ok && can.reason === "password-only"
-  const word = copy.connState[state]
+  // 连得上，但所有运行环境都还没加入 SSH 配置：Agent 用别名连不上（PRD 6.5）
+  const unreachable = useTargetStore((s) => can.ok && isUnreachableByAgents(asset, s.environments))
+  const [joining, setJoining] = useState(false)
+  const { agents } = useAgentOptions()
+  const join = () => {
+    setJoining(true)
+    void serverActions.joinSshConfig(asset, agents.map((a) => a.key)).finally(() => setJoining(false))
+  }
+  const word = unreachable ? copy.include.rowProblem : copy.connState[state]
 
   return (
     <RowShell
@@ -248,9 +266,9 @@ export function ServerRow({ asset, fresh }: { asset: ServerAsset; fresh: boolean
       fresh={fresh}
       mark={<ServerIcon className="size-4" aria-hidden />}
       alias={asset.connection.sshAlias}
-      dot={<Dot state={state} label={state === "changed" ? copy.connChangedHint : word} />}
+      dot={<Dot state={unreachable ? "changed" : state} label={state === "changed" ? copy.connChangedHint : word} />}
       problem={
-        state !== "connected" ? (
+        state !== "connected" || unreachable ? (
           word
         ) : probing ? (
           <span className="flex items-center gap-1">
@@ -268,6 +286,10 @@ export function ServerRow({ asset, fresh }: { asset: ServerAsset; fresh: boolean
         ) : state !== "connected" ? (
           <FixButton busy={testing} onClick={() => serverActions.test(asset)}>
             {copy.detail.test}
+          </FixButton>
+        ) : unreachable ? (
+          <FixButton busy={joining} onClick={join}>
+            {copy.include.rowFix}
           </FixButton>
         ) : undefined
       }

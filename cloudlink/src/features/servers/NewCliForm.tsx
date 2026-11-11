@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 
-import type { CliAsset, CliProvider, Mode } from "@/bindings"
+import type { CliAsset, CliProvider } from "@/bindings"
 import { ProviderMark } from "@/components/app/ProviderMark"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -18,23 +18,19 @@ import { useUIStore } from "@/stores/ui"
 import { loginCommand } from "@/lib/cliProviders"
 import { serverActions, toastError } from "./actions"
 import { CliEnvList, CliScopeList, RecheckButton } from "./CliParts"
-import { CreateHeader, GrantFields } from "./CreateParts"
+import { CreateHeader } from "./CreateParts"
 import { DetailGroup } from "./DetailParts"
 
 /**
  * 添加云平台 CLI（PRD 6.5 分支 B）：只检测已启用 Agent 所在的运行环境，展示版本和 whoami 账号；
  * 未安装或未登录时给出单行命令和「打开终端」，切回窗口自动重新检测（F-104 AC1、AC2）。
  * 至少一个环境就绪后拉取账号下的资源，勾选公开的范围，「保存并启用」。
+ * 和 SSH 表单一样不选 Agent、不选档位（2026-11-10）：从只读巡检开始，同步给全部已启用的 Agent。
  * 同一家可以接多个账号：登录能看到几个账号（Cloudflare Account、Vercel Team、OCI Profile）就列几个，已接入的标「已添加」
  */
 export function NewCliForm({ provider }: { provider: CliProvider }) {
   const detection = useCliStore((s) => s.byProvider[provider]) ?? emptyDetection
   const { agents } = useAgentOptions()
-  // 默认授权给全部启用的 Agent；用户点过之后以用户的选择为准（Agent 列表可能比弹窗晚到）
-  const [picked, setGranted] = useState<string[] | null>(null)
-  const granted = picked ?? agents.map((a) => a.key)
-  // 云平台默认按生产对待：只读巡检（F-202 AC2）
-  const [mode, setMode] = useState<Mode>("read-only")
   const [saving, setSaving] = useState(false)
   const ready = Object.values(detection.envStates).some(
     (s) => s && cliEnvStatus(s) === "ready"
@@ -119,14 +115,10 @@ export function NewCliForm({ provider }: { provider: CliProvider }) {
         scope: scope ?? [],
       })
       const saved = asset as CliAsset
-      for (const key of granted)
-        await useAssetStore.getState().setDistribute(saved.id, key, true)
-      if (mode !== saved.agent.mode) serverActions.requestMode(saved, mode)
-      toast.add({
-        title: copy.cli.enabled(saved.name),
-        description: granted.length ? copy.agentSection.effectHint : undefined,
-        type: "success",
-      })
+      // 云平台按生产对待，从只读巡检开始（F-202 AC2）；同步给全部已启用的 Agent
+      for (const a of agents)
+        await useAssetStore.getState().setDistribute(saved.id, a.key, true)
+      toast.add({ title: copy.cli.enabled(saved.name), type: "success" })
       // 完成后关闭弹窗回到主列表（PRD 6.5）
       useUIStore.getState().closeInspector({ force: true })
     } catch (e) {
@@ -262,7 +254,8 @@ export function NewCliForm({ provider }: { provider: CliProvider }) {
                 provider={provider}
                 items={scope}
                 loading={scopeLoading}
-                waiting={!ready || allBound}
+                waiting={!ready}
+                allBound={allBound}
                 onChange={setScope}
                 onAddAsServer={(item) =>
                   useUIStore
@@ -276,22 +269,11 @@ export function NewCliForm({ provider }: { provider: CliProvider }) {
           </DetailGroup>
         </div>
       </ScrollArea>
-      <div className="flex shrink-0 flex-col gap-3 border-t px-3 py-2.5">
-        <GrantFields
-          title={copy.create.grant}
-          agents={agents}
-          selected={granted}
-          onSelected={setGranted}
-          mode={mode}
-          onMode={setMode}
-          prod
-        />
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {!ready && !detection.detecting && (
-            <span className="mr-auto text-xs text-muted-foreground">
-              {copy.cli.notReadyHint}
-            </span>
-          )}
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t px-3 py-2.5">
+        <span className="mr-auto min-w-0 text-xs text-muted-foreground">
+          {!ready && !detection.detecting ? copy.cli.notReadyHint : copy.create.footHint}
+        </span>
+        <>
           <Button
             variant="ghost"
             size="sm"
@@ -308,7 +290,7 @@ export function NewCliForm({ provider }: { provider: CliProvider }) {
             {saving && <Spinner data-icon="inline-start" aria-hidden />}
             {saving ? copy.cli.saving : copy.cli.saveEnable}
           </Button>
-        </div>
+        </>
       </div>
     </section>
   )

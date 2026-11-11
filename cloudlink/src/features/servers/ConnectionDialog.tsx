@@ -1,4 +1,5 @@
-// 连接编辑对话框（PRD 6.4）：连接字段不自动保存，在这里改完走保存流程（未验证提示、Include 同意、密码进凭据库）
+// 连接编辑对话框（PRD 6.4）：连接字段不自动保存，在这里改完走保存流程（未验证提示、加入 SSH 配置、密码进凭据库）。
+// 导入的服务器连接信息由用户自己的 ssh config 维护，这里只有两个导出开关，标题、说明和按钮跟着换
 import { PlugIcon } from "lucide-react"
 import { useState } from "react"
 import { FormProvider } from "react-hook-form"
@@ -77,7 +78,7 @@ function ConnectionDialogBody({ asset, onClose }: { asset: ServerAsset; onClose:
           </Button>
           <Button type="submit" disabled={flow.saving || !form.formState.isDirty}>
             {flow.saving && <Spinner data-icon="inline-start" aria-hidden />}
-            {copy.detail.saveConnection}
+            {managed ? copy.detail.saveConnection : copy.detail.saveExport}
           </Button>
         </DialogFooter>
       </form>
@@ -87,12 +88,13 @@ function ConnectionDialogBody({ asset, onClose }: { asset: ServerAsset; onClose:
 }
 
 export function ConnectionDialog({ asset, open, onOpenChange }: { asset: ServerAsset; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const managed = asset.connection.source === "managed"
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="grid-cols-[minmax(0,1fr)] sm:max-w-[580px]" closeLabel={copy.common.close}>
         <DialogHeader>
-          <DialogTitle>{copy.detail.editConnection}</DialogTitle>
-          <DialogDescription>{copy.detail.editConnectionHint}</DialogDescription>
+          <DialogTitle>{managed ? copy.detail.editConnection : copy.detail.editExport}</DialogTitle>
+          <DialogDescription>{managed ? copy.detail.editConnectionHint : copy.detail.editExportHint}</DialogDescription>
         </DialogHeader>
         {open && <ConnectionDialogBody asset={asset} onClose={() => onOpenChange(false)} />}
       </DialogContent>

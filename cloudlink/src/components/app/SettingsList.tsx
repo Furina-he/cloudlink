@@ -1,9 +1,10 @@
 // 设置式列表（DESIGN.md「Settings-style List」）：详情页、Agent 页、设置页共用。
 // 一张列表卡一行一个设置：左边名称 + 可选说明，右边控件或值；问题行用琥珀浅底
-import { CopyIcon } from "lucide-react"
-import type { ReactNode } from "react"
+import { ChevronDownIcon, CopyIcon } from "lucide-react"
+import { useRef, type ReactNode } from "react"
 
 import { Button } from "@/components/ui/button"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { toast } from "@/components/ui/toast"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { copy } from "@/lib/copy"
@@ -77,6 +78,54 @@ export function PrefRow({
       </div>
       {children !== undefined && <div className={cn("min-w-0", block ? "w-full" : "flex shrink-0 items-center gap-2")}>{children}</div>}
     </div>
+  )
+}
+
+/**
+ * 折叠行（DESIGN.md「折叠行」）：很少用的设置收进一行，左边名称 + 一行摘要，右边 ChevronDown（展开后转 180°）。
+ * 展开的内容是同一张卡里接着往下的行；默认收起。展开后把它滚进视野（对话框里内容会被底栏挡住）
+ */
+export function FoldRow({
+  label,
+  hint,
+  children,
+  open,
+  defaultOpen,
+  onOpenChange,
+  plain,
+}: {
+  label: ReactNode
+  hint?: ReactNode
+  children: ReactNode
+  open?: boolean
+  defaultOpen?: boolean
+  onOpenChange?: (open: boolean) => void
+  /** 内容不是一行行的设置（表单字段、表格）时不加行间发丝线 */
+  plain?: boolean
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  return (
+    <Collapsible
+      ref={ref}
+      open={open}
+      defaultOpen={defaultOpen}
+      onOpenChange={(next) => {
+        onOpenChange?.(next)
+        // 等展开动画走完再滚，否则高度还没算出来
+        if (next) window.setTimeout(() => ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 220)
+      }}
+    >
+      <CollapsibleTrigger className="group/fold flex min-h-[50px] w-full items-center gap-4 px-3.5 py-2.5 text-left outline-none hover:bg-card-2 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="text-[13px] font-medium">{label}</span>
+          {hint && <span className="truncate text-xs leading-normal text-muted-foreground">{hint}</span>}
+        </span>
+        <ChevronDownIcon aria-hidden className="size-4 shrink-0 text-muted-foreground transition-transform duration-150 group-data-panel-open/fold:rotate-180" />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-200 data-ending-style:h-0 data-starting-style:h-0">
+        <div className={cn("border-t border-line-2", !plain && "divide-y divide-line-2")}>{children}</div>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 

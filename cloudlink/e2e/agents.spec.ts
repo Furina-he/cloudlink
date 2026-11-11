@@ -80,7 +80,7 @@ test.describe("Agent 视图", () => {
     await page.getByRole("button", { name: "隐藏自动整理的第 1 条关系" }).click()
     await expect(rel.getByRole("listitem")).toHaveCount(before - 1)
     await page.getByRole("button", { name: "保存" }).click()
-    await expect(toastText(page, "已保存，已重新编译")).toBeVisible()
+    await expect(toastText(page, "已保存").first()).toBeVisible()
     await page.keyboard.press("Escape")
     await expect(page.getByRole("button", { name: /^资源关系/ })).toContainText(`自动整理 ${autoBefore - 1} 条`)
 
@@ -88,12 +88,24 @@ test.describe("Agent 视图", () => {
     await page.getByRole("button", { name: "添加约定" }).click()
     await page.getByRole("textbox", { name: "第 3 条运维约定" }).fill("Run migrations before deploying")
     await page.getByRole("button", { name: "保存" }).click()
-    await expect(toastText(page, "已保存，已重新编译")).toBeVisible()
+    await expect(toastText(page, "已保存").first()).toBeVisible()
     await page.getByRole("button", { name: "返回 Agent" }).click()
     await expect(page.getByRole("button", { name: /^运维约定/ })).toContainText("3 条")
 
-    await page.getByRole("button", { name: /^护栏规则/ }).click()
-    await expect(page.getByText("只读巡检：只放行这些命令")).toBeVisible()
+    // 护栏规则：先讲拦什么，再讲只读巡检时放行什么；放行清单默认收起，展开后分四组
+    const rulesRow = page.getByRole("button", { name: /^护栏规则/ })
+    await expect(rulesRow).toContainText(/拦截 \d+ 类危险操作/)
+    await rulesRow.click()
+    await expect(page.getByRole("heading", { name: "标准运维时拦下" })).toBeVisible()
+    await expect(page.getByRole("heading", { name: "任何档位都拦下" })).toBeVisible()
+    const allow = page.getByRole("button", { name: /^只放行查看类命令，其余都拦下/ })
+    await expect(allow).toHaveAttribute("aria-expanded", "false")
+    await expect(allow).toContainText(/\d+ 条，例如 df、docker ps、journalctl/)
+    await allow.click()
+    for (const g of ["系统", "服务与日志", "Docker", "云平台"]) {
+      await expect(page.getByRole("list", { name: g, exact: true })).toBeVisible()
+    }
+    await shot(page, "p7d-guard-rules")
   })
 
   test("添加自定义目录：组标题右边的「⋯」菜单", async ({ page }) => {

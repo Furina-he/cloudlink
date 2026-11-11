@@ -21,7 +21,7 @@ Do not modify files under `docs/archive/`. Priority on conflict: `docs/PRD.md` C
 
 ## Tools
 
-- Image recognition: prefer the `magpie-vision` MCP (`analyze_image`) for reading screenshots and images.
+- Image recognition: **must** use the `magpie-vision` MCP (`analyze_image`) for every screenshot and image check (gate and evidence screenshots, UI verification, images the user provides). Save the image to a file and pass its absolute path with a concrete prompt (truncation, overlap, alignment, error states). Do not judge an image by opening it with `Read` or from the inline image returned by Playwright `browser_take_screenshot`. Only if the MCP is unavailable or returns an error may you view the image directly, and the reply must say so. Gate reports state that screenshots were checked with `analyze_image`.
 - Web search: prefer the `search` MCP (`search_proxy_*` tools).
 
 ## Commands

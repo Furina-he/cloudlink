@@ -1,4 +1,4 @@
-//! F-406 的后端集成测试：忙碌判定、安装前的活动记录和设置开关。路径全部隔离，更新源是假的。
+//! F-406 的后端集成测试：忙碌判定、安装前的活动记录、下载失败后的重试和设置开关。路径全部隔离，更新源是假的。
 
 use std::fs;
 use std::sync::Arc;
@@ -27,7 +27,7 @@ struct Fixture {
 }
 
 impl Fixture {
-    /// 已发现 0.2.0 的后端；`hk-edge` 已保存，用来验证等待任务时带上服务器名
+    /// 已发现 0.2.0 并在后台下载过一次的后端；`hk-edge` 已保存，用来验证等待任务时带上服务器名
     fn with_update(download: FakeDownload) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let paths = Paths::isolated_in(temp.path());
@@ -56,6 +56,7 @@ impl Fixture {
         source.answer(Ok(Some(release("0.2.0"))));
         assert!(backend.updates.check_if_due(Instant::now() + FIRST_CHECK));
         assert_eq!(backend.update_status().state, UpdateState::Available);
+        backend.updates.download_pending();
         events.take();
         Fixture {
             backend,
@@ -74,30 +75,25 @@ impl Fixture {
             params["name"].as_str().map(String::from),
         )
     }
-
-    fn wait_for(&self, state: UpdateState) {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while self.backend.update_status().state != state {
-            assert!(Instant::now() < deadline, "update never reached {state:?}");
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    }
 }
 
 #[test]
 fn a_running_probe_blocks_installing_and_names_the_server() {
     let fixture = Fixture::with_update(FakeDownload::Package(vec![1, 2, 3]));
+    assert_eq!(fixture.backend.update_status().state, UpdateState::Ready);
     let probe = fixture.backend.probes.hold_for_test(testkit::hk_edge().id.as_str());
     assert_eq!(fixture.busy_params(), ("probe".into(), Some("hk-edge".into())));
-    // 不开始下载，提醒照旧
-    assert_eq!(fixture.backend.update_status().state, UpdateState::Available);
+    // 不开始安装，提醒照旧
+    assert_eq!(fixture.backend.update_status().state, UpdateState::Ready);
     assert!(fixture.events.take().is_empty());
 
     probe.store(true, Ordering::SeqCst);
     fixture.backend.install_update().unwrap();
-    fixture.wait_for(UpdateState::Installing);
+    assert_eq!(fixture.backend.update_status().state, UpdateState::Installing);
     let installed = fixture.source.installed.lock().unwrap().clone();
     assert_eq!(installed, vec![vec![1, 2, 3]]);
+    // 安装用的是后台下好的那一份，没有再下载
+    assert_eq!(fixture.source.downloads.load(Ordering::SeqCst), 1);
 
     // F-406 AC5：退出前写一条活动记录
     let activity = fixture
@@ -130,21 +126,24 @@ fn cli_detection_and_publishing_block_installing() {
     assert_eq!(fixture.busy_params(), ("publish".into(), None));
     fixture.backend.credential_writes.fetch_sub(1, Ordering::SeqCst);
     assert!(fixture.source.installed.lock().unwrap().is_empty());
-    assert_eq!(fixture.backend.update_status().state, UpdateState::Available);
+    assert_eq!(fixture.backend.update_status().state, UpdateState::Ready);
 }
 
 #[test]
-fn a_rejected_signature_is_never_installed() {
+fn a_rejected_signature_is_never_installed_and_retry_downloads_again() {
     let fixture = Fixture::with_update(FakeDownload::Fail(Failure::Signature));
-    fixture.backend.install_update().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while fixture.backend.update_status().error.is_none() {
-        assert!(Instant::now() < deadline, "the signature failure was never reported");
-        std::thread::sleep(Duration::from_millis(5));
-    }
     let status = fixture.backend.update_status();
     assert_eq!(status.state, UpdateState::Available);
     assert_eq!(status.error.unwrap().id, IpcErrorId::UpdateSignatureInvalid);
+
+    // 对话框里的「重试」：重新在后台下载
+    fixture.backend.install_update().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while fixture.source.downloads.load(Ordering::SeqCst) < 2 || fixture.backend.update_status().error.is_none() {
+        assert!(Instant::now() < deadline, "the retry never finished");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(fixture.backend.update_status().state, UpdateState::Available);
     assert!(fixture.source.installed.lock().unwrap().is_empty());
     assert!(
         fixture
@@ -161,20 +160,19 @@ fn a_rejected_signature_is_never_installed() {
 }
 
 #[test]
-fn a_failed_installer_returns_to_available_and_releases_the_publish_lock() {
+fn a_failed_installer_returns_to_ready_and_releases_the_publish_lock() {
     let fixture = Fixture::with_update(FakeDownload::Package(vec![9]));
     *fixture.source.install_result.lock().unwrap() = Err(Failure::Install);
     fixture.backend.install_update().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while fixture.backend.update_status().error.is_none() {
-        assert!(Instant::now() < deadline, "the install failure was never reported");
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert_eq!(
-        fixture.backend.update_status().error.unwrap().id,
-        IpcErrorId::UpdateInstallFailed
-    );
+    let status = fixture.backend.update_status();
+    assert_eq!(status.state, UpdateState::Ready);
+    assert_eq!(status.error.unwrap().id, IpcErrorId::UpdateInstallFailed);
     assert!(fixture.backend.mutation.try_lock().is_ok());
+
+    // 再点一次「重启以更新」用同一个安装包
+    *fixture.source.install_result.lock().unwrap() = Ok(());
+    fixture.backend.install_update().unwrap();
+    assert_eq!(*fixture.source.installed.lock().unwrap(), vec![vec![9], vec![9]]);
 }
 
 #[test]

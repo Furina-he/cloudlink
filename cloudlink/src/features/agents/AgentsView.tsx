@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod"
-import { ChevronLeftIcon, ChevronRightIcon, CircleXIcon, FileTextIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react"
+import { ChevronLeftIcon, ChevronRightIcon, CircleXIcon, FileTextIcon, InfoIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { FormProvider, useForm, useWatch, type Control } from "react-hook-form"
 import { useHotkeys } from "react-hotkeys-hook"
@@ -7,9 +7,9 @@ import { useHotkeys } from "react-hotkeys-hook"
 import type { EnvId, GuardRules } from "@/bindings"
 import { EnvIcon } from "@/components/app/StateBadge"
 import { PreviewSheet } from "@/components/app/PreviewSheet"
-import { ListGroup, ListNote, PrefRow } from "@/components/app/SettingsList"
+import { CommandChip } from "@/components/app/CommandChip"
+import { FoldRow, ListGroup, ListNote, PrefRow } from "@/components/app/SettingsList"
 import { useScrollRestore, useViewTitleFocus } from "@/components/app/ViewShell"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -30,6 +30,7 @@ import { useTargetStore } from "@/stores/targets"
 import { useUIStore, type AgentsPage } from "@/stores/ui"
 import { AgentList } from "./AgentList"
 import { compileLabel, useAgentOptions } from "./agentKeys"
+import { allowExamples, groupAllowlist } from "./guardGroups"
 import { ConventionsBlock, HealthCheckRow, RelationsBlock } from "./SkillContentSection"
 
 const EMPTY_CONFIG: SkillConfigValues = { relationNotes: [], hiddenRelations: [], conventions: [] }
@@ -58,7 +59,8 @@ function CompileLine() {
     <p role="status" className={blocked ? "flex items-center gap-1.5 text-xs text-destructive" : "flex items-center gap-1.5 text-xs text-warning"}>
       {blocked ? <CircleXIcon className="size-3.5 shrink-0" aria-hidden /> : <TriangleAlertIcon className="size-3.5 shrink-0" aria-hidden />}
       {blocked ? copy.agents.compileBlocked(compile.blocked.map((s) => compileLabel(compileTargets, s)).join("、")) : copy.agents.compileWarnings(compile.warnings)}
-      <Button variant="link" size="xs" className="h-auto p-0" onClick={() => show(first)}>
+      {/* 文字链接用信号青（DESIGN.md The Signal Four Rule），不跟着琥珀或红色的说明走 */}
+      <Button variant="link" size="xs" className="h-auto p-0 text-signal underline underline-offset-2" onClick={() => show(first)}>
         {copy.agents.showLint}
       </Button>
     </p>
@@ -74,7 +76,8 @@ function ContentRows({ control }: { control: Control<SkillConfigValues> }) {
   useEffect(() => {
     useGuardStore.getState().loadRules().catch(() => undefined)
   }, [])
-  const ruleCount = rules ? rules.readOnlyAllow.length + rules.standardDeny.length + rules.alwaysDeny.length : null
+  // 数的是拦截几类危险操作，不把放行的命令算进去（PRD 6.6）
+  const ruleCount = rules ? rules.standardDeny.length + rules.alwaysDeny.length : null
   const rows: { page: AgentsPage; label: string; value: string }[] = [
     { page: "relations", label: copy.agents.relations, value: copy.agents.relationsCount(relations.filter((r) => !hidden.includes(r.id)).length) },
     { page: "conventions", label: copy.agents.conventions, value: copy.agents.conventionsCount(conventions.length) },
@@ -148,21 +151,37 @@ function EnvironmentsGroup() {
   )
 }
 
-/** 一组拦下的类别：中文说明加英文命令示例（等宽） */
+/** 一行：名称 + 一排命令示例（Command Chip，整块换行） */
+function ChipRow({ label, commands }: { label: string; commands: string[] }) {
+  return (
+    <div className="flex flex-col gap-1.5 px-3.5 py-2.5">
+      <span className="text-[13px] font-medium">{label}</span>
+      <ul aria-label={label} className="flex flex-wrap gap-1.5">
+        {commands.map((c) => (
+          <li key={c} className="flex">
+            <CommandChip>{c}</CommandChip>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+/** 一组拦下的类别：中文说明加命令示例；组标题右边写「N 类」 */
 function Categories({ id, title, list }: { id: string; title: string; list: GuardRules["standardDeny"] }) {
   return (
-    <ListGroup id={id} title={title} count={list.length}>
+    <ListGroup id={id} title={title} action={<span className="text-xs text-muted-foreground tabular-nums">{copy.guard.categoryCount(list.length)}</span>}>
       {list.map((c) => (
-        <div key={c.id} className="flex flex-col gap-0.5 px-3.5 py-2.5">
-          <span className="text-[13px] font-medium">{copy.guardReason[c.id]}</span>
-          <span className="font-mono text-xs break-all text-muted-foreground">{c.examples.join("  ·  ")}</span>
-        </div>
+        <ChipRow key={c.id} label={copy.guardReason[c.id]} commands={c.examples} />
       ))}
     </ListGroup>
   )
 }
 
-/** 护栏规则（只读，8.6）：只读白名单、标准运维下拦下的类别、任何档位都拦下的类别 */
+/**
+ * 护栏规则（只读，PRD 6.6、8.6）：先讲拦什么（标准运维时、任何档位），再讲只读巡检时放行什么；
+ * 放行清单很长，默认收起，展开后按系统 / 服务与日志 / Docker / 云平台分组
+ */
 function RulesPage() {
   const rules = useGuardStore((s) => s.rules)
   if (!rules) {
@@ -173,25 +192,21 @@ function RulesPage() {
       </div>
     )
   }
+  const allow = rules.readOnlyAllow
   return (
     <>
-      <p className="text-xs text-muted-foreground">{copy.guard.rulesDescription}</p>
-      <ListGroup id="rules-read-only" title={copy.guard.readOnlyTitle} count={rules.readOnlyAllow.length}>
-        <ul className="flex flex-wrap gap-1.5 px-3.5 py-3" aria-label={copy.guard.readOnlyTitle}>
-          {rules.readOnlyAllow.map((c) => (
-            <li key={c}>
-              <Badge variant="outline" className="font-mono">
-                {c}
-              </Badge>
-            </li>
-          ))}
-        </ul>
-        <ListNote>{copy.guard.readOnlyNote}</ListNote>
-      </ListGroup>
+      <p className="text-[13px] text-fg-2">{copy.guard.intro}</p>
       <Categories id="rules-standard" title={copy.guard.standardTitle} list={rules.standardDeny} />
       <Categories id="rules-always" title={copy.guard.alwaysTitle} list={rules.alwaysDeny} />
-      <p className="text-xs text-muted-foreground">{copy.guard.unparsedNote}</p>
-      <p className="text-xs text-muted-foreground">{copy.guard.boundary}</p>
+      <ListGroup id="rules-read-only" title={copy.guard.readOnlyTitle}>
+        <FoldRow label={copy.guard.readOnlyRow} hint={copy.guard.readOnlySummary(allow.length, allowExamples(allow))}>
+          {groupAllowlist(allow).map((g) => (
+            <ChipRow key={g.id} label={copy.guard.allowGroup[g.id]} commands={g.commands} />
+          ))}
+          <p className="px-3.5 py-2.5 text-xs leading-relaxed text-muted-foreground">{copy.guard.readOnlyNote}</p>
+        </FoldRow>
+        <ListNote icon={<InfoIcon aria-hidden />}>{copy.guard.honest}</ListNote>
+      </ListGroup>
     </>
   )
 }

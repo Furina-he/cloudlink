@@ -34,7 +34,7 @@ export type SaveConfirm =
   | { stage: "include"; values: ServerFormValues; envIds: EnvId[]; opts: SubmitOptions }
 
 /** 托管配置要写入、还没加 Include、也还没问过的运行环境 */
-function includeMissing(v: ServerFormValues): EnvId[] {
+export function includeMissing(v: ServerFormValues): EnvId[] {
   if (v.source !== "managed") return []
   const envs = useTargetStore.getState().environments
   const asked = useSettingsStore.getState().settings?.sshIncludeAsked ?? []
@@ -48,15 +48,19 @@ export function useSaveFlow({
   form,
   testKey,
   reveal,
+  quiet,
 }: {
   asset: ServerAsset | undefined
   form: UseFormReturn<ServerFormValues>
   testKey: string
   /** 切到出错字段所在的 Tab 并聚焦它 */
   reveal: (target: RevealTarget) => void
+  /** 添加流程：加入与否写在过程页的步骤里，最后只出一条提示（PRD 6.5），这里不另出提示条 */
+  quiet?: boolean
 }) {
   const [confirm, setConfirm] = useState<SaveConfirm | null>(null)
   const [saving, setSaving] = useState(false)
+  const [including, setIncluding] = useState(false)
   const [error, setError] = useState<IpcError | null>(null)
 
   /** 连接参数和已保存的一致，或者当前参数刚测试通过，就不用提示「未验证」 */
@@ -133,6 +137,7 @@ export function useSaveFlow({
   return {
     submit,
     saving,
+    including,
     error,
     clearError: () => setError(null),
     confirm,
@@ -146,22 +151,26 @@ export function useSaveFlow({
       proceed("include", confirm.values, confirm.opts)
     },
     /** 加入 Include（F-107 AC1）：先备份再在 config 开头加一行；失败时不保存 */
-    acceptInclude: async () => {
+    acceptInclude: async (onAdded?: () => void) => {
       if (confirm?.stage !== "include") return
       const { values, envIds, opts } = confirm
       setConfirm(null)
       setSaving(true)
+      setIncluding(true)
       try {
         for (const env of envIds) {
           await useTargetStore.getState().addSshInclude(env)
-          toast.add({ title: copy.include.added(copy.env.long(env)), type: "success" })
+          if (!quiet) toast.add({ title: copy.include.added(copy.env.long(env)), type: "success" })
         }
       } catch (e) {
         toastError(e)
         setSaving(false)
+        setIncluding(false)
         opts.onInterrupted?.()
         return
       }
+      setIncluding(false)
+      onAdded?.()
       await doSave(values, opts)
     },
     /** 暂不加入：记下已经问过，不再弹窗；服务器在这些环境里记为「未列入」 */
@@ -171,7 +180,7 @@ export function useSaveFlow({
       setConfirm(null)
       const asked = useSettingsStore.getState().settings?.sshIncludeAsked ?? []
       void useSettingsStore.getState().update({ sshIncludeAsked: [...new Set([...asked, ...envIds])] })
-      toast.add({ title: copy.include.skipped })
+      if (!quiet) toast.add({ title: copy.include.skipped })
       void doSave(values, opts)
     },
   }

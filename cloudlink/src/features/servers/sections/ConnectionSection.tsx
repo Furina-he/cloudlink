@@ -1,8 +1,8 @@
 import { LockIcon, TriangleAlertIcon } from "lucide-react"
 
 import type { ServerAsset } from "@/bindings"
+import { CommandChip } from "@/components/app/CommandChip"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { FieldGroup } from "@/components/ui/field"
 import { useMinuteTick } from "@/hooks/use-minute-tick"
 import { copy } from "@/lib/copy"
@@ -16,10 +16,10 @@ import { sortEnvs } from "../serverForm"
 const envList = (ids: string[]) => sortEnvs(ids).map(copy.env.long).join("、")
 
 /** 「导出到 Skill」的两个开关（F-105），默认都关 */
-export function ExportSwitches() {
+export function ExportSwitches({ untitled }: { untitled?: boolean }) {
   return (
     <div className="flex flex-col gap-3">
-      <span className="text-sm font-medium">{copy.connection.exportTitle}</span>
+      {!untitled && <span className="text-sm font-medium">{copy.connection.exportTitle}</span>}
       <ExportSwitch name="export.resolvedConnection" label={copy.connection.exportResolved} hint={copy.connection.exportResolvedHint} />
       <ExportSwitch name="export.listeningPorts" label={copy.connection.exportListening} hint={copy.connection.exportListeningHint} />
     </div>
@@ -29,15 +29,13 @@ export function ExportSwitches() {
 /** 探测得到的监听端口，只读 */
 export function ListeningPorts({ asset }: { asset: ServerAsset }) {
   return (
+    // 标题由外层的 PrefRow 给出，这里不再重复
     <div className="flex flex-col gap-1.5">
-      <span className="text-sm font-medium">{copy.connection.listening}</span>
       {asset.listeningPorts.length > 0 ? (
         <ul className="flex flex-wrap gap-1.5">
           {asset.listeningPorts.map((p) => (
             <li key={`${p.addr}:${p.port}/${p.proto}`}>
-              <Badge variant="outline" className="font-mono">
-                {p.addr}:{p.port}/{p.proto}
-              </Badge>
+              <CommandChip>{`${p.addr}:${p.port}/${p.proto}`}</CommandChip>
             </li>
           ))}
         </ul>
@@ -125,7 +123,8 @@ export function ConnectionEditor({
     return (
       <div className="flex flex-col gap-4">
         <ImportedConnection asset={asset} />
-        <ExportSwitches />
+        {/* 对话框标题已经写明是在选「让 Agent 知道哪些」 */}
+        <ExportSwitches untitled />
       </div>
     )
   }

@@ -1,9 +1,10 @@
-// Mock 命令：检测更新（F-406）。地址栏参数选择场景：
+// Mock 命令：检测更新（F-406）。和 Rust 侧一样：发现新版本就在后台下载，下好（ready）才在顶栏提醒。地址栏参数选择场景：
 // - 不带参数：没有新版本，界面上没有任何更新元素
-// - ?update=available：启动时已经发现 0.2.0；下载约 3 秒，之后停在「正在安装」（Mock 不会退出）
-// - ?update=signature：下载完成后签名校验失败，安装包被丢弃
-// - ?update=busy：第一次「下载并安装」被正在发布的 Skill 挡住（update-busy），再点一次正常下载
-// - ?update=long：更新说明很长，还带一行没有断点的长串，对话框不能被撑开
+// - ?update=available：启动时 0.2.0 已经在后台下好；「重启以更新」之后停在「正在安装」（Mock 不会退出）
+// - ?update=downloading：启动时发现 0.2.0，后台下载约 3 秒，期间顶栏什么都不显示，下好后出现提醒
+// - ?update=signature：后台下载完成后签名校验失败，安装包被丢弃，顶栏出现提醒；对话框里「重试」重新下载，这次成功
+// - ?update=busy：已下好；第一次「重启以更新」被正在发布的 Skill 挡住（update-busy），再点一次正常安装
+// - ?update=long：已下好，更新说明很长，还带一行没有断点的长串，对话框不能被撑开
 import { emit } from "@tauri-apps/api/event"
 
 import type { UpdateStatus } from "@/bindings"
@@ -40,10 +41,12 @@ const available = (): UpdateStatus => ({
   ...RELEASE,
   ...(scenario === "long" && { notes: LONG_NOTES }),
 })
+const ready = (): UpdateStatus => ({ ...available(), state: "ready", downloaded: TOTAL, total: TOTAL })
 
-let status: UpdateStatus = scenario && db.settings.autoCheckUpdates ? available() : idle()
+let status: UpdateStatus = idle()
 let download: { timer: number } | null = null
 let busyOnce = scenario === "busy"
+let signatureOnce = scenario === "signature"
 
 function publish(next: UpdateStatus) {
   status = next
@@ -55,15 +58,9 @@ function stopDownload() {
   download = null
 }
 
-function install() {
-  if (status.state === "downloading" || status.state === "installing") return
-  if (status.state !== "available") fail("not-found")
-  const probing = runningProbe()
-  if (probing) fail("update-busy", { task: "probe", name: aliasOf(probing) })
-  if (busyOnce) {
-    busyOnce = false
-    fail("update-busy", { task: "publish" })
-  }
+/** 后台下载并校验：进度只推给设置页和打开着的对话框，顶栏不显示 */
+function startDownload() {
+  if (download) return
   publish({ ...available(), state: "downloading", downloaded: 0 })
   let tick = 0
   download = {
@@ -74,24 +71,51 @@ function install() {
         return
       }
       stopDownload()
-      if (scenario === "signature") {
+      if (signatureOnce) {
+        signatureOnce = false
         publish({ ...available(), error: { id: "update-signature-invalid" } })
         return
       }
-      publish({ ...status, state: "installing", downloaded: TOTAL, total: TOTAL })
-      logActivity({ kind: "update", messageId: "update-installing", params: { from: CURRENT, to: RELEASE.version }, ok: true })
+      publish(ready())
     }, TICK_MS),
   }
 }
 
-/** 关闭检查时立即隐藏提醒并取消下载；重新打开时立即检查一次（F-406 AC6） */
+/** 检查到新版本：除了 downloading、signature 这两个看下载过程的场景，都当作已经在后台下好 */
+function discover() {
+  if (!scenario || !db.settings.autoCheckUpdates) return
+  if (scenario === "downloading" || scenario === "signature") startDownload()
+  else publish(ready())
+}
+
+// 模拟启动后的第一次检查。同步发出时前端还没订阅，所以先把状态放进快照，get_update_status 能读到
+if (scenario && db.settings.autoCheckUpdates) {
+  if (scenario === "downloading" || scenario === "signature") window.setTimeout(startDownload, 0)
+  else status = ready()
+}
+
+function install() {
+  if (status.state === "available" && status.error) return startDownload()
+  if (status.state === "downloading" || status.state === "installing" || status.state === "available") return
+  if (status.state !== "ready") fail("not-found")
+  const probing = runningProbe()
+  if (probing) fail("update-busy", { task: "probe", name: aliasOf(probing) })
+  if (busyOnce) {
+    busyOnce = false
+    fail("update-busy", { task: "publish" })
+  }
+  publish({ ...status, state: "installing" })
+  logActivity({ kind: "update", messageId: "update-installing", params: { from: CURRENT, to: RELEASE.version }, ok: true })
+}
+
+/** 关闭时立即隐藏提醒、停止下载并丢弃下好的安装包；重新打开时立即检查一次（F-406 AC6） */
 export function setAutoCheck(enabled: boolean) {
   if (!enabled) {
     stopDownload()
     if (status.state !== "installing" && status.state !== "idle") publish(idle())
     return
   }
-  if (scenario && status.state === "idle") window.setTimeout(() => db.settings.autoCheckUpdates && publish(available()), 300)
+  if (scenario && status.state === "idle") window.setTimeout(discover, 300)
 }
 
 type Args = Record<string, unknown>
@@ -99,9 +123,4 @@ type Args = Record<string, unknown>
 export const updateHandlers: Record<string, (a: Args) => unknown> = {
   get_update_status: () => status,
   install_update: () => install(),
-  cancel_update: () => {
-    if (status.state !== "downloading") return
-    stopDownload()
-    publish(available())
-  },
 }

@@ -250,7 +250,8 @@ pub struct IpcError {
     pub params: Option<Params>,
 }
 
-/// F-406：idle 时界面不显示任何更新元素（没有新版本、尚未检查或已关闭检查）
+/// F-406：发现新版本后在后台下载并校验，下好（ready）才在顶栏提醒。
+/// idle 时界面不显示任何更新元素（没有新版本、尚未检查或已关闭检查）；available 只有带着失败原因时才提醒
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "misc.ts")]
@@ -258,6 +259,7 @@ pub enum UpdateState {
     Idle,
     Available,
     Downloading,
+    Ready,
     Installing,
 }
 

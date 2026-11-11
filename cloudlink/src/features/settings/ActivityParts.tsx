@@ -15,18 +15,18 @@ import {
 } from "lucide-react"
 import { useMemo } from "react"
 
-import type { ActivityItem, ActivityKind, Asset } from "@/bindings"
+import type { ActivityItem, ActivityKind } from "@/bindings"
 import { TextWithCode } from "@/components/app/TextWithCode"
 import { CodeBlock, CodeBlockContent } from "@/components/ui/code-block"
-import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { TraceCollapsible, TraceCollapsibleContent, TraceCollapsibleTrigger, TraceDescription, TraceIcon, TraceLine, TraceTitle } from "@/components/ui/trace"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { copy } from "@/lib/copy"
 import { formatDuration, formatTime } from "@/lib/format"
-import { useActivityStore } from "@/stores/activity"
+import { cn } from "@/lib/utils"
+import { OWN_ACTIVITY_KINDS, useActivityStore } from "@/stores/activity"
 import { handleOf, useAssetStore } from "@/stores/assets"
 
-/** 图标按类型区分（PRD 6.7） */
+/** 图标按类型区分（PRD 6.8） */
 const KIND_ICON: Record<ActivityKind, LucideIcon> = {
   connection: PlugIcon,
   probe: RadarIcon,
@@ -43,124 +43,87 @@ const KIND_ICON: Record<ActivityKind, LucideIcon> = {
   update: CircleArrowUpIcon,
 }
 
-/** CloudLink 自己的操作；「Agent 操作」单独一项（PRD 6.7） */
-const OWN_KINDS: ActivityKind[] = ["connection", "probe", "compile", "deliver", "remove", "repair", "ssh-config", "guard", "mode", "cli", "note", "update"]
-const AGENT_KIND: ActivityKind = "agent-op"
+const ROW = "flex min-h-10 w-full items-center gap-2.5 px-3.5 py-2 text-left text-[13px]"
 
-/** 一条记录是一行 TraceLine；有详情的用 TraceCollapsible 展开，里面是命令清单、差异摘要或完整命令 */
+/**
+ * 一条记录一行（DESIGN.md Activity Log Sheet）：14px 图标 → 一句话（单行，放不下省略）→ 时间（44px 固定列，右对齐）。
+ * 失败的行文字用红色；带详情的行点开看命令清单或差异摘要
+ */
 export function ActivityLine({ item }: { item: ActivityItem }) {
   const Icon = KIND_ICON[item.kind]
-  const line = (
-    <TraceLine status={item.ok ? undefined : "error"}>
-      <TraceIcon>
-        <Icon />
-      </TraceIcon>
-      <TraceTitle className="text-foreground">
+  const text = copy.activity[item.messageId](item.params)
+  const time = formatTime(item.at)
+  const body = (
+    <>
+      <Icon aria-hidden className={cn("size-3.5 shrink-0", item.ok ? "text-muted-foreground" : "text-destructive")} />
+      <span className={cn("min-w-0 flex-1 truncate", !item.ok && "text-destructive")} title={item.durationMs != null ? `${time} · ${formatDuration(item.durationMs)}` : undefined}>
         <span className="sr-only">{copy.activityKind[item.kind]}：</span>
-        <TextWithCode text={copy.activity[item.messageId](item.params)} />
-        {/* Agent 操作被拦下时，句子里已经写明 */}
-        {!item.ok && item.kind !== AGENT_KIND && <span className="sr-only">（{copy.activityView.failed}）</span>}
-      </TraceTitle>
-      <TraceDescription className="tabular-nums">
-        {formatTime(item.at)}
-        {item.durationMs != null && ` · ${formatDuration(item.durationMs)}`}
-      </TraceDescription>
-    </TraceLine>
+        <TextWithCode text={text} />
+        {!item.ok && <span className="sr-only">（{copy.activityView.failed}）</span>}
+      </span>
+      <span className="w-11 shrink-0 text-right text-xs text-muted-foreground tabular-nums">{time}</span>
+    </>
   )
-  if (!item.detail) return <div role="listitem">{line}</div>
+  if (!item.detail) {
+    return (
+      <div role="listitem" data-ok={item.ok} className={ROW}>
+        {body}
+      </div>
+    )
+  }
   return (
-    <TraceCollapsible role="listitem">
-      <TraceCollapsibleTrigger>{line}</TraceCollapsibleTrigger>
-      <TraceCollapsibleContent>
-        <CodeBlock size="sm">
-          <CodeBlockContent wrap>{item.detail}</CodeBlockContent>
-        </CodeBlock>
-      </TraceCollapsibleContent>
-    </TraceCollapsible>
+    <Collapsible role="listitem" data-ok={item.ok}>
+      <CollapsibleTrigger className={cn(ROW, "outline-none hover:bg-card-2 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset")}>{body}</CollapsibleTrigger>
+      <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-200 data-ending-style:h-0 data-starting-style:h-0">
+        <div className="px-3.5 pb-2.5 pl-9.5">
+          <CodeBlock size="sm">
+            <CodeBlockContent wrap>{item.detail}</CodeBlockContent>
+          </CodeBlock>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
-/** 筛选（PRD 6.7）：类型用 ToggleGroup，「Agent 操作」单独一组；服务器用 Combobox。改动后从第一页重新加载 */
+const ALL = "__all__"
+
+/** 筛选（F-402）：「全部类型」「全部资源」两个弹出按钮，放在面板标题行。改动后从第一页重新加载 */
 export function ActivityFilters() {
   const query = useActivityStore((s) => s.query)
   const byId = useAssetStore((s) => s.byId)
-  const assets = useMemo(() => Object.values(byId).sort((a, b) => a.name.localeCompare(b.name)), [byId])
-  const selected = query.assetId ? (byId[query.assetId] ?? null) : null
-  const kinds = query.kinds ?? []
+  const assets = useMemo(() => Object.values(byId).sort((a, b) => handleOf(a).localeCompare(handleOf(b))), [byId])
   const load = useActivityStore.getState().load
-  const setKinds = (own: string[], agent: string[]) => void load({ ...query, kinds: [...own, ...agent] as ActivityKind[] })
-  const own = kinds.filter((k) => k !== AGENT_KIND)
-  const agent = kinds.filter((k) => k === AGENT_KIND)
+  const kind = query.kinds?.length === 1 ? query.kinds[0] : ALL
+  const assetId = query.assetId ?? ALL
 
   return (
-    <div className="flex flex-col gap-2">
-      <ToggleGroup
-        multiple
-        aria-label={copy.activityView.kindFilter}
-        variant="outline"
-        size="sm"
-        spacing={1}
-        value={own}
-        onValueChange={(v) => setKinds(v, agent)}
-        className="flex-wrap"
-      >
-        {OWN_KINDS.map((k) => {
-          const Icon = KIND_ICON[k]
-          return (
-            <ToggleGroupItem key={k} value={k}>
-              <Icon data-icon="inline-start" />
+    <>
+      <Select value={kind} onValueChange={(v) => void load({ ...query, kinds: v === ALL ? undefined : [v as ActivityKind] })}>
+        <SelectTrigger size="sm" aria-label={copy.activityView.kindFilter} className="h-6.5 w-28">
+          <SelectValue>{(v: string) => (v === ALL ? copy.activityView.allKinds : copy.activityKind[v as ActivityKind])}</SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={ALL}>{copy.activityView.allKinds}</SelectItem>
+          {OWN_ACTIVITY_KINDS.map((k) => (
+            <SelectItem key={k} value={k}>
               {copy.activityKind[k]}
-            </ToggleGroupItem>
-          )
-        })}
-      </ToggleGroup>
-      <div className="flex flex-wrap items-center gap-2">
-        <ToggleGroup
-          multiple
-          aria-label={copy.activityKind[AGENT_KIND]}
-          variant="outline"
-          size="sm"
-          value={agent}
-          onValueChange={(v) => setKinds(own, v)}
-        >
-          <ToggleGroupItem value={AGENT_KIND}>
-            <TerminalIcon data-icon="inline-start" />
-            {copy.activityKind[AGENT_KIND]}
-          </ToggleGroupItem>
-        </ToggleGroup>
-        <Combobox
-          items={assets}
-          value={selected}
-          onValueChange={(a: Asset | null) => void load({ ...query, assetId: a?.id })}
-          itemToStringLabel={(a: Asset) => handleOf(a)}
-          isItemEqualToValue={(a: Asset, b: Asset) => a.id === b.id}
-          filter={(a: Asset, q: string) => {
-            const needle = q.trim().toLowerCase()
-            return !needle || handleOf(a).toLowerCase().includes(needle) || a.name.toLowerCase().includes(needle)
-          }}
-          autoHighlight
-        >
-          <ComboboxInput
-            aria-label={copy.activityView.assetFilter}
-            placeholder={copy.activityView.assetPlaceholder}
-            className="w-52"
-            showClear={!!selected}
-            triggerLabel={copy.common.showOptions}
-            clearLabel={copy.common.clear}
-          />
-          <ComboboxContent>
-            <ComboboxEmpty>{copy.common.noOptions}</ComboboxEmpty>
-            <ComboboxList>
-              {(a: Asset) => (
-                <ComboboxItem key={a.id} value={a}>
-                  <span className="truncate font-mono">{handleOf(a)}</span>
-                  <span className="ml-auto shrink-0 truncate text-xs text-muted-foreground">{a.name}</span>
-                </ComboboxItem>
-              )}
-            </ComboboxList>
-          </ComboboxContent>
-        </Combobox>
-      </div>
-    </div>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select value={assetId} onValueChange={(v) => void load({ ...query, assetId: v === ALL ? undefined : (v as string) })}>
+        <SelectTrigger size="sm" aria-label={copy.activityView.assetFilter} className="h-6.5 w-32">
+          <SelectValue>{(v: string) => (v === ALL ? copy.activityView.allAssets : byId[v] ? handleOf(byId[v]) : copy.feed.deletedAsset)}</SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={ALL}>{copy.activityView.allAssets}</SelectItem>
+          {assets.map((a) => (
+            <SelectItem key={a.id} value={a.id}>
+              {handleOf(a)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </>
   )
 }

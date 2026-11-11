@@ -1,14 +1,17 @@
 import { CopyIcon } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import { FormProvider, useWatch } from "react-hook-form"
+import { Controller, FormProvider, useWatch } from "react-hook-form"
 import { useHotkeys } from "react-hotkeys-hook"
 
-import type { EnvId, Mode, ServerAsset } from "@/bindings"
+import type { EnvId, ServerAsset } from "@/bindings"
 import { Keys } from "@/components/app/Keys"
+import { FoldRow, PrefRow } from "@/components/app/SettingsList"
 import { Button } from "@/components/ui/button"
 import { FieldGroup } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
 import { toast } from "@/components/ui/toast"
 import { useAgentOptions } from "@/features/agents/agentKeys"
 import { copy } from "@/lib/copy"
@@ -17,24 +20,27 @@ import { ipc } from "@/lib/ipc"
 import { mntToWindows } from "@/lib/paths"
 import { selectCanDistribute, useAssetStore } from "@/stores/assets"
 import { NEW_KEY, useConnectionStore } from "@/stores/connection"
+import { useDeliveryStore } from "@/stores/deliveries"
 import { useProbeStore } from "@/stores/probe"
-import { useSettingsStore } from "@/stores/settings"
+import { useTargetStore } from "@/stores/targets"
 import { useUIStore } from "@/stores/ui"
-import { serverActions, toastError } from "./actions"
-import { AdvancedFields } from "./AdvancedFields"
-import { ConnectFlow, stepOfError, type EnableStage } from "./ConnectFlow"
-import { ConnectionFields } from "./ConnectionFields"
+import { toastError } from "./actions"
+import { AdvancedExtras } from "./AdvancedFields"
+import { ConnectFlow, stepOfError, type EnableStage, type IncludeState } from "./ConnectFlow"
+import { AuthMethodFields, HostPortFields, UserField } from "./ConnectionFields"
 import { useConnectionTest } from "./ConnectionTest"
 import { CopyKeyDialog, type CopyKeyRequest } from "./CopyKeyDialog"
-import { CreateHeader, GrantFields } from "./CreateParts"
+import { CreateHeader } from "./CreateParts"
 import { DraftPreview, SaveErrorAlert } from "./DraftPreview"
+import { isUnreachableByAgents, syncedDirs } from "./includeState"
 import { forgetKeyCheck } from "./keyCheck"
 import { LeaveDialog, useLeaveGuard } from "./LeaveDialog"
 import { SaveFlowDialogs } from "./SaveFlowDialogs"
-import { ProductionField, NameField } from "./sections/BasicSection"
+import { NameField } from "./sections/BasicSection"
 import { firstError, focusField } from "./serverForm"
 import { useAliasContext, useAliasFollow, useServerForm } from "./useServerForm"
-import { useSaveFlow, type RevealTarget } from "./useSaveFlow"
+import { includeMissing, useSaveFlow, type RevealTarget } from "./useSaveFlow"
+import { ValidationError } from "./ValidationError"
 
 type Stage = "testing" | EnableStage
 
@@ -43,9 +49,10 @@ const TEST_ENV: EnvId = "windows"
 
 /**
  * 添加 SSH 服务器（PRD 6.5 分支 A）：居中弹窗里填写，主按钮「连接并启用」一步到位——
- * 测试连接 → 保存并写入托管 ssh 配置 → 密码方式自动生成 ed25519 密钥、安装公钥并删除保存的密码（F-108 AC1、AC3）
- * → 授权给所选 Agent、设置档位 → 后台首次探测，然后关闭弹窗回到列表。
- * 点了「连接并启用」之后，弹窗切到连接过程（ConnectFlow）：逐步显示进度，指纹就地核对，
+ * 测试连接 → 第一次时问要不要加入 SSH 配置 → 保存 → 密码方式自动生成 ed25519 密钥、安装公钥并删除保存的密码（F-108 AC1、AC3）
+ * → 同步给全部已启用的 Agent（档位从只读巡检开始）→ 后台首次探测，然后关闭弹窗回到列表。
+ * 表单里不选 Agent、不选档位（2026-11-10）：要改就在资源行的 Agent 图标组和档位菜单上改。
+ * 点了「连接并启用」之后，弹窗切到连接过程（ConnectFlow）：逐步显示进度，指纹和加入 SSH 配置都就地确认，
  * 失败时写明是哪一步、为什么，并给出「返回修改」「重新连接」「仅保存（暂不启用）」（F-106 AC3）
  */
 export function NewServerForm() {
@@ -59,22 +66,19 @@ export function NewServerForm() {
   const [failed, setFailed] = useState(false)
   const [copyReq, setCopyReq] = useState<CopyKeyRequest | null>(null)
   const [saveIntent, setSaveIntent] = useState<"connect-enable" | "save-only">("connect-enable")
-  const { agents } = useAgentOptions()
-  // 默认授权给全部启用的 Agent；用户点过之后以用户的选择为准（Agent 列表可能比弹窗晚到）
-  const [picked, setGranted] = useState<string[] | null>(null)
-  const granted = picked ?? agents.map((a) => a.key)
-  const defaultMode = useSettingsStore((s) => s.settings?.defaultMode ?? "read-only")
-  const [modeTouched, setModeTouched] = useState<Mode | null>(null)
-  const [production, aliasValue, nameValue, connection] = useWatch({ control: form.control, name: ["production", "alias", "name", "connection"] })
-  // 生产默认只读巡检（F-202 AC2），其他取设置里的默认档位；用户选过就不再跟随环境
-  const mode: Mode = modeTouched ?? (production ? "read-only" : defaultMode)
+  const { agents, compileTargets } = useAgentOptions()
+  // 这次要不要问「加入 SSH 配置」，以及用户的决定：决定之后这一步留在列表里
+  const [askInclude, setAskInclude] = useState(false)
+  const [includeDecision, setIncludeDecision] = useState<"added" | "declined" | null>(null)
+  const [aliasValue, nameValue, connection] = useWatch({ control: form.control, name: ["alias", "name", "connection"] })
 
   const reveal = (target: RevealTarget) => {
-    if (target.advanced) setAdvancedOpen(true)
+    // 别名在名称下面的别名行，不在「高级」里
+    if (target.advanced && target.path !== "alias") setAdvancedOpen(true)
     focusField(form, target.path)
   }
-  const flow = useSaveFlow({ asset: undefined, form, testKey: NEW_KEY, reveal })
-  const guard = useLeaveGuard(form.formState.isDirty && !stage, () => form.reset(undefined, { keepDirtyValues: false }))
+  const flow = useSaveFlow({ asset: undefined, form, testKey: NEW_KEY, reveal, quiet: true })
+  const guard = useLeaveGuard(form.formState.isDirty && (!stage || flow.confirm?.stage === "include"), () => form.reset(undefined, { keepDirtyValues: false }))
 
   // OCI 实例旁的「同时加为 SSH 服务器」：预填地址和名称（F-104 AC4）
   const prefill = useUIStore((s) => s.createPrefill)
@@ -99,7 +103,15 @@ export function NewServerForm() {
     []
   )
 
-  /** 保存成功之后：改用密钥、授权、档位、后台探测 */
+  /** 添加成功的提示条（PRD 6.5），并让新行短暂高亮 */
+  const announce = (asset: ServerAsset) => {
+    const unreachable = isUnreachableByAgents(asset, useTargetStore.getState().environments)
+    const dirs = syncedDirs(useDeliveryStore.getState().inclusions, asset)
+    toast.add({ title: unreachable && asset.connection.verified?.ok ? copy.create.addedNoSshConfig(asset.name) : copy.create.added(asset.name, dirs), type: "success" })
+    useAssetStore.getState().flash([asset.id])
+  }
+
+  /** 保存成功之后：改用密钥、同步给全部已启用的 Agent、后台探测 */
   const enable = async (saved: ServerAsset, password: boolean) => {
     let asset = saved
     try {
@@ -114,13 +126,13 @@ export function NewServerForm() {
         }
       }
       setStage("enabling")
-      const current = useAssetStore.getState().byId[asset.id] ?? asset
-      if (selectCanDistribute(current).ok) {
-        for (const key of granted) await useAssetStore.getState().setDistribute(asset.id, key, true)
+      const current = (useAssetStore.getState().byId[asset.id] ?? asset) as ServerAsset
+      // 选了「暂不加入」、Agent 在哪里都连不上时先不同步；资源行上「加入 SSH 配置」之后再同步
+      if (selectCanDistribute(current).ok && !isUnreachableByAgents(current, useTargetStore.getState().environments)) {
+        for (const a of agents) await useAssetStore.getState().setDistribute(asset.id, a.key, true)
       }
-      if (mode !== current.agent.mode) serverActions.requestMode(current, mode)
-      if (current.type === "vps") void useProbeStore.getState().start(current.id).catch(toastError)
-      toast.add({ title: copy.create.enabled(asset.connection.sshAlias), description: granted.length ? copy.agentSection.effectHint : undefined, type: "success" })
+      void useProbeStore.getState().start(current.id).catch(toastError)
+      announce((useAssetStore.getState().byId[asset.id] ?? current) as ServerAsset)
     } catch (e) {
       toastError(e)
     } finally {
@@ -131,16 +143,12 @@ export function NewServerForm() {
     }
   }
 
-  /** 名称留空时用地址 */
-  const fillName = () => {
-    const host = form.getValues("connection.host").trim()
-    if (!form.getValues("name").trim() && host) form.setValue("name", host, { shouldDirty: true })
-  }
+  /** 这次保存要不要问「加入 SSH 配置」：有运行环境还没加入、也没问过 */
+  const prepareInclude = () => setAskInclude(includeMissing(form.getValues()).length > 0)
 
   const connectEnable = async () => {
     if (stage || flow.saving) return
     setSaveIntent("connect-enable")
-    fillName()
     if (!(await form.trigger())) {
       setView("form")
       const target = firstError(form.formState.errors)
@@ -148,6 +156,7 @@ export function NewServerForm() {
       return
     }
     setFailed(false)
+    prepareInclude()
     setView("connect")
     setStage("testing")
     if (!(await conn.run())) {
@@ -170,8 +179,8 @@ export function NewServerForm() {
   const saveOnly = () => {
     if (stage || flow.saving) return
     setSaveIntent("save-only")
-    fillName()
-    flow.submit({ skipUnverified: true })
+    prepareInclude()
+    flow.submit({ skipUnverified: true, after: announce })
   }
 
   /** 保存失败后的重试沿用用户上次的选择：「仅保存」不会重新连接、转密钥或授权 */
@@ -215,9 +224,14 @@ export function NewServerForm() {
   const test = conn.test
   const running = test?.status === "running" || test?.status === "host-key"
   const echo = aliasValue.trim()
-  const label = stage ? copy.create.stage[stage] : flow.saving ? copy.serverForm.saving : copy.create.connectEnable
   const preview = useMemo(() => <DraftPreview control={form.control} asset={undefined} dirty />, [form.control])
-  const enableStage: EnableStage | null = stage && stage !== "testing" ? stage : flow.saving ? "saving" : null
+  // 等用户决定要不要加入 SSH 配置：过程停在这一步，这一屏只有卡片里的一个主按钮
+  const asking = flow.confirm?.stage === "include"
+  const include: IncludeState | null = asking ? "waiting" : flow.including ? "adding" : (includeDecision ?? (askInclude ? "todo" : null))
+  const enableStage: EnableStage | null = asking || flow.including ? null : stage && stage !== "testing" ? stage : flow.saving ? "saving" : null
+  // 会同步到几个目录：已启用的「运行环境 × 目录」里，这台服务器可用的那些
+  const dirs = includeDecision === "declined" ? 0 : compileTargets.filter((t) => connection.definedIn.includes(t.envId)).length
+  const aliasError = form.formState.errors.alias
   const keyError = test?.status === "failed" && test.error && stepOfError(test.error.id) === "key" ? test.error : undefined
   const keyFix =
     keyError?.id === "key-permissions" ? (
@@ -243,21 +257,48 @@ export function NewServerForm() {
             {flow.error && (
               <SaveErrorAlert error={flow.error} onRetry={retrySave} />
             )}
-            <p className="text-xs text-muted-foreground">{copy.serverForm.required}</p>
-            <FieldGroup className="@container/field-group gap-4">
-              <ConnectionFields onHostChange={alias.sync} />
-              <NameField onChange={alias.sync} fallback={connection.host.trim()} />
-              <ProductionField />
-              <p className="text-sm text-muted-foreground" aria-live="polite">
-                {echo ? (
-                  <>
-                    {copy.create.aliasEchoPrefix} <code className="rounded-sm bg-muted px-1 font-mono text-[0.8125rem] text-foreground">{copy.create.aliasEcho(echo)}</code> {copy.create.aliasEchoSuffix}
-                  </>
-                ) : (
-                  copy.create.aliasEmpty
-                )}
-              </p>
-              <AdvancedFields open={advancedOpen} onOpenChange={setAdvancedOpen} ctx={ctx} onAliasChange={alias.markTouched} />
+            <FieldGroup className="@container/field-group gap-3.5">
+              <HostPortFields onHostChange={alias.sync} />
+              <div className="grid grid-cols-[8.75rem_minmax(0,1fr)] gap-3">
+                <UserField />
+                <NameField onChange={alias.sync} optional />
+              </div>
+              {/* 别名行（PRD 6.5）：跟着名称和地址变，手改之后不再跟随 */}
+              <div className="-mt-1 flex flex-col gap-1">
+                <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+                  <span>{copy.create.aliasLead}</span>
+                  <code className="rounded-[5px] bg-pill px-[7px] py-0.5 font-mono text-[11.5px] text-fg-2">{copy.create.aliasCommand}</code>
+                  <Input
+                    id="server-alias"
+                    aria-label={copy.create.aliasLabel}
+                    aria-required
+                    aria-invalid={!!aliasError || undefined}
+                    placeholder={copy.create.aliasPlaceholder}
+                    className="h-6 w-auto bg-card-2 px-1.5 font-mono text-xs"
+                    style={{ width: `${Math.max(8, echo.length + 3)}ch` }}
+                    spellCheck={false}
+                    autoComplete="off"
+                    {...form.register("alias", { onChange: (ev: { target: { value: string } }) => alias.markTouched(ev.target.value) })}
+                  />
+                  <span>{copy.create.aliasTail}</span>
+                </div>
+                <ValidationError error={aliasError} />
+              </div>
+              <AuthMethodFields compact />
+              <div className="divide-y divide-line-2 overflow-hidden rounded-list border border-line bg-card">
+                <Controller
+                  name="production"
+                  control={form.control}
+                  render={({ field }) => (
+                    <PrefRow label={copy.basic.production} labelFor="asset-production" hint={copy.create.prodHint}>
+                      <Switch id="asset-production" checked={field.value} onCheckedChange={(v) => field.onChange(v)} />
+                    </PrefRow>
+                  )}
+                />
+                <FoldRow label={copy.connection.advanced} hint={copy.create.advancedHint} open={advancedOpen} onOpenChange={setAdvancedOpen} plain>
+                  <AdvancedExtras ctx={ctx} />
+                </FoldRow>
+              </div>
             </FieldGroup>
           </div>
           {view === "connect" && (
@@ -276,62 +317,72 @@ export function NewServerForm() {
                 keyPath={connection.identityFile[TEST_ENV]}
                 test={test}
                 enable={enableStage}
-                agents={granted.length}
+                dirs={dirs}
+                include={include}
+                includeEnvs={flow.confirm?.stage === "include" ? flow.confirm.envIds : []}
                 onTrust={() => void useConnectionStore.getState().trustHostKey(NEW_KEY).catch(toastError)}
-                onCancel={conn.cancel}
+                onBack={() => {
+                  conn.cancel()
+                  backToForm()
+                }}
+                onInclude={() => void flow.acceptInclude(() => setIncludeDecision("added"))}
+                onSkipInclude={() => {
+                  setIncludeDecision("declined")
+                  flow.declineInclude()
+                }}
                 fixKey={keyFix}
               />
             </div>
           )}
         </ScrollArea>
 
-        <div className="flex shrink-0 flex-col gap-3 border-t px-3 py-2.5">
-          {view === "form" && (
-            <GrantFields
-              title={copy.create.grantAfter}
-              agents={agents}
-              selected={granted}
-              onSelected={setGranted}
-              mode={mode}
-              onMode={setModeTouched}
-              prod={production}
-            />
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t px-3 py-2.5">
+          {view === "form" && <span className="mr-auto min-w-0 text-xs text-muted-foreground">{copy.create.footHint}</span>}
+          {/* 核对指纹时卡片里已经有「返回修改」，底部不再重复 */}
+          {view === "connect" && running && stage === "testing" && test?.status !== "host-key" && (
+            <Button variant="ghost" size="sm" onClick={conn.cancel}>
+              {copy.test.cancel}
+            </Button>
           )}
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            {/* 核对指纹时卡片里已经有「取消」，底部不再重复 */}
-            {view === "connect" && running && stage === "testing" && test?.status !== "host-key" && (
-              <Button variant="ghost" size="sm" onClick={conn.cancel}>
-                {copy.test.cancel}
-              </Button>
-            )}
-            {view === "connect" && settled && (
-              <Button variant="ghost" size="sm" onClick={backToForm}>
-                {copy.connect.back}
-              </Button>
-            )}
-            {view === "form" && !stage && (
-              <Button variant="ghost" size="sm" disabled={flow.saving} onClick={() => useUIStore.getState().closeInspector()}>
-                {copy.serverForm.cancel}
-              </Button>
-            )}
-            {failed && settled && (
-              <Button variant="outline" size="sm" disabled={flow.saving} onClick={saveOnly}>
-                {copy.create.saveOnly}
-              </Button>
-            )}
-            {/* 连接过程中指纹卡片里的「信任并继续」是这一屏唯一的主按钮 */}
-            {(view === "form" || (test?.status !== "host-key" && stage !== "testing")) && (
-              <Button size="sm" disabled={busy} onClick={() => void connectEnable()}>
-                {busy && <Spinner data-icon="inline-start" aria-hidden />}
-                <span aria-live="polite">{view === "connect" && settled ? copy.connect.retry : label}</span>
-                {!busy && <Keys keys={KEY_HINT.save} className="[&>kbd]:bg-primary-foreground/15 [&>kbd]:text-primary-foreground" />}
-              </Button>
-            )}
-          </div>
+          {view === "connect" && asking && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                flow.cancelConfirm()
+                backToForm()
+              }}
+            >
+              {copy.connect.back}
+            </Button>
+          )}
+          {view === "connect" && settled && !asking && (
+            <Button variant="ghost" size="sm" onClick={backToForm}>
+              {copy.connect.back}
+            </Button>
+          )}
+          {view === "form" && !stage && (
+            <Button variant="ghost" size="sm" disabled={flow.saving} onClick={() => useUIStore.getState().closeInspector()}>
+              {copy.serverForm.cancel}
+            </Button>
+          )}
+          {failed && settled && !asking && (
+            <Button variant="outline" size="sm" disabled={flow.saving} onClick={saveOnly}>
+              {copy.create.saveOnly}
+            </Button>
+          )}
+          {/* 连接过程中，指纹卡和加入 SSH 配置卡里的按钮是这一屏唯一的主按钮；忙碌时阶段写在步骤列表里，按钮只写一句 */}
+          {(view === "form" || (test?.status !== "host-key" && stage !== "testing" && !asking)) && (
+            <Button size="sm" disabled={busy} onClick={() => void connectEnable()}>
+              {busy && <Spinner data-icon="inline-start" aria-hidden />}
+              <span aria-live="polite">{busy ? copy.create.working : view === "connect" ? copy.connect.retry : copy.create.connectEnable}</span>
+              {!busy && <Keys keys={KEY_HINT.save} className="[&>kbd]:bg-primary-foreground/15 [&>kbd]:text-primary-foreground" />}
+            </Button>
+          )}
         </div>
       </section>
 
-      <SaveFlowDialogs flow={flow} />
+      <SaveFlowDialogs flow={flow} inlineInclude />
       <LeaveDialog guard={guard} />
       <CopyKeyDialog request={copyReq} onClose={() => setCopyReq(null)} onCopied={keyCopied} />
       {preview}

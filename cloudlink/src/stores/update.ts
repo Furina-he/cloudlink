@@ -28,7 +28,6 @@ interface UpdateStoreState {
   load: () => Promise<void>
   setDialogOpen: (open: boolean) => void
   install: () => Promise<void>
-  cancel: () => Promise<void>
   _onChanged: (status: UpdateStatus) => void
 }
 
@@ -61,20 +60,22 @@ export const useUpdateStore = create<UpdateStoreState>()((set) => ({
     }
   },
 
-  cancel: async () => {
-    // 取消失败时下载照常继续，进度和结果仍由事件推送
-    await ipc.cancelUpdate().catch(() => undefined)
-  },
-
   _onChanged: (status) => {
     changes++
     set({ status })
   },
 }))
 
-/** 有新版本（含下载中、正在安装）时才显示提醒；idle 时界面上没有任何更新元素（F-406 AC1） */
+/** 发现了新版本（任何非 idle 状态）：对话框和设置里的下载状态用它 */
 export const hasUpdate = (status: UpdateStatus | null): status is UpdateStatus & { version: string } =>
   !!status && status.state !== "idle" && !!status.version
+
+/**
+ * 顶栏提醒和命令面板只在这几种时候出现（F-406 AC1，magpie 式）：后台下好了、正在安装、后台下载失败。
+ * 后台下载期间什么都不显示
+ */
+export const showReminder = (status: UpdateStatus | null): status is UpdateStatus & { version: string } =>
+  hasUpdate(status) && (status.state === "ready" || status.state === "installing" || (status.state === "available" && !!status.error))
 
 /** 下载百分比；总大小未知时为 null */
 export function downloadPercent(status: UpdateStatus): number | null {

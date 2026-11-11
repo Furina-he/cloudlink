@@ -17,6 +17,7 @@ import {
 import { CodeBlock, CodeBlockContent, CodeBlockLine } from "@/components/ui/code-block"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { copy } from "@/lib/copy"
 import { cn } from "@/lib/utils"
 import { toastError } from "@/features/servers/actions"
@@ -93,6 +94,11 @@ export function GuardDialogs() {
           <AlertDialogDescription>{install ? copy.guard.installDescription : copy.guard.removeDescription}</AlertDialogDescription>
         </AlertDialogHeader>
         {install && status && (
+          <Collapsible className="flex min-w-0 flex-col gap-2">
+            <CollapsibleTrigger className="w-fit rounded-sm text-xs text-muted-foreground underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+              {copy.include.more}
+            </CollapsibleTrigger>
+            <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-200 data-ending-style:h-0 data-starting-style:h-0">
           <div className="flex min-w-0 flex-col gap-3 text-xs">
             <div className="flex min-w-0 flex-col gap-1.5">
               <p className="text-muted-foreground">
@@ -105,6 +111,8 @@ export function GuardDialogs() {
               <span className="font-mono break-all">{status.planned.backupPath}</span>
             </p>
           </div>
+            </CollapsibleContent>
+          </Collapsible>
         )}
         <AlertDialogFooter>
           <AlertDialogCancel ref={cancelRef} disabled={busy}>

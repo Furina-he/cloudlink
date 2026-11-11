@@ -66,11 +66,19 @@ function KeyStatus({ id, env, path, hideWslPermissions, onCopy }: { id: string; 
   )
 }
 
-/** 私钥文件：每个写入的运行环境一行路径，带文件选择；WSL 的行可以「复制到 WSL」（F-108 AC4） */
-function KeyRows() {
+/**
+ * 私钥文件：每个写入的运行环境一行路径，带文件选择；WSL 的行可以「复制到 WSL」（F-108 AC4）。
+ * compact（新建表单，PRD 6.5）：只留第一个运行环境的一行，WSL 的那一份添加后在详情里一键复制
+ */
+function KeyRows({ compact }: { compact?: boolean }) {
   const { control, getValues, setValue, formState: { errors } } = useFormContext<ServerFormValues>()
   const definedIn = useWatch({ control, name: "connection.definedIn" })
-  const envs = useAvailableEnvs().filter((e) => definedIn.includes(e.id))
+  const written = sortEnvs(
+    useAvailableEnvs()
+      .filter((e) => definedIn.includes(e.id))
+      .map((e) => e.id)
+  )
+  const envs = compact ? written.slice(0, 1) : written
   const [copyReq, setCopyReq] = useState<CopyKeyRequest | null>(null)
   const error = errors.connection?.identityFile
 
@@ -101,18 +109,18 @@ function KeyRows() {
         name="connection.identityFile"
         control={control}
         render={({ field }) => (
-          <div className="grid grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-3 gap-y-2">
-            {sortEnvs(envs.map((e) => e.id)).map((env, i) => {
+          <div className={compact ? "grid grid-cols-[0_minmax(0,1fr)] items-center gap-y-2" : "grid grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-3 gap-y-2"}>
+            {envs.map((env, i) => {
               const value = field.value[env] ?? ""
               const wsl = env.startsWith("wsl:")
               const mnt = wsl && isUnderMnt(value)
               const id = `server-key-${i}`
               return (
                 <div key={env} className="contents">
-                  <FieldLabel htmlFor={id} className="text-xs font-normal text-muted-foreground">
+                  <FieldLabel htmlFor={id} className={compact ? "sr-only" : "text-xs font-normal text-muted-foreground"}>
                     {copy.env.long(env)}
                   </FieldLabel>
-                  <InputGroup>
+                  <InputGroup className="col-start-2">
                     <InputGroupInput
                       id={id}
                       ref={i === 0 ? field.ref : undefined}
@@ -134,7 +142,7 @@ function KeyRows() {
                     </InputGroupAddon>
                   </InputGroup>
                   <KeyStatus id={`${id}-check`} env={env} path={value} hideWslPermissions={mnt} onCopy={() => requestCopy(env)} />
-                  {wsl && (
+                  {wsl && !compact && (
                     <div className="col-start-2 flex flex-wrap items-center gap-x-2 gap-y-1">
                       {mnt && (
                         <span id={`${id}-mnt`} className="flex items-center gap-1 text-xs text-warning">
@@ -155,6 +163,7 @@ function KeyRows() {
         )}
       />
       <ValidationError error={error} />
+      {compact && written.some((env) => env.startsWith("wsl:")) && <p className="text-xs text-muted-foreground">{copy.create.keyHint}</p>}
       <CopyKeyDialog request={copyReq} onClose={() => setCopyReq(null)} onCopied={copied} />
     </FieldSet>
   )
@@ -237,10 +246,10 @@ function PasswordField({ assetId }: { assetId?: string }) {
 }
 
 /** 认证方式下面随之变化的字段 */
-export function AuthFields({ assetId }: { assetId?: string }) {
+export function AuthFields({ assetId, compact }: { assetId?: string; compact?: boolean }) {
   const { control } = useFormContext<ServerFormValues>()
   const method = useWatch({ control, name: "connection.method" })
-  if (method === "key") return <KeyRows />
+  if (method === "key") return <KeyRows compact={compact} />
   if (method === "agent") return <AgentInfo />
   return <PasswordField assetId={assetId} />
 }

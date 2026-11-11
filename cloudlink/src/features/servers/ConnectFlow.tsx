@@ -4,6 +4,7 @@ import {
   CircleMinusIcon,
   CircleXIcon,
   CopyIcon,
+  FileTextIcon,
   FingerprintIcon,
   ServerIcon,
   ShieldAlertIcon,
@@ -12,6 +13,7 @@ import { motion } from "motion/react"
 import type { ReactNode } from "react"
 
 import type { EnvId, KeyCheck, SshErrorId } from "@/bindings"
+import { CommandChip } from "@/components/app/CommandChip"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
@@ -21,9 +23,12 @@ import { formatDuration } from "@/lib/format"
 import type { ServerFormValues } from "@/lib/schemas"
 import { cn } from "@/lib/utils"
 import type { ConnectionTest } from "@/stores/connection"
+import { IncludeDetails } from "./IncludeParts"
 import { useKeyCheck } from "./keyCheck"
 
-export type ConnectStepId = "key" | "reach" | "hostKey" | "login" | "enable"
+export type ConnectStepId = "key" | "reach" | "hostKey" | "login" | "include" | "convert" | "sync"
+/** 「让 Agent 能用别名连接」这一步：还没到、等用户决定、正在加入、已加入、暂不加入 */
+export type IncludeState = "todo" | "waiting" | "adding" | "added" | "declined"
 export type ConnectStepState = "pending" | "running" | "done" | "attention" | "failed" | "skipped"
 /** 连接通过之后的启用阶段 */
 export type EnableStage = "saving" | "converting" | "enabling"
@@ -58,22 +63,37 @@ export function stepOfError(id: SshErrorId): ConnectStepId {
   }
 }
 
-const ORDER: ConnectStepId[] = ["key", "reach", "hostKey", "login", "enable"]
+const ORDER: ConnectStepId[] = ["key", "reach", "hostKey", "login", "include", "convert", "sync"]
 
 /**
  * 由一次测试连接的结果推出各步骤的状态。后端只在结束时报告一次结果，
- * 所以进行中的那一步按已知信息推断：确认过指纹之后在登录，否则在连接
+ * 所以进行中的那一步按已知信息推断：确认过指纹之后在登录，否则在连接。
+ * 「检查私钥」只有私钥方式有，「安装免密密钥」只有密码方式有，
+ * 「让 Agent 能用别名连接」只在有运行环境还没加入 SSH 配置、也没问过时出现（include 不为空）
  */
 export function connectSteps(input: {
   method: ServerFormValues["connection"]["method"]
   test: ConnectionTest | undefined
   keyCheck: KeyCheck | null
   enable: EnableStage | null
-  agents: number
+  /** 会同步到几个目录 */
+  dirs: number
+  include?: IncludeState | null
 }): ConnectStep[] {
-  const { method, test, keyCheck, enable, agents } = input
-  const ids = ORDER.filter((id) => id !== "key" || method === "key")
+  const { method, test, keyCheck, enable, dirs, include } = input
+  const ids = ORDER.filter((id) => (id !== "key" || method === "key") && (id !== "include" || !!include) && (id !== "convert" || method === "password"))
   const d = copy.connect.detail
+  /** 用户对加入 SSH 配置的决定，不随连接结果变化 */
+  const includeStep: ConnectStep | undefined =
+    include === "waiting"
+      ? { id: "include", state: "attention", detail: d.includeWaiting }
+      : include === "adding"
+        ? { id: "include", state: "running", detail: d.includeAdding }
+        : include === "added"
+          ? { id: "include", state: "done", detail: d.includeAdded }
+          : include === "declined"
+            ? { id: "include", state: "skipped", detail: d.includeDeclined }
+            : undefined
   const keyDone: ConnectStep = {
     id: "key",
     state: "done",
@@ -90,7 +110,7 @@ export function connectSteps(input: {
     return { id: "hostKey", state: "done", detail }
   }
   const byId = (steps: Partial<Record<ConnectStepId, ConnectStep>>, rest: ConnectStepState) =>
-    ids.map((id) => steps[id] ?? { id, state: rest })
+    ids.map((id) => (id === "include" && includeStep) || steps[id] || { id, state: rest })
 
   if (!test) return byId({}, "pending")
   switch (test.status) {
@@ -128,13 +148,20 @@ export function connectSteps(input: {
       )
     }
     case "ok": {
-      const enableStep: ConnectStep = enable
-        ? {
-            id: "enable",
-            state: "running",
-            detail: enable === "saving" ? d.saving : enable === "converting" ? d.converting : d.enabling(agents),
-          }
-        : { id: "enable", state: "pending" }
+      // 保存排在「安装免密密钥」之前；没有那一步时算在「同步给 Agent」里
+      const password = method === "password"
+      const convert: ConnectStep =
+        enable === "converting"
+          ? { id: "convert", state: "running", detail: d.converting }
+          : enable === "saving"
+            ? { id: "convert", state: "running", detail: d.saving }
+            : { id: "convert", state: enable === "enabling" ? "done" : "pending" }
+      const sync: ConnectStep =
+        enable === "enabling"
+          ? { id: "sync", state: "running", detail: d.syncing(dirs) }
+          : enable === "saving" && !password
+            ? { id: "sync", state: "running", detail: d.saving }
+            : { id: "sync", state: "pending" }
       return byId(
         {
           key: keyDone,
@@ -145,7 +172,8 @@ export function connectSteps(input: {
             state: "done",
             detail: [d.loggedIn(test.remoteOs), test.ms != null ? formatDuration(test.ms) : null].filter(Boolean).join(" · "),
           },
-          enable: enableStep,
+          convert,
+          sync,
         },
         "pending"
       )
@@ -166,7 +194,7 @@ export function connectSteps(input: {
   }
 }
 
-function StepIcon({ state }: { state: ConnectStepState }) {
+function StepIcon({ id, state }: { id: ConnectStepId; state: ConnectStepState }) {
   switch (state) {
     case "running":
       return <Spinner aria-hidden />
@@ -175,7 +203,7 @@ function StepIcon({ state }: { state: ConnectStepState }) {
     case "failed":
       return <CircleXIcon className="text-destructive" />
     case "attention":
-      return <FingerprintIcon className="text-foreground" />
+      return id === "include" ? <FileTextIcon className="text-foreground" /> : <FingerprintIcon className="text-foreground" />
     case "skipped":
       return <CircleMinusIcon />
     case "pending":
@@ -183,24 +211,28 @@ function StepIcon({ state }: { state: ConnectStepState }) {
   }
 }
 
-function stepTitle(id: ConnectStepId, host: string, method: ServerFormValues["connection"]["method"]) {
+function stepTitle(id: ConnectStepId, method: ServerFormValues["connection"]["method"]) {
   const s = copy.connect.steps
   switch (id) {
     case "key":
       return s.key
     case "reach":
-      return s.reach(host)
+      return s.reach
     case "hostKey":
       return s.hostKey
     case "login":
       return s.login(copy.auth[method])
-    case "enable":
-      return s.enable
+    case "include":
+      return s.include
+    case "convert":
+      return s.convert
+    case "sync":
+      return s.sync
   }
 }
 
 /** 第一次连接：指纹就地核对，不再叠一层对话框（PRD 6.5、F-106 AC2） */
-function FingerprintCheck({ host, fingerprint, onTrust, onCancel }: { host: string; fingerprint: string; onTrust: () => void; onCancel: () => void }) {
+function FingerprintCheck({ host, fingerprint, onTrust, onBack }: { host: string; fingerprint: string; onTrust: () => void; onBack: () => void }) {
   const copyFingerprint = () =>
     void navigator.clipboard
       ?.writeText(fingerprint)
@@ -222,12 +254,32 @@ function FingerprintCheck({ host, fingerprint, onTrust, onCancel }: { host: stri
         <code className="w-fit max-w-full rounded-sm bg-muted px-1.5 py-0.5 font-mono break-all text-foreground">{copy.hostKey.verifyCommand}</code>
       </div>
       <div className="flex flex-wrap justify-end gap-2">
-        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-          {copy.common.cancel}
+        <Button type="button" variant="ghost" size="sm" onClick={onBack}>
+          {copy.connect.back}
         </Button>
         <Button type="button" size="sm" onClick={onTrust} autoFocus>
           <FingerprintIcon data-icon="inline-start" />
           {copy.hostKey.trust}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/** 让 Agent 能用别名连接（F-107 AC1）：就地问一次，不再叠一层对话框；细节收在「了解详情」里 */
+function IncludeAsk({ alias, envIds, onAdd, onSkip }: { alias: string; envIds: EnvId[]; onAdd: () => void; onSkip: () => void }) {
+  return (
+    <div className="flex flex-col gap-2.5 rounded-lg border bg-card p-3" data-testid="connect-include">
+      <p className="text-sm leading-relaxed">
+        {copy.include.ask.lead} <CommandChip>{copy.include.ask.command(alias)}</CommandChip> {copy.include.ask.tail}
+      </p>
+      <IncludeDetails envIds={envIds} />
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button type="button" variant="ghost" size="sm" onClick={onSkip}>
+          {copy.include.skip}
+        </Button>
+        <Button type="button" size="sm" onClick={onAdd} autoFocus>
+          {copy.include.add}
         </Button>
       </div>
     </div>
@@ -277,9 +329,13 @@ export function ConnectFlow({
   keyPath,
   test,
   enable,
-  agents,
+  dirs,
+  include,
+  includeEnvs,
   onTrust,
-  onCancel,
+  onBack,
+  onInclude,
+  onSkipInclude,
   fixKey,
 }: {
   name: string
@@ -292,14 +348,19 @@ export function ConnectFlow({
   keyPath?: string
   test: ConnectionTest | undefined
   enable: EnableStage | null
-  agents: number
+  dirs: number
+  include?: IncludeState | null
+  includeEnvs?: EnvId[]
   onTrust: () => void
-  onCancel: () => void
+  /** 指纹卡里的「返回修改」：取消这次连接并回到表单 */
+  onBack: () => void
+  onInclude?: () => void
+  onSkipInclude?: () => void
   /** 私钥那一步失败时的修复按钮（复制到 ~/.ssh 等） */
   fixKey?: ReactNode
 }) {
   const keyCheck = useKeyCheck(method === "key" ? keyEnv : undefined, keyPath, 0)
-  const steps = connectSteps({ method, test, keyCheck, enable, agents })
+  const steps = connectSteps({ method, test, keyCheck, enable, dirs, include })
   const authLabel = copy.auth[method]
 
   return (
@@ -324,18 +385,23 @@ export function ConnectFlow({
               className={cn("w-full", (step.state === "done" || step.state === "attention") && "text-foreground")}
             >
               <TraceIcon>
-                <StepIcon state={step.state} />
+                <StepIcon id={step.id} state={step.state} />
               </TraceIcon>
-              <TraceTitle>{stepTitle(step.id, host, method)}</TraceTitle>
+              <TraceTitle>{stepTitle(step.id, method)}</TraceTitle>
               <span className="sr-only">{copy.connect.state[step.state]}</span>
               {step.detail && <TraceDescription className="ml-auto min-w-0 shrink text-right">{step.detail}</TraceDescription>}
             </TraceLine>
-            {step.state === "attention" && test?.hostKey && (
+            {step.id === "hostKey" && step.state === "attention" && test?.hostKey && (
               <motion.div className="pl-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.15 }}>
-                <FingerprintCheck host={host} fingerprint={test.hostKey.fingerprint} onTrust={onTrust} onCancel={onCancel} />
+                <FingerprintCheck host={host} fingerprint={test.hostKey.fingerprint} onTrust={onTrust} onBack={onBack} />
               </motion.div>
             )}
-            {step.state === "failed" && test && (
+            {step.id === "include" && step.state === "attention" && onInclude && onSkipInclude && (
+              <motion.div className="pl-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.15 }}>
+                <IncludeAsk alias={alias} envIds={includeEnvs ?? []} onAdd={onInclude} onSkip={onSkipInclude} />
+              </motion.div>
+            )}
+            {step.state === "failed" && step.id !== "include" && test && (
               <motion.div className="pl-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.15 }}>
                 <StepError test={test} fix={step.id === "key" ? fixKey : undefined} />
               </motion.div>

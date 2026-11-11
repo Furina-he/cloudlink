@@ -278,25 +278,28 @@ async function connect() {
 
 // ---- 界面 ----
 
-const reminder = () => page.getByRole("banner").getByRole("button", { name: /新版本|下载中|正在安装/ })
+const reminder = () => page.getByRole("banner").getByRole("button", { name: /新版本|下载失败|正在安装/ })
 const dialog = () => page.getByRole("dialog", { name: /^新版本 / })
 const dialogButton = (name) => dialog().getByRole("button", { name, exact: true })
 
-/** 关掉再打开检查开关：后端立即重新读清单，状态回到干净的「有新版本」 */
-async function recheck(version) {
+/** 关掉再打开检查开关：后端立即重新读清单，并在后台下载。默认等到下好（ready），失败场景等到带着原因的 available */
+async function recheck(version, errorId = null) {
   await invoke("update_settings", { patch: { autoCheckUpdates: false } })
   await invoke("update_settings", { patch: { autoCheckUpdates: true } })
   await waitFor(async () => {
     const current = await status()
-    return current.state === "available" && current.version === version && !current.error
-  }, `update ${version} is offered`)
+    if (current.version !== version) return false
+    return errorId === null ? current.state === "ready" && !current.error : current.state === "available" && current.error?.id === errorId
+  }, errorId === null ? `update ${version} is downloaded` : `update ${version} fails with ${errorId}`, 120_000)
 }
 
+/** 后台下载被拒绝：提醒照样出现（「下载失败，查看详情」），对话框写清原因，什么都没装 */
 async function installFails(version, errorId, text, label) {
-  await recheck(version)
+  await recheck(version, errorId)
+  await expect(reminder()).toHaveAccessibleName(`${version} 下载失败，查看详情`)
   await reminder().click()
-  await dialogButton("下载并安装").click()
-  await expect(dialog().locator("[data-slot=alert]")).toContainText(text, { timeout: 60_000 })
+  await expect(dialog().locator("[data-slot=alert]")).toContainText(text)
+  await expect(dialogButton("重试")).toBeEnabled()
   const current = await status()
   assert.equal(current.state, "available")
   assert.equal(current.error?.id, errorId)
@@ -536,9 +539,9 @@ try {
   })
 
   await check("AC6: turning checks off stops requests across a restart; turning them on checks at once", async () => {
-    await page.keyboard.press("Control+3")
+    await page.keyboard.press("Control+4")
     await expect(page.getByText(`当前版本 ${OLD}`)).toBeVisible()
-    const toggle = page.getByRole("switch", { name: "自动检查更新" })
+    const toggle = page.getByRole("switch", { name: "自动下载更新" })
     await expect(toggle).toBeChecked()
     await toggle.click()
     await expect(toggle).not.toBeChecked()
@@ -553,60 +556,61 @@ try {
     await delay(Math.max(0, since + 20_000 - Date.now()))
     assert.deepEqual(server.requests.filter((item) => item.at >= since), [], "No request may be sent while checks are off")
 
-    await page.keyboard.press("Control+3")
+    await page.keyboard.press("Control+4")
     const clicked = Date.now()
-    await page.getByRole("switch", { name: "自动检查更新" }).click()
+    await page.getByRole("switch", { name: "自动下载更新" }).click()
     const request = await waitFor(() => server.requests.find((item) => item.at >= clicked), "check right after switching on", 10_000)
     report.checkAfterSwitchOnMs = request.at - clicked
     assert.ok(report.checkAfterSwitchOnMs < 3_000, `check came ${report.checkAfterSwitchOnMs}ms after switching on`)
     await page.keyboard.press("Control+1")
   })
 
-  await check(`AC1/AC2: ${NEW} brings a quiet reminder and plain-text notes; cancelling a real download keeps ${OLD}`, async () => {
+  await check(`AC1/AC2: ${NEW} downloads in the background with no reminder, then brings a quiet reminder and plain-text notes; switching off mid-download keeps ${OLD}`, async () => {
     server.manifest = await manifestFor(NEW)
     server.installer = await readFile(join(ROOT, NEW, installerName(NEW)))
     server.stallAt = 0.4
+    await invoke("update_settings", { patch: { autoCheckUpdates: false } })
+    await invoke("update_settings", { patch: { autoCheckUpdates: true } })
+    await waitFor(async () => (await status()).downloaded > 0, "background download progress", 60_000)
+    assert.equal((await status()).state, "downloading")
+    // magpie 式：后台下载期间顶栏什么都不显示，进度只在设置里
+    await expect(reminder()).toHaveCount(0)
+    await page.keyboard.press("Control+4")
+    await expect(page.getByText(new RegExp(`^正在下载 ${NEW.replaceAll(".", "\\.")}… \\d+%$`))).toBeVisible()
+    await shot("03-background-download")
+    // 关掉开关取消下载（客户端断开，服务端停住的响应随之结束），什么都没装
+    await page.getByRole("switch", { name: "自动下载更新" }).click()
+    await waitFor(async () => (await status()).state === "idle", "switching off cancels the download")
+    await page.getByRole("switch", { name: "自动下载更新" }).click()
+    assert.equal(await fileHash(installedExe), report.oldExe)
+    assert.deepEqual(installedProcesses(), [report.pid])
+    server.stallAt = null
     await recheck(NEW)
+    await page.keyboard.press("Control+1")
+
     await expect(reminder()).toHaveAccessibleName(`有新版本 ${NEW}，查看并更新`)
+    await expect(reminder()).toHaveText("更新")
     await expect(page.getByRole("banner").locator("[aria-live=polite]")).toHaveText(`有新版本 ${NEW}`)
     await expect(page.getByRole("dialog")).toHaveCount(0)
-    await shot("03-reminder")
+    await shot("04-reminder")
 
     await reminder().click()
     await expect(dialog()).toBeVisible()
     await expect(dialog().getByText(new RegExp(`^当前版本 ${OLD.replaceAll(".", "\\.")} · 发布于 \\d{4}-\\d{2}-\\d{2}$`))).toBeVisible()
     const notes = dialog().locator("[data-slot=scroll-area] p")
     assert.equal(await notes.evaluate((element) => element.innerText), `CloudLink ${NEW} update test\n- second line`)
-    await expect(dialogButton("下载并安装")).toBeFocused()
-
-    await dialogButton("下载并安装").click()
-    await expect(dialog().getByRole("progressbar")).toBeVisible()
-    await waitFor(async () => (await status()).downloaded > 0, "download progress")
-    await expect(dialog().getByText(/^已下载 .+ \/ .+$/)).toBeVisible()
-    await shot("04-downloading")
-    // 模态对话框打开时顶栏不在无障碍树里：关掉对话框再看提醒，下载照常进行
-    await dialogButton("稍后").click()
-    await expect(dialog()).toHaveCount(0)
-    await expect(reminder()).toHaveAccessibleName(/^下载中 \d+%，查看更新$/)
-    assert.equal((await status()).state, "downloading")
-    await reminder().click()
-    await dialogButton("取消下载").click()
-    await expect(dialogButton("下载并安装")).toBeEnabled({ timeout: 10_000 })
-    const current = await status()
-    assert.equal(current.state, "available")
-    assert.equal(current.error, undefined)
-    assert.equal(current.downloaded, undefined)
+    await expect(dialogButton("重启以更新")).toBeFocused()
+    await expect(dialog().getByRole("progressbar")).toHaveCount(0)
     await dialogButton("稍后").click()
     await expect(dialog()).toHaveCount(0)
     await expect(reminder()).toBeFocused()
+    assert.equal((await status()).state, "ready")
     assert.equal(await fileHash(installedExe), report.oldExe)
     assert.deepEqual(installedProcesses(), [report.pid])
-    server.stallAt = null
   })
 
   await check("AC4: a running probe blocks installing, even when the interface is bypassed", async () => {
-    // 万一探测比预期结束得早，下载也只会失败，不会真的安装
-    server.installer = null
+    // 安装包已在后台下好（ready）；探测要连 SSH，「重启以更新」紧跟在开始探测之后，一定会被挡住
     await recheck(NEW)
     const probes = await activityCount("probe")
     const [saved] = await invoke("list_assets")
@@ -614,7 +618,7 @@ try {
     const error = await invokeError("install_update")
     assert.equal(error?.id, "update-busy", JSON.stringify(error))
     assert.deepEqual(error.params, { task: "probe", name: saved.connection.sshAlias })
-    assert.equal((await status()).state, "available")
+    assert.equal((await status()).state, "ready")
     await waitFor(async () => (await activityCount("probe")) > probes, "probe is published", 120_000)
   })
 
@@ -664,13 +668,11 @@ try {
 
     server.manifest = await manifestFor(NEW)
     server.installer = await readFile(join(ROOT, NEW, installerName(NEW)))
-    server.chunks = 60
-    server.pause = 100
     await recheck(NEW)
     const checksBefore = requestsTo("/latest.json")
     await reminder().click()
-    await dialogButton("下载并安装").click()
-    await expect(dialog().getByRole("progressbar")).toBeVisible()
+    await dialogButton("重启以更新").click()
+    await expect(dialogButton("正在安装")).toBeDisabled()
     await shot("05-updating")
     await disconnect()
 

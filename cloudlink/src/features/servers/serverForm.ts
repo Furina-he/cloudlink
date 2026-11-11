@@ -40,7 +40,7 @@ export function formValuesOf(asset: ServerAsset): ServerFormValues {
   }
 }
 
-/** 新建表单（6.5）：默认端口 22、私钥认证、写入全部可用运行环境（F-107 AC5） */
+/** 新建表单（6.5）：默认端口 22、先选中密码、写入全部可用运行环境（F-107 AC5） */
 export function newServerValues(envIds: EnvId[]): ServerFormValues {
   return {
     source: "managed",
@@ -49,7 +49,7 @@ export function newServerValues(envIds: EnvId[]): ServerFormValues {
       host: "",
       port: 22,
       user: "root",
-      method: "key",
+      method: "password",
       identityFile: {},
       password: "",
       passwordSaved: false,
@@ -103,7 +103,8 @@ export function toAssetInput(v: ServerFormValues, base: ServerAsset | undefined)
   return {
     id: base?.id,
     type: "vps",
-    name: v.name.trim(),
+    // 新建时名称可以留空，用地址（PRD 6.5）
+    name: v.name.trim() || (v.source === "managed" ? v.connection.host.trim() : v.alias.trim()),
     production: v.production,
     provider: v.provider.trim() || undefined,
     region: v.region.trim() || undefined,
@@ -150,12 +151,12 @@ export function uniqueAlias(base: string, taken: string[]): string {
 
 // ---------- 保存校验失败：聚焦第一个出错字段，必要时展开「高级」（6.4） ----------
 
-/** 字段在界面上的顺序；连接配置里的别名、跳板机、运行环境在「高级」里 */
+/** 字段在界面上的顺序；连接编辑里的别名、跳板机、运行环境在「高级」里（添加表单的别名在名称下面，不用展开） */
 const FIELD_ORDER: { path: string; advanced?: boolean }[] = [
-  { path: "name" },
   { path: "connection.host" },
   { path: "connection.port" },
   { path: "connection.user" },
+  { path: "name" },
   { path: "connection.identityFile" },
   { path: "connection.password" },
   { path: "alias", advanced: true },

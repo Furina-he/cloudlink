@@ -160,10 +160,11 @@ export const ipc = {
   resetData: () => invoke<void>("reset_data"),
   /** F-406：当前版本和最近一次检查的结果 */
   getUpdateStatus: () => invoke<UpdateStatus>("get_update_status"),
-  /** F-406：下载、校验签名并安装，进度经 update://changed；有进行中的任务时返回 update-busy；Windows 上开始安装后应用退出 */
+  /**
+   * F-406：ready 时安装后台下好的安装包（「重启以更新」），有进行中的任务时返回 update-busy，Windows 上开始安装后应用退出；
+   * 后台下载失败（available 带 error）时重新下载（「重试」），进度经 update://changed
+   */
   installUpdate: () => invoke<void>("install_update"),
-  /** 只能取消下载阶段，取消后回到 available */
-  cancelUpdate: () => invoke<void>("cancel_update"),
   /** 在文件管理器中显示（PRD 7.3：plugin-opener 的 revealItemInDir） */
   revealInDir: (path: string) => revealItemInDir(path),
   /** 选择目录（PRD 7.3：plugin-dialog 的 open({ directory: true })）；取消时返回 null */

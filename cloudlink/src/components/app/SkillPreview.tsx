@@ -8,7 +8,6 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { copy, ipcErrorText } from "@/lib/copy"
 import type { PreviewFocus } from "@/stores/ui"
@@ -72,8 +71,9 @@ export default function SkillPreview({
   }
 
   return (
-    <Tabs value={current?.path ?? file} onValueChange={(v) => setFile(String(v))} className="flex min-h-0 flex-1 flex-col gap-0">
-      <div className="flex flex-col gap-2 border-b px-4 pb-0">
+    <div className="flex min-h-0 flex-1 flex-col gap-0">
+      {/* 文件用下拉选（2026-11-10）：资源一多，一排标签放不下，最后一个被截断也看不出能滚 */}
+      <div className="border-b px-4 pb-3">
         <div className="flex flex-wrap items-center gap-2">
           {targets.length > 1 && (
             <Select items={targets.map((t) => ({ value: t.key, label: t.label }))} value={targetKey} onValueChange={(v) => v && onTargetChange(v)}>
@@ -85,6 +85,24 @@ export default function SkillPreview({
                 {targets.map((t) => (
                   <SelectItem key={t.key} value={t.key}>
                     {t.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {listed.length > 0 && (
+            <Select
+              items={listed.map((f) => ({ value: f.path, label: fileLabel(f.path) }))}
+              value={current?.path ?? file}
+              onValueChange={(v) => v && setFile(String(v))}
+            >
+              <SelectTrigger size="sm" aria-label={copy.preview.files} className="min-w-36 font-mono text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="w-auto min-w-(--anchor-width)">
+                {listed.map((f) => (
+                  <SelectItem key={f.path} value={f.path} className="font-mono text-xs">
+                    {fileLabel(f.path)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -103,17 +121,6 @@ export default function SkillPreview({
           </ToggleGroup>
           {pending && preview && <Spinner aria-label={copy.preview.loading} className="ml-auto size-3.5 text-muted-foreground" />}
         </div>
-        {listed.length > 0 ? (
-          <TabsList variant="line" aria-label={copy.preview.files} className="-mb-px max-w-full justify-start overflow-x-auto">
-            {listed.map((f) => (
-              <TabsTrigger key={f.path} value={f.path} className="flex-none font-mono text-xs">
-                {fileLabel(f.path)}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        ) : (
-          <div className="h-2" />
-        )}
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
@@ -153,20 +160,19 @@ export default function SkillPreview({
             <>
               <BudgetBars budget={preview.budget} />
               <LintList lint={preview.lint} onLocate={locate} focusRequest={focus.lint ? focus.seq : 0} />
-              {/* 面板本身不进 Tab 序列：它没有焦点样式；能滚动的是外层滚动区域和代码块，它们各自有焦点环 */}
-              <TabsContent value={current.path} tabIndex={-1}>
+              <div>
                 {view === "source" ? (
                   <SourceView content={current.content} focusLine={located?.file === current.path ? located.line : null} />
                 ) : (
                   <RenderedView path={current.path} content={current.content} />
                 )}
-              </TabsContent>
+              </div>
             </>
           )}
         </div>
       </ScrollArea>
 
       {compiledPath && <CompiledFooter path={compiledPath} />}
-    </Tabs>
+    </div>
   )
 }

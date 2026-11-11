@@ -17,12 +17,27 @@ async function openActivity(page: Page) {
 }
 
 test.describe("设置视图", () => {
-  test("一页往下滚：外观、启动与托盘、连接、编译、数据、危险操作", async ({ page }) => {
+  test("一页往下滚：外观、启动与托盘、数据、危险操作，最后是收起的「高级」", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await openSettings(page)
-    for (const g of ["外观", "启动与托盘", "连接", "编译", "数据", "危险操作"]) {
+    for (const g of ["外观", "启动与托盘", "数据", "危险操作"]) {
       await expect(page.getByRole("heading", { level: 3, name: g })).toBeAttached()
     }
+    for (const g of ["连接", "编译"]) {
+      await expect(page.getByRole("heading", { level: 3, name: g, exact: true })).toHaveCount(0)
+    }
+    await expect(page.getByText("当前 v0.1.0")).toBeVisible()
+    // 「高级」默认收起，纯键盘展开和收起
+    const advanced = page.getByRole("region", { name: "高级" }).getByRole("button", { name: /^高级/ })
+    await expect(advanced).toHaveAttribute("aria-expanded", "false")
+    await expect(page.getByRole("button", { name: "查看探测脚本" })).toBeHidden()
+    await advanced.focus()
+    await page.keyboard.press("Enter")
+    await expect(advanced).toHaveAttribute("aria-expanded", "true")
+    await expect(page.getByRole("button", { name: "查看探测脚本" })).toBeVisible()
+    await shot(page, "p7d-settings-advanced")
+    await page.keyboard.press("Enter")
+    await expect(advanced).toHaveAttribute("aria-expanded", "false")
     await shot(page, "p7c-settings")
     expect(errors).toEqual([])
   })
@@ -39,12 +54,14 @@ test.describe("设置视图", () => {
     await expect(page.getByRole("complementary").or(page.locator("aside")).first()).toBeVisible()
   })
 
-  test("ssh 配置：WSL 未加入 Include，可以一键加入", async ({ page }) => {
+  test("SSH 配置：WSL 里还没生效，可以一键加入；界面上不说 Include", async ({ page }) => {
     await openSettings(page)
-    await expect(page.getByText(/还没有加入 Include/)).toBeVisible()
-    await page.getByRole("button", { name: "加入 Include" }).click()
-    await expect(toastText(page, /开头加入 Include/)).toBeVisible()
-    await expect(page.getByText(/还没有加入 Include/)).toBeHidden()
+    await expect(page.getByText(/^SSH 配置在 WSL .* 里还没生效$/)).toBeVisible()
+    await expect(page.getByRole("main").getByText(/Include/)).toHaveCount(0)
+    await page.getByRole("button", { name: /^把 SSH 配置加入 WSL/ }).click()
+    await expect(toastText(page, /^已加入，WSL .* 里的 Agent 现在可以连接了/)).toBeVisible()
+    await expect(page.getByText(/里还没生效$/)).toHaveCount(0)
+    await expect(page.getByText(/都已生效$/)).toBeVisible()
   })
 
   test("活动日志在设置 → 数据里，按天分组", async ({ page }) => {
@@ -52,19 +69,36 @@ test.describe("设置视图", () => {
     await page.getByRole("button", { name: "查看活动日志" }).click()
     const sheet = page.getByRole("dialog", { name: "活动日志" })
     await expect(sheet.getByRole("heading", { level: 3, name: "今天" })).toBeVisible()
-    await expect(sheet.getByText(/编译了 Claude Code（Windows）的总 Skill/)).toBeVisible()
+    await expect(sheet.getByText(/更新了 Claude Code（Windows）的 Skill/).first()).toBeVisible()
+    // 两个筛选在标题栏里；Agent 的操作记录不在这里，在「动态」
+    await expect(sheet.getByRole("combobox", { name: "按类型筛选" })).toContainText("全部类型")
+    await expect(sheet.getByRole("combobox", { name: "按资源筛选" })).toContainText("全部资源")
+    await expect(sheet.getByText(/编译|SKILL\.md|托管/)).toHaveCount(0)
+    await shot(page, "p7d-activity-log")
   })
 
-  test("移除全部分发：输入确认文字后才能执行", async ({ page }) => {
+  test("活动日志纯键盘打开和关闭，焦点回到「查看」", async ({ page }) => {
     await openSettings(page)
-    await page.getByRole("button", { name: "移除全部分发…" }).click()
-    const dialog = page.getByRole("alertdialog", { name: "移除全部分发" })
-    const confirm = dialog.getByRole("button", { name: "移除全部分发", exact: true })
+    const open = page.getByRole("button", { name: "查看活动日志" })
+    await open.focus()
+    await page.keyboard.press("Enter")
+    const sheet = page.getByRole("dialog", { name: "活动日志" })
+    await expect(sheet).toBeVisible()
+    await page.keyboard.press("Escape")
+    await expect(sheet).toHaveCount(0)
+    await expect(open).toBeFocused()
+  })
+
+  test("停止全部同步：输入确认文字后才能执行", async ({ page }) => {
+    await openSettings(page)
+    await page.getByRole("button", { name: "停止同步…" }).click()
+    const dialog = page.getByRole("alertdialog", { name: "停止全部同步" })
+    const confirm = dialog.getByRole("button", { name: "停止同步", exact: true })
     await expect(confirm).toBeDisabled()
-    await dialog.getByRole("textbox").fill("移除全部")
+    await dialog.getByRole("textbox").fill("停止同步")
     await confirm.click()
-    await expect(toastText(page, "已移除全部分发")).toBeVisible()
-    await expect(page.getByRole("button", { name: "移除全部分发…" })).toBeDisabled()
+    await expect(toastText(page, "已停止全部同步")).toBeVisible()
+    await expect(page.getByRole("button", { name: "停止同步…" })).toBeDisabled()
   })
 
   test("重置 CloudLink：输入「重置」后回到首次启动的空状态", async ({ page }) => {
@@ -73,7 +107,7 @@ test.describe("设置视图", () => {
     const dialog = page.getByRole("alertdialog", { name: "重置 CloudLink" })
     await dialog.getByRole("textbox").fill("重置")
     await dialog.getByRole("button", { name: "重置 CloudLink", exact: true }).click()
-    await expect(toastText(page, "已清空数据")).toBeVisible()
+    await expect(toastText(page, "已重置 CloudLink")).toBeVisible()
     await page.keyboard.press("Control+1")
     await expect(page.getByRole("heading", { name: "添加第一台服务器" })).toBeVisible()
   })
