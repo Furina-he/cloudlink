@@ -271,7 +271,10 @@ impl Fixture {
         // 两侧都按同一形式比较，仍然只允许改动隔离临时根里的文件。
         let temp_root = crate::deliver::paths::canonical_future(self._temp.path()).unwrap();
         let resolved = crate::deliver::paths::canonical_future(directory).unwrap();
-        assert!(resolved.starts_with(&temp_root), "fixture edit must stay inside the isolated temp root");
+        assert!(
+            resolved.starts_with(&temp_root),
+            "fixture edit must stay inside the isolated temp root"
+        );
         let marker = publish::read_marker(directory).expect("fixture must own this tree before simulating an edit");
         assert_eq!(marker.env_id, target.env_id.as_str());
         assert_eq!(marker.agent_key, target.agent_key);
