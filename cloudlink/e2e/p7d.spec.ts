@@ -1,9 +1,10 @@
 import { expect, test, type Page } from "@playwright/test"
 
-import { inspector, openServer, ready } from "./helpers"
+import { editResource, inspector, openServer, ready } from "./helpers"
 
 // P7d 验收证据（EXECUTION-PLAN P7d 门槛）：第四轮审查改过的每个画面 × 顶栏浅色 / 深色 × 1000 / 760 宽，
-// 存到仓库根目录 test-results/p7d/。只在 P7D_SHOTS=1 时运行，平时的 pnpm e2e 不重拍
+// 存到仓库根目录 test-results/p7d/。只在 P7D_SHOTS=1 时运行，平时的 pnpm e2e 不重拍。
+// 画面入口随 P8 契约校准，不恢复旧的日常别名输入、即时保存或全成功提示。
 const OUT = "../test-results/p7d"
 const sshForm = (page: Page) => page.getByRole("region", { name: /^(添加 SSH 服务器|连接 )/ })
 
@@ -20,7 +21,8 @@ const SCREENS: { name: string; query?: string; open: (page: Page) => Promise<voi
     open: async (page) => {
       await openNew(page, "203.0.113.10", "香港边缘节点")
       await expect(sshForm(page).getByLabel(/^名称/)).toBeInViewport({ ratio: 1 })
-      await expect(sshForm(page).getByRole("textbox", { name: "别名" })).toBeInViewport({ ratio: 1 })
+      await expect(sshForm(page).getByRole("button", { name: /^高级/ })).toHaveAttribute("aria-expanded", "false")
+      await expect(sshForm(page).getByRole("textbox", { name: /^SSH 别名/ })).toHaveCount(0)
     },
   },
   {
@@ -59,7 +61,7 @@ const SCREENS: { name: string; query?: string; open: (page: Page) => Promise<voi
       await sshForm(page).getByRole("button", { name: /^连接并启用/ }).click()
       await sshForm(page).getByTestId("connect-include").getByRole("button", { name: "加入", exact: true }).click()
       await expect(sshForm(page)).toHaveCount(0)
-      await expect(page.locator("[data-slot=toast], [role=status]").filter({ hasText: /已添加，并同步给/ }).first()).toBeVisible()
+      await expect(page.locator("[data-slot=toast], [role=status]").filter({ hasText: "Edge Copy 已添加，3 个目录已同步，其余尚未完成" }).first()).toBeVisible()
       await expect(page.locator("#server-list [data-fresh]").first()).toBeVisible()
     },
   },
@@ -84,16 +86,14 @@ const SCREENS: { name: string; query?: string; open: (page: Page) => Promise<voi
     name: "07-edit-export",
     open: async (page) => {
       await openServer(page, "sg-db")
-      await inspector(page).getByRole("button", { name: "编辑" }).first().click()
-      await expect(page.getByRole("dialog", { name: "让 Agent 知道哪些连接信息" })).toBeVisible()
+      await editResource(page, "让 Agent 知道哪些信息")
     },
   },
   {
     name: "08-edit-connection",
     open: async (page) => {
       await openServer(page, "hk-edge")
-      await inspector(page).getByRole("button", { name: "编辑" }).first().click()
-      await expect(page.getByRole("dialog", { name: "编辑连接" })).toBeVisible()
+      await editResource(page, "编辑连接")
     },
   },
   {

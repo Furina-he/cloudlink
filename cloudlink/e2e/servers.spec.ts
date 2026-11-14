@@ -1,10 +1,10 @@
 import { expect, test, type Page } from "@playwright/test"
 
-import { back, collectConsoleErrors, detailTitle, inspector, openServer, ready, refocusWindow, row, shot, toastText } from "./helpers"
+import { back, collectConsoleErrors, detailTitle, editResource, inspector, openServer, ready, refocusWindow, row, setSshAlias, shot, toastText } from "./helpers"
 
-// 资源视图（PRD 6.4、6.5、6.10）：单行双闸刀配电盘、全宽详情（← 返回）、添加弹窗、SSH 一步到位、云平台 CLI 向导
+// 资源视图（PRD 6.4、6.5、6.10）：两行资源列表、全宽查看详情、当前页编辑草稿、SSH 一步到位与云平台 CLI 向导
 
-// 填表时标题是「添加 SSH 服务器」，点连接后同一个区域切到「连接 <别名>」的连接过程
+// 填表时标题是「添加 SSH 服务器」，点连接后同一个区域切到「连接 <显示名称>」的连接过程
 const sshForm = (page: Page) => page.getByRole("region", { name: /^(添加 SSH 服务器|连接 )/ })
 const connectEnable = (page: Page) => sshForm(page).getByRole("button", { name: /^(连接并启用|重新连接)/ })
 
@@ -12,7 +12,7 @@ const connectEnable = (page: Page) => sshForm(page).getByRole("button", { name: 
 const includeAsk = (page: Page) => sshForm(page).getByTestId("connect-include")
 
 /** 添加 SSH 服务器：填地址、用户和名称；这里默认改选 ssh-agent，不用填密码或选私钥文件 */
-async function fillNew(page: Page, name: string, host: string, user = "root", method = "ssh-agent") {
+async function fillNew(page: Page, name: string, host: string, user = "root", method = "ssh-agent", alias?: string) {
   await page.keyboard.press("Control+n")
   await page.getByRole("button", { name: /^SSH 服务器/ }).click()
   const form = sshForm(page)
@@ -21,6 +21,7 @@ async function fillNew(page: Page, name: string, host: string, user = "root", me
   await form.getByLabel("用户").fill(user)
   await form.getByRole("radio", { name: method, exact: true }).or(form.getByRole("button", { name: method, exact: true })).click()
   await form.getByLabel(/^名称/).fill(name)
+  if (alias) await setSshAlias(form, alias)
   return form
 }
 
@@ -32,12 +33,13 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     await expect(row(page, "hk-edge")).toBeVisible({ timeout: 10_000 })
   })
 
-  test("列表为空：居中引导、可复制的示例话术、添加和导入；顶栏不显示 +", async ({ page }) => {
+  test("列表为空：居中引导、不含虚构别名或复制按钮的示例、添加和导入；顶栏不显示 +", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await page.goto("/?mock=empty")
     await expect(page.getByRole("heading", { name: "添加第一台服务器" })).toBeVisible()
-    await expect(page.getByText("看看 hk-edge 的磁盘还剩多少")).toBeVisible()
-    await expect(page.getByRole("button", { name: "复制示例" })).toBeVisible()
+    await expect(page.getByText("看看服务器的磁盘还剩多少", { exact: true })).toBeVisible()
+    await expect(page.getByText("看看 hk-edge 的磁盘还剩多少")).toHaveCount(0)
+    await expect(page.getByRole("button", { name: "复制示例" })).toHaveCount(0)
     await expect(page.getByRole("button", { name: "从 ~/.ssh/config 导入 · 3 台" })).toBeVisible()
     // 列的是 Agent 品牌，不列「通用目录」这样的目录名（PRD 6.9）
     const detected = page.getByText(/检测到.*添加后会自动同步给它们/)
@@ -167,22 +169,29 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     await expect(sheet.getByRole("combobox", { name: "文件" })).toContainText("hk-edge.md")
   })
 
-  test("编辑即保存：停止输入 600ms 后保存，提示条「已保存」；连接字段在「编辑」里改", async ({ page }) => {
+  test("资料以查看为主：更多菜单打开草稿，统一保存后更新同一详情；连接另开弹窗，取消不保存", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
     await openServer(page, "dev-box")
     const panel = inspector(page)
-    await panel.getByRole("textbox", { name: "名称" }).fill("开发机（改）")
+    await expect(panel.getByRole("textbox")).toHaveCount(0)
+    const profile = await editResource(page, "编辑资料")
+    await profile.getByRole("textbox", { name: /^名称/ }).fill("开发机（改）")
+    // 输入和失焦只改草稿，不修改背景详情，也不出现旧的即时保存提示。
+    await profile.getByRole("textbox", { name: /^名称/ }).press("Tab")
+    await expect(detailTitle(page)).toHaveText("开发机")
+    await expect(toastText(page, "已保存")).toHaveCount(0)
+    await shot(page, "state-12-profile-draft")
+    await profile.getByRole("button", { name: "保存修改", exact: true }).click()
+    await expect(profile).toHaveCount(0)
     await expect(toastText(page, "已保存")).toBeVisible()
     await expect(detailTitle(page)).toHaveText("开发机（改）")
-    await expect(page.getByText("未保存的修改")).toHaveCount(0)
-    await shot(page, "state-12-autosave")
-    // 连接：编辑打开对话框，取消不保存
-    await panel.getByRole("button", { name: "编辑" }).first().click()
-    const dialog = page.getByRole("dialog", { name: "编辑连接" })
+    await expect(page.locator('[data-handle="dev-box"]')).toBeVisible()
+    // 连接与普通资料分开；无改动取消直接关闭。
+    const dialog = await editResource(page, "编辑连接")
     await expect(dialog.getByLabel("地址")).toBeVisible()
     await shot(page, "state-13-edit-connection")
-    await dialog.getByRole("button", { name: "取消" }).click()
+    await dialog.getByRole("button", { name: "取消", exact: true }).click()
     await expect(dialog).toHaveCount(0)
     await back(page)
     await expect(row(page, "dev-box")).toHaveAccessibleName(/开发机（改）/)
@@ -214,7 +223,7 @@ test.describe("资源行右侧的档位与 Agent（PRD 6.4）", () => {
     expect(errors).toEqual([])
   })
 
-  test("Agent 开关：点亮即分发，不打开详情；未验证的资源不能点亮新的 Agent", async ({ page }) => {
+  test("Agent 开关：点亮保存选择，不打开详情；未列入不能冒报同步，未验证不能点亮新目标", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
     const list = page.locator("#server-list")
@@ -223,7 +232,10 @@ test.describe("资源行右侧的档位与 Agent（PRD 6.4）", () => {
     await expect(universal).toHaveAttribute("aria-pressed", "false")
     await universal.click()
     await expect(universal).toHaveAttribute("aria-pressed", "true")
-    await expect(toastText(page, "已把 hk-edge 分发给 通用目录")).toBeVisible()
+    const feedback = toastText(page, "香港边缘节点 的选择已保存，但还没有同步成功")
+    await expect(feedback).toBeVisible()
+    await expect(feedback).toContainText("通用目录（WSL）：WSL Ubuntu-24.04 中没有配置私钥")
+    await expect(toastText(page, "已把 hk-edge 分发给 通用目录")).toHaveCount(0)
     await expect(page.locator("#detail-title")).toHaveCount(0)
 
     // dev-box 只用密码：没点亮的按钮不可用
@@ -238,12 +250,15 @@ test.describe("资源行右侧的档位与 Agent（PRD 6.4）", () => {
 })
 
 test.describe("添加 SSH 服务器：连接并启用（PRD 6.5、F-106、F-108）", () => {
-  test("成功：已信任的地址，一步测试、保存、授权、后台探测", async ({ page }) => {
+  test("已信任地址：一步测试、保存选择和后台探测；未送达的目录如实提示", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
-    await fillNew(page, "Edge Copy", "203.0.113.10")
-    // 别名行：「Agent 会用 ssh [别名] 连接它」，别名跟着名称变
-    await expect(sshForm(page).getByRole("textbox", { name: "别名" })).toHaveValue("edge-copy")
+    const form = await fillNew(page, "Edge Copy", "203.0.113.10")
+    // 名称和地址不生成别名；这条连接路由回归显式在高级里设置 edge-copy。
+    await expect(form.getByRole("textbox", { name: /^SSH 别名/ })).toHaveCount(0)
+    await form.getByRole("button", { name: /^高级/ }).click()
+    await expect(form.getByRole("textbox", { name: /^SSH 别名/ })).toHaveValue("cloudlink-1")
+    await setSshAlias(form, "edge-copy")
     await expect(sshForm(page).getByText("添加后先是只读巡检，并同步给全部 Agent")).toBeVisible()
     // 表单里不选 Agent、不选档位
     await expect(sshForm(page).getByText(/授权给|默认档位/)).toHaveCount(0)
@@ -260,7 +275,10 @@ test.describe("添加 SSH 服务器：连接并启用（PRD 6.5、F-106、F-108�
     await expect(include).toContainText("Include ~/.ssh/")
     await shot(page, "ssh-01b-include")
     await include.getByRole("button", { name: "暂不加入" }).click()
-    await expect(toastText(page, /Edge Copy 已添加，并同步给 \d+ 个目录/)).toBeVisible()
+    const feedback = toastText(page, "Edge Copy 已添加，1 个目录已同步，其余尚未完成")
+    await expect(feedback).toBeVisible()
+    await expect(feedback).toContainText("Cursor（Windows）：目录里已有同名 Skill，请到 Agent 页备份并接管")
+    await expect(feedback).toContainText("SSH 配置在 WSL Ubuntu-24.04 里还没生效")
     // 完成后关闭弹窗回到列表，新服务器直接出现在列表里
     await expect(sshForm(page)).toHaveCount(0)
     await expect(page.locator("#server-list").getByRole("button", { name: "将 edge-copy 分发给 Claude Code" })).toHaveAttribute("aria-pressed", "true")
@@ -271,7 +289,7 @@ test.describe("添加 SSH 服务器：连接并启用（PRD 6.5、F-106、F-108�
     const errors = collectConsoleErrors(page)
     await ready(page)
     const form = await fillNew(page, "Wsl Only", "203.0.113.10")
-    await form.getByRole("button", { name: /^高级/ }).click()
+    await setSshAlias(form, "wsl-only")
     await form.getByRole("checkbox", { name: /^Windows/ }).uncheck()
     await connectEnable(page).click()
     await includeAsk(page).getByRole("button", { name: "暂不加入" }).click()
@@ -283,7 +301,10 @@ test.describe("添加 SSH 服务器：连接并启用（PRD 6.5、F-106、F-108�
     await expect(claude).toHaveAttribute("aria-pressed", "false")
     await shot(page, "ssh-08-unreachable-row")
     await list.getByRole("button", { name: "加入 SSH 配置" }).click()
-    await expect(toastText(page, /^已加入 SSH 配置，Wsl Only 已同步给 \d+ 个目录/)).toBeVisible()
+    const feedback = toastText(page, "已加入 SSH 配置，Wsl Only有 2 个目录已同步，其余尚未完成")
+    await expect(feedback).toBeVisible()
+    await expect(feedback).toContainText("Claude Code（Windows）：没有勾选在 Windows 里可用")
+    await expect(feedback).toContainText("Cursor（Windows）：目录里已有同名 Skill，请到 Agent 页备份并接管")
     await expect(row(page, "wsl-only")).toHaveAccessibleName(/已连接/)
     await expect(claude).toHaveAttribute("aria-pressed", "true")
     expect(errors).toEqual([])
@@ -291,7 +312,7 @@ test.describe("添加 SSH 服务器：连接并启用（PRD 6.5、F-106、F-108�
 
   test("等着决定要不要加入 SSH 配置时按 Esc：先问要不要放弃，草稿不会直接丢", async ({ page }) => {
     await ready(page)
-    await fillNew(page, "Esc Box", "203.0.113.10")
+    await fillNew(page, "Esc Box", "203.0.113.10", "root", "ssh-agent", "esc-box")
     await connectEnable(page).click()
     await expect(includeAsk(page)).toBeVisible()
     await page.keyboard.press("Escape")
@@ -306,7 +327,7 @@ test.describe("添加 SSH 服务器：连接并启用（PRD 6.5、F-106、F-108�
   // 这里在卡片出现的那一个微任务里直接派发 Esc（不等 useEffect 跑完），与机器快慢无关地卡住这个时序。
   test("加入 SSH 配置的卡片刚出现的那一帧按 Esc：仍然先问要不要放弃", async ({ page }) => {
     await ready(page)
-    await fillNew(page, "Race Box", "203.0.113.10")
+    await fillNew(page, "Race Box", "203.0.113.10", "root", "ssh-agent", "race-box")
     const race = page.evaluate(
       () =>
         new Promise<void>((resolve) => {
@@ -340,7 +361,7 @@ test.describe("添加 SSH 服务器：连接并启用（PRD 6.5、F-106、F-108�
   ] as const) {
     test(`${name}：原地给出分类原因，可以「仅保存（暂不启用）」`, async ({ page }) => {
       await ready(page)
-      await fillNew(page, `Box ${file}`, host, user)
+      await fillNew(page, `Box ${file}`, host, user, "ssh-agent", `box-${file}`)
       await connectEnable(page).click()
       await expect(page.getByText(text)).toBeVisible({ timeout: 5000 })
       const saveOnly = sshForm(page).getByRole("button", { name: "仅保存（暂不启用）" })
@@ -357,12 +378,12 @@ test.describe("添加 SSH 服务器：连接并启用（PRD 6.5、F-106、F-108�
   test("首次连接核对指纹；密码自动改用密钥登录并删除保存的密码", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
-    const form = await fillNew(page, "Tokyo Relay", "198.51.100.20", "root", "密码")
+    const form = await fillNew(page, "Tokyo Relay", "198.51.100.20", "root", "密码", "tokyo-relay")
     await expect(form.getByText("只用这一次。连接后换成免密密钥，密码不会保存。")).toBeVisible()
     await form.getByLabel(/^密码/).fill("secret-pass")
     await connectEnable(page).click()
     // 指纹在连接过程的「核对主机指纹」一步里就地核对，不再叠一层对话框
-    const steps = sshForm(page).getByRole("list", { name: "连接 tokyo-relay" })
+    const steps = sshForm(page).getByRole("list", { name: "连接 Tokyo Relay" })
     await expect(steps.locator("[data-step=hostKey]")).toHaveAttribute("data-state", "attention")
     const fingerprint = sshForm(page).getByTestId("connect-fingerprint")
     await expect(fingerprint).toContainText("SHA256:")
@@ -375,13 +396,14 @@ test.describe("添加 SSH 服务器：连接并启用（PRD 6.5、F-106、F-108�
     await expect(steps.locator("[data-step=include]")).toHaveAttribute("data-state", "done")
     await expect(sshForm(page).getByRole("button", { name: "正在添加…" })).toBeDisabled()
     await shot(page, "ssh-06-converting")
-    await expect(toastText(page, /Tokyo Relay 已添加，并同步给 \d+ 个目录/)).toBeVisible({ timeout: 10_000 })
+    const feedback = toastText(page, "Tokyo Relay 已添加，3 个目录已同步，其余尚未完成")
+    await expect(feedback).toBeVisible({ timeout: 10_000 })
+    await expect(feedback).toContainText("Cursor（Windows）：目录里已有同名 Skill，请到 Agent 页备份并接管")
     // 新行短暂用中性色高亮
     await expect(page.locator("#server-list [data-fresh]").first()).toBeVisible()
     await expect(row(page, "tokyo-relay")).toHaveAccessibleName(/已连接/)
     await openServer(page, "tokyo-relay")
-    await inspector(page).getByRole("button", { name: "编辑" }).first().click()
-    const edit = page.getByRole("dialog", { name: "编辑连接" })
+    const edit = await editResource(page, "编辑连接")
     await expect(edit.getByRole("radio", { name: "私钥文件" }).or(edit.getByRole("button", { name: "私钥文件", exact: true }))).toHaveAttribute("aria-pressed", "true")
     await shot(page, "ssh-07-enabled")
     expect(errors).toEqual([])
@@ -422,7 +444,10 @@ test.describe("云平台 CLI（PRD 6.5 分支 B、F-104）", () => {
 
     await wizard.getByRole("checkbox", { name: "oci-web-1" }).check()
     await wizard.getByRole("button", { name: "保存并启用" }).click()
-    await expect(toastText(page, "已接入 Oracle Cloud")).toBeVisible()
+    const feedback = toastText(page, "Oracle Cloud 已添加，3 个目录已同步，其余尚未完成")
+    await expect(feedback).toBeVisible()
+    await expect(feedback).toContainText("Cursor（Windows）：目录里已有同名 Skill，请到 Agent 页备份并接管")
+    await expect(toastText(page, "已接入 Oracle Cloud")).toHaveCount(0)
     await expect(wizard).toHaveCount(0)
     await expect(row(page, "oracle")).toHaveAccessibleName(/已登录/)
     await shot(page, "cli-03-oracle-enabled")
@@ -441,7 +466,9 @@ test.describe("云平台 CLI（PRD 6.5 分支 B、F-104）", () => {
     await expect(accounts.getByRole("radio", { name: "acme-corp" })).toBeChecked()
     await shot(page, "cli-04-second-account")
     await wizard.getByRole("button", { name: "保存并启用" }).click()
-    await expect(toastText(page, "已接入 Cloudflare · acme-corp")).toBeVisible()
+    const feedback = toastText(page, "Cloudflare · acme-corp 已添加，3 个目录已同步，其余尚未完成")
+    await expect(feedback).toBeVisible()
+    await expect(feedback).toContainText("Cursor（Windows）：目录里已有同名 Skill，请到 Agent 页备份并接管")
     await expect(row(page, "cloudflare-2")).toBeVisible()
     expect(errors).toEqual([])
   })
@@ -545,9 +572,13 @@ test.describe("纯键盘流程", () => {
         await expect(include.getByRole("button", { name: "暂不加入" })).toBeFocused()
       }
       await page.keyboard.press("Enter")
-      await expect(toastText(page, /Keyboard Box 已添加，并同步给 \d+ 个目录/)).toBeVisible()
-      await expect(row(page, "keyboard-box")).toBeVisible()
-      await expect(page.locator("#server-list").getByRole("button", { name: "将 keyboard-box 分发给 Claude Code" })).toHaveAttribute("aria-pressed", "true")
+      const dirs = choice === "加入" ? 3 : 1
+      const feedback = toastText(page, `Keyboard Box 已添加，${dirs} 个目录已同步，其余尚未完成`)
+      await expect(feedback).toBeVisible()
+      await expect(feedback).toContainText("Cursor（Windows）：目录里已有同名 Skill，请到 Agent 页备份并接管")
+      // 纯键盘流程使用稳定缺省别名，不再根据显示名称生成 keyboard-box。
+      await expect(row(page, "cloudlink-1")).toHaveAccessibleName(/Keyboard Box/)
+      await expect(page.locator("#server-list").getByRole("button", { name: "将 cloudlink-1 分发给 Claude Code" })).toHaveAttribute("aria-pressed", "true")
     })
   }
 
@@ -581,24 +612,31 @@ test.describe("纯键盘流程", () => {
     await expect(claude).toHaveAttribute("aria-pressed", "true")
   })
 
-  test("服务表在 760 宽窗口里不横向滚动：「关键」开关和角色都在表内看得到", async ({ page }) => {
+  test("服务查看表在 760 宽窗口里不横向滚动：五个数据列，角色和关键标注完整，没有行内编辑控件", async ({ page }) => {
     await page.setViewportSize({ width: 760, height: 520 })
     await ready(page)
     await openServer(page, "hk-edge")
-    // 服务表收在「探测结果」折叠行里
+    // 服务表收在「探测结果」折叠行里；修改记录统一在资料弹窗进行。
     await inspector(page).getByRole("button", { name: /^探测结果/ }).click()
     const table = inspector(page).getByRole("table")
-    await expect(table.getByRole("columnheader")).toHaveText(["名称", "镜像", "端口", "角色", "关键", "操作"])
+    await expect(table.getByRole("columnheader")).toHaveText(["名称", "镜像", "端口", "角色", "关键"])
+    await expect(table.getByRole("textbox")).toHaveCount(0)
+    await expect(table.getByRole("switch")).toHaveCount(0)
+    await expect(table.getByRole("button")).toHaveCount(0)
     const fit = await table.evaluate((t) => {
       const box = t.parentElement!.getBoundingClientRect()
-      const switches = [...t.querySelectorAll("[role=switch]")].map((s) => s.getBoundingClientRect())
-      return { noScroll: t.parentElement!.scrollWidth <= t.parentElement!.clientWidth, inside: switches.every((s) => s.left >= box.left && s.right <= box.right + 0.5) }
+      const cells = [...t.querySelectorAll("td")]
+      return {
+        noScroll: t.parentElement!.scrollWidth <= t.parentElement!.clientWidth,
+        inside: cells.every((cell) => { const b = cell.getBoundingClientRect(); return b.left >= box.left && b.right <= box.right + 0.5 }),
+        noClipping: cells.every((cell) => cell.scrollWidth <= cell.clientWidth),
+      }
     })
-    expect(fit).toEqual({ noScroll: true, inside: true })
-    // 类型写在名称下面；角色写得下
-    await expect(table.getByRole("row").filter({ hasText: "openresty" })).toContainText("Docker")
-    const role = table.getByRole("textbox", { name: "openresty 的角色" })
-    expect(await role.evaluate((el: HTMLInputElement) => el.scrollWidth <= el.clientWidth)).toBe(true)
+    expect(fit).toEqual({ noScroll: true, inside: true, noClipping: true })
+    const openresty = table.getByRole("row").filter({ hasText: "openresty" })
+    await expect(openresty).toContainText("Docker")
+    await expect(openresty.getByRole("cell").nth(3)).toHaveText("主网关与 SSL 终结")
+    await expect(openresty.locator('[aria-label="关键"]')).toBeVisible()
   })
 
   test("命令面板切换当前资源的档位", async ({ page }) => {

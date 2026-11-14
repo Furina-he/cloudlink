@@ -8,7 +8,6 @@ use super::backend::{Backend, check_ancestors};
 use crate::error::{AppError, Result};
 use crate::fsx;
 use crate::model::asset::*;
-use crate::model::delivery::Inclusion;
 use crate::model::env::EnvId;
 use crate::model::misc::*;
 use crate::params;
@@ -37,8 +36,17 @@ impl Backend {
                     return Err(AppError::ipc(IpcErrorId::NotFound));
                 }
                 let old = saved.as_ref().and_then(Asset::as_server);
+                let name = if old.is_none() && input.name.trim().is_empty() {
+                    let used: BTreeSet<_> = self.list_assets()?.iter().map(|a| a.name().to_string()).collect();
+                    (1..)
+                        .map(|n| format!("Server {n}"))
+                        .find(|name| !used.contains(name))
+                        .ok_or_else(|| AppError::internal("could not allocate server name"))?
+                } else {
+                    input.name.clone()
+                };
                 if validate {
-                    validate_common(&input.name, &input.notes, input.guardrails.rules.len())?;
+                    validate_common(&name, &input.notes, input.guardrails.rules.len())?;
                 }
                 let id = input.id.clone().unwrap_or_else(|| crate::new_id("ast"));
                 let connection = match &input.connection {
@@ -147,7 +155,7 @@ impl Backend {
                 let mut server = ServerAsset {
                     tag: VpsTag::Tag,
                     id,
-                    name: input.name,
+                    name,
                     production: input.production,
                     summary: input.summary,
                     agent: old.map(|s| s.agent.clone()).unwrap_or(AssetAgent {
@@ -331,10 +339,7 @@ impl Backend {
             }
             self.write_managed_configs()?;
             let statuses = self.publish_locked()?;
-            SaveResult {
-                asset: self.database()?.require_asset(asset.id())?,
-                statuses,
-            }
+            self.save_result(asset, statuses)?
         };
         self.retry_credential_cleanup();
         Ok(result)
@@ -390,7 +395,7 @@ impl Backend {
             true,
         )?;
         let statuses = self.publish_locked()?;
-        Ok(SaveResult { asset, statuses })
+        self.save_result(asset, statuses)
     }
 
     /// F-407 AC2「全部切回只读」：只动处于标准运维的生产资源，返回切回的资源名称
@@ -418,7 +423,7 @@ impl Backend {
         Ok(switched)
     }
 
-    pub fn set_distribute(&self, asset_id: &str, agent_key: &str, on: bool) -> Result<Vec<Inclusion>> {
+    pub fn set_distribute(&self, asset_id: &str, agent_key: &str, on: bool) -> Result<DistributeResult> {
         let epoch = self.reset_epoch.load(Ordering::SeqCst);
         if on {
             let snapshot = self.database()?.require_asset(asset_id)?;
@@ -432,6 +437,8 @@ impl Backend {
         }
         let _edit = self.edit_at(epoch)?;
         let mut asset = self.database()?.require_asset(asset_id)?;
+        let plan = self.delivery_plan()?;
+        let affected_agent_keys = plan.affected_keys(agent_key);
         if on {
             if !self
                 .list_targets()?
@@ -470,19 +477,31 @@ impl Backend {
                     params! {"reason" => reason},
                 ));
             }
-            if !asset.agent().agents.iter().any(|k| k == agent_key) {
-                asset.agent_mut().agents.push(agent_key.to_string());
-            }
-        } else {
-            asset.agent_mut().agents.retain(|k| k != agent_key);
+        }
+        asset
+            .agent_mut()
+            .agents
+            .retain(|key| !affected_agent_keys.contains(key));
+        if on {
+            asset.agent_mut().agents.extend(affected_agent_keys.iter().cloned());
         }
         self.database()?.upsert_asset(&asset)?;
-        self.publish_locked()?;
-        Ok(self
-            .list_inclusions()?
-            .into_iter()
-            .filter(|i| i.asset_id == asset_id)
-            .collect())
+        self.shared_mismatches
+            .lock()
+            .map_err(|_| AppError::internal("sharing state unavailable"))?
+            .retain(|id| {
+                plan.unit_for(id)
+                    .is_none_or(|unit| !unit.keys().iter().any(|key| affected_agent_keys.contains(key)))
+            });
+        let statuses = self.publish_locked()?;
+        let result = self.save_result(asset, statuses)?;
+        Ok(DistributeResult {
+            asset: result.asset,
+            inclusions: result.inclusions,
+            deliveries: result.deliveries,
+            statuses: result.statuses,
+            affected_agent_keys,
+        })
     }
 
     pub fn import_hosts(self: &Arc<Self>, hosts: Vec<ImportHost>, probe_after: bool) -> Result<Vec<Asset>> {

@@ -1,4 +1,6 @@
 import * as React from "react"
+import { copy } from "@/lib/copy"
+import { ipc } from "@/lib/ipc"
 
 type Theme = "dark" | "light" | "system"
 type ResolvedTheme = "dark" | "light"
@@ -73,6 +75,8 @@ export function ThemeProvider({
     return defaultTheme
   })
 
+  const nativeRevision = React.useRef(0)
+
   const setTheme = React.useCallback(
     (nextTheme: Theme) => {
       localStorage.setItem(storageKey, nextTheme)
@@ -80,6 +84,8 @@ export function ThemeProvider({
     },
     [storageKey]
   )
+
+  const invalidateNative = React.useCallback(() => { nativeRevision.current++ }, [])
 
   const applyTheme = React.useCallback(
     (nextTheme: Theme) => {
@@ -92,6 +98,12 @@ export function ThemeProvider({
 
       root.classList.remove("light", "dark")
       root.classList.add(resolvedTheme)
+      root.style.colorScheme = resolvedTheme
+      // 隐藏 WebView 的 rAF 可能暂停，不能等它来显示窗口；样式已应用后用微任务同步。
+      const revision = ++nativeRevision.current
+      queueMicrotask(() => {
+        if (revision === nativeRevision.current) void ipc.setWindowTheme(nextTheme).catch((error) => console.warn(copy.shell.nativeThemeFailed, error))
+      })
 
       if (restoreTransitions) {
         restoreTransitions()
@@ -103,21 +115,19 @@ export function ThemeProvider({
   React.useEffect(() => {
     applyTheme(theme)
 
-    if (theme !== "system") {
-      return undefined
-    }
-
     const mediaQuery = window.matchMedia(COLOR_SCHEME_QUERY)
-    const handleChange = () => {
-      applyTheme("system")
-    }
-
+    const forcedColors = window.matchMedia("(forced-colors: active)")
+    const handleChange = () => { if (theme === "system") applyTheme("system") }
+    const handleContrast = () => applyTheme(theme)
     mediaQuery.addEventListener("change", handleChange)
+    forcedColors.addEventListener("change", handleContrast)
 
     return () => {
       mediaQuery.removeEventListener("change", handleChange)
+      forcedColors.removeEventListener("change", handleContrast)
+      invalidateNative()
     }
-  }, [theme, applyTheme])
+  }, [theme, applyTheme, invalidateNative])
 
   React.useEffect(() => {
     const handleStorageChange = (event: StorageEvent) => {

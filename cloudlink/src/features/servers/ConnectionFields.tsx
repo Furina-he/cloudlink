@@ -13,8 +13,8 @@ import { ValidationError } from "./ValidationError"
 /** 密码排在最前：新建时默认选中（PRD 6.5） */
 const METHODS: AuthMethod[] = ["password", "key", "agent"]
 
-/** 地址 + 端口一行。onHostChange 在新建时让别名在名称没有英文时跟随地址 */
-export function HostPortFields({ onHostChange }: { onHostChange?: () => void }) {
+/** 地址 + 端口一行；不会联动 SSH 别名（P8 D7）。 */
+export function HostPortFields() {
   const {
     register,
     formState: { errors },
@@ -34,7 +34,7 @@ export function HostPortFields({ onHostChange }: { onHostChange?: () => void }) 
           className="font-mono"
           spellCheck={false}
           autoComplete="off"
-          {...register("connection.host", { onChange: () => onHostChange?.() })}
+          {...register("connection.host")}
         />
         <ValidationError error={e?.host} />
       </Field>

@@ -21,9 +21,9 @@ export type BackupEvent = { backupId: string, targetId: string, reason: BackupRe
  */
 export type BackupReason = "modified" | "takeover";
 
-export type Delivery = { id: string, targetId: string, envId: EnvId, path: string, status: DeliveryStatus, statusDetail?: Detail<string>, checkedAt: string, };
+export type Delivery = { id: string, targetId: string, envId: EnvId, path: string, status: DeliveryStatus, statusDetail?: Detail<string>, checkedAt: string, unitId?: string, sharedAgentKeys?: Array<string>, };
 
-export type DeliveryStatus = "ok" | "pending" | "missing" | "modified" | "outdated" | "conflict";
+export type DeliveryStatus = "ok" | "pending" | "missing" | "modified" | "outdated" | "conflict" | "broken" | "shared";
 
 /**
  * 某个运行环境里检测到的一个 Agent，和它读取的目标（第一个是它主要使用的那个）

@@ -24,6 +24,9 @@ pub struct Marker {
     pub managed_by: String,
     pub env_id: String,
     pub agent_key: String,
+    /// P8a 共用目录成员；缺失时兼容旧版单 Agent 标记。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_keys: Vec<String>,
     pub content_hash: String,
     pub compiled_at: String,
     pub template_version: u32,
@@ -237,6 +240,7 @@ mod tests {
             managed_by: MANAGED_BY.into(),
             env_id: "wsl:Ubuntu-24.04".into(),
             agent_key: "claude-code".into(),
+            agent_keys: Vec::new(),
             content_hash: files_hash(files),
             compiled_at: "2026-10-31T09:00:00Z".into(),
             template_version: 1,

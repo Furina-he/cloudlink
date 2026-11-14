@@ -21,6 +21,7 @@ import {
   logActivity,
   now,
   recompile,
+  saveSnapshot,
   sleep,
 } from "./state"
 import { cliEnvStatus } from "@/stores/assets"
@@ -152,7 +153,7 @@ function setScope(assetId: string, selectedIds: string[]) {
     params: { alias: asset.handle, count: selectedIds.length },
     ok: true,
   })
-  return { asset, statuses: recompile() }
+  return saveSnapshot(asset)
 }
 
 /** 终端里完成安装或登录：这个命令属于哪个 CLI，就把那个 CLI 在这个环境里改成已就绪 */

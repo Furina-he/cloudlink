@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 
+import { targets as fixtureTargets } from "../src/mocks/fixtures-agent"
 import { collectConsoleErrors, ready, shot, toastText } from "./helpers"
 
 // Agent 视图（PRD 6.6，v0.2）：一行一个 Agent（Windows 与 WSL 合并）、同名冲突「备份并接管」、护栏、Skill 内容二级页、运行环境
@@ -18,7 +19,10 @@ test.describe("Agent 视图", () => {
   test("一行一个 Agent：已同步与资源数、通用目录的读取者、Claude Code 的护栏，其余未检测到折叠", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await openAgents(page)
-    await expect(detected(page).getByRole("switch")).toHaveCount(3)
+    // 默认夹具按 AgentKey 合并 Windows/WSL，不把示例行数当作产品的固定清单。
+    await expect(detected(page).getByRole("switch")).toHaveCount(new Set(fixtureTargets.map((t) => t.agentKey)).size)
+    await expect(agentRow(page, "Claude Code")).toHaveCount(1)
+    await expect(agentRow(page, "通用目录")).toHaveCount(1)
     const claude = agentRow(page, "Claude Code")
     await expect(claude).toContainText(/已同步·\d+ 项资源·Windows、WSL/)
     await expect(claude.getByRole("button", { name: "护栏已开启" })).toBeVisible()
@@ -108,8 +112,9 @@ test.describe("Agent 视图", () => {
     await shot(page, "p7d-guard-rules")
   })
 
-  test("添加自定义目录：组标题右边的「⋯」菜单", async ({ page }) => {
+  test("添加自定义目录：组标题右边的「⋯」菜单，新增行由目标数据决定", async ({ page }) => {
     await openAgents(page)
+    const before = await detected(page).getByRole("switch").count()
     await page.getByRole("button", { name: "Agent 目录的更多操作" }).click()
     await page.getByRole("menuitem", { name: "添加自定义目录" }).click()
     const dialog = page.getByRole("dialog", { name: "添加自定义目录" })
@@ -117,6 +122,7 @@ test.describe("Agent 视图", () => {
     await dialog.getByRole("textbox", { name: /目录/ }).fill("C:\\Users\\me\\.aider\\skills")
     await dialog.getByRole("button", { name: "添加目录" }).click()
     await expect(agentRow(page, "Aider")).toBeVisible()
+    await expect(detected(page).getByRole("switch")).toHaveCount(before + 1)
   })
 
   test("运行环境：每个环境一行开关，重新检测", async ({ page }) => {

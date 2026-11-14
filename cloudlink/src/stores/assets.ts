@@ -9,6 +9,7 @@ import type {
   CliScopeItem,
   DeleteResult,
   DistributeBlockReason,
+  DistributeResult,
   EnvId,
   ImportHost,
   IpcError,
@@ -37,13 +38,15 @@ interface AssetState {
   load: () => Promise<void>
   /** 不显示加载中，静默拉一次全集（测试连接、探测之后） */
   refresh: () => Promise<void>
-  /** 返回编译结果；失败时抛出 IpcError */
+  /** 返回编译结果；失败时抛出 IpcError。同资源的保存串行发送。 */
   save: (input: AssetInput) => Promise<SaveResult>
+  /** 轮到发送时读取最新资源并构造输入；与 save 共用按 id 的队列。 */
+  update: (id: string, build: (latest: Asset) => AssetInput) => Promise<SaveResult>
   remove: (id: string, removeGeneratedKey: boolean) => Promise<DeleteResult>
   importHosts: (hosts: ImportHost[], probeAfter: boolean) => Promise<Asset[]>
   /** 立即生效，不经过保存（PRD 6.4）。失败时回滚并抛出 */
-  /** 分发给某个 Agent，或者停止分发（F-303）；乐观更新，失败时恢复 */
-  setDistribute: (id: string, agentKey: string, on: boolean) => Promise<void>
+  /** 授权与共用成员、实际送达以后端完整快照为准（P8a）。 */
+  setDistribute: (id: string, agentKey: string, on: boolean) => Promise<DistributeResult>
   setMode: (id: string, mode: Mode) => Promise<void>
   /** 范围勾选立即生效（PRD 6.4）；乐观更新，失败时恢复 */
   setCliScope: (id: string, selectedIds: string[]) => Promise<void>
@@ -56,132 +59,151 @@ const markFresh = (set: (fn: (s: AssetState) => Partial<AssetState>) => void, id
   setTimeout(() => set((s) => (s.freshIds === ids ? { freshIds: [] } : {})), 2400)
 }
 
-export const useAssetStore = create<AssetState>()((set, get) => ({
-  byId: {},
-  ids: [],
-  status: "idle",
-  error: null,
-  lastSaved: {},
-  freshIds: [],
-  flash: (ids) => markFresh(set, ids),
-
-  load: async () => {
-    set({ status: "loading", error: null })
-    try {
-      const list = await ipc.listAssets()
-      set({ byId: Object.fromEntries(list.map((a) => [a.id, a])), ids: list.map((a) => a.id), status: "ready" })
-    } catch (e) {
-      set({ status: "error", error: toIpcError(e) })
-    }
-  },
-
-  refresh: async () => {
-    try {
-      const list = await ipc.listAssets()
-      set({ byId: Object.fromEntries(list.map((a) => [a.id, a])), ids: list.map((a) => a.id) })
-    } catch {
-      // 静默刷新失败不打断用户；下一次事件或重新聚焦时再同步
-    }
-  },
-
-  save: async (input) => {
+export const useAssetStore = create<AssetState>()((set, get) => {
+  const pending = new Map<string, Promise<void>>()
+  const enqueue = <T,>(id: string, run: () => Promise<T>): Promise<T> => {
+    const task = (pending.get(id) ?? Promise.resolve()).then(run)
+    // 尾节点始终完成，单次失败仍返回调用方，但不能阻塞之后的保存。
+    const settled = task.then(() => undefined, () => undefined)
+    pending.set(id, settled)
+    void settled.then(() => { if (pending.get(id) === settled) pending.delete(id) })
+    return task
+  }
+  // 只能由队列内调用；新建无持久化 id 时直接沿用原流程。
+  const persist = async (input: AssetInput): Promise<SaveResult> => {
     let result: SaveResult
     try {
       result = await ipc.saveAsset(input)
     } catch (e) {
       throw toIpcError(e)
     }
-    const isNew = !input.id
     get()._upsert(result.asset)
     useSkillStore.getState()._onCompiled(result.statuses)
+    useDeliveryStore.getState()._onChanged(result)
     set((s) => ({ lastSaved: { ...s.lastSaved, [result.asset.id]: new Date().toISOString() } }))
-    if (isNew) markFresh(set, [result.asset.id])
+    if (!input.id) markFresh(set, [result.asset.id])
     return result
-  },
+  }
 
-  remove: async (id, removeGeneratedKey) => {
-    let result: DeleteResult
-    try {
-      result = await ipc.deleteAsset(id, { removeGeneratedKey })
-    } catch (e) {
-      throw toIpcError(e)
-    }
-    set((s) => {
-      const byId = { ...s.byId }
-      delete byId[id]
-      return { byId, ids: s.ids.filter((x) => x !== id) }
-    })
-    useSkillStore.getState()._onCompiled(result.statuses)
-    return result
-  },
+  return {
+    byId: {},
+    ids: [],
+    status: "idle",
+    error: null,
+    lastSaved: {},
+    freshIds: [],
+    flash: (ids) => markFresh(set, ids),
 
-  importHosts: async (hosts, probeAfter) => {
-    let created: Asset[]
-    try {
-      created = await ipc.importHosts(hosts, probeAfter)
-    } catch (e) {
-      throw toIpcError(e)
-    }
-    created.forEach((a) => get()._upsert(a))
-    markFresh(set, created.map((a) => a.id))
-    return created
-  },
+    load: async () => {
+      set({ status: "loading", error: null })
+      try {
+        const list = await ipc.listAssets()
+        set({ byId: Object.fromEntries(list.map((a) => [a.id, a])), ids: list.map((a) => a.id), status: "ready" })
+      } catch (e) {
+        set({ status: "error", error: toIpcError(e) })
+      }
+    },
 
-  setDistribute: async (id, agentKey, on) => {
-    const before = get().byId[id]?.agent.agents
-    if (before) {
-      const rest = before.filter((k) => k !== agentKey)
-      get()._patchAgent(id, { agents: on ? [...rest, agentKey] : rest })
-    }
-    try {
-      const inclusions = await ipc.setDistribute(id, agentKey, on)
-      useDeliveryStore.getState()._setInclusions(inclusions)
-    } catch (e) {
-      if (before) get()._patchAgent(id, { agents: before })
-      throw toIpcError(e)
-    }
-  },
+    refresh: async () => {
+      try {
+        const list = await ipc.listAssets()
+        set({ byId: Object.fromEntries(list.map((a) => [a.id, a])), ids: list.map((a) => a.id) })
+      } catch {
+        // 静默刷新失败不打断用户；下一次事件或重新聚焦时再同步
+      }
+    },
 
-  setMode: async (id, mode) => {
-    let result: SaveResult
-    try {
-      result = await ipc.setMode(id, mode)
-    } catch (e) {
-      throw toIpcError(e)
-    }
-    get()._upsert(result.asset)
-    useSkillStore.getState()._onCompiled(result.statuses)
-  },
+    save: (input) => input.id ? enqueue(input.id, () => persist(input)) : persist(input),
 
-  setCliScope: async (id, selectedIds) => {
-    const before = get().byId[id]
-    if (before?.type === "cli") {
-      const scope: CliScopeItem[] = before.cli.scope.map((x) => ({ ...x, selected: selectedIds.includes(x.id) }))
-      get()._upsert({ ...before, cli: { ...before.cli, scope } })
-    }
-    let result: SaveResult
-    try {
-      result = await ipc.setCliScope(id, selectedIds)
-    } catch (e) {
-      if (before) get()._upsert(before)
-      throw toIpcError(e)
-    }
-    get()._upsert(result.asset)
-    useSkillStore.getState()._onCompiled(result.statuses)
-  },
-
-  _upsert: (asset) =>
-    set((s) => ({
-      byId: { ...s.byId, [asset.id]: asset },
-      ids: s.ids.includes(asset.id) ? s.ids : [...s.ids, asset.id],
-    })),
-
-  _patchAgent: (id, patch) =>
-    set((s) => {
-      const a = s.byId[id]
-      return a ? { byId: { ...s.byId, [id]: { ...a, agent: { ...a.agent, ...patch } } } } : {}
+    update: (id, build) => enqueue(id, () => {
+      const latest = get().byId[id]
+      if (!latest) throw { id: "not-found" } satisfies IpcError
+      return persist({ ...build(latest), id })
     }),
-}))
+
+    remove: (id, removeGeneratedKey) => enqueue(id, async () => {
+      let result: DeleteResult
+      try {
+        result = await ipc.deleteAsset(id, { removeGeneratedKey })
+      } catch (e) {
+        throw toIpcError(e)
+      }
+      set((s) => {
+        const byId = { ...s.byId }
+        delete byId[id]
+        return { byId, ids: s.ids.filter((x) => x !== id) }
+      })
+      useSkillStore.getState()._onCompiled(result.statuses)
+      return result
+    }),
+
+    importHosts: async (hosts, probeAfter) => {
+      let created: Asset[]
+      try {
+        created = await ipc.importHosts(hosts, probeAfter)
+      } catch (e) {
+        throw toIpcError(e)
+      }
+      created.forEach((a) => get()._upsert(a))
+      markFresh(set, created.map((a) => a.id))
+      return created
+    },
+
+    setDistribute: (id, agentKey, on) => enqueue(id, async () => {
+      try {
+        const result = await ipc.setDistribute(id, agentKey, on)
+        get()._upsert(result.asset)
+        useDeliveryStore.getState()._onChanged(result)
+        useSkillStore.getState()._onCompiled(result.statuses)
+        return result
+      } catch (e) {
+        throw toIpcError(e)
+      }
+    }),
+
+    setMode: (id, mode) => enqueue(id, async () => {
+      let result: SaveResult
+      try {
+        result = await ipc.setMode(id, mode)
+      } catch (e) {
+        throw toIpcError(e)
+      }
+      get()._upsert(result.asset)
+      useSkillStore.getState()._onCompiled(result.statuses)
+      useDeliveryStore.getState()._onChanged(result)
+    }),
+
+    setCliScope: (id, selectedIds) => enqueue(id, async () => {
+      const before = get().byId[id]
+      if (before?.type === "cli") {
+        const scope: CliScopeItem[] = before.cli.scope.map((x) => ({ ...x, selected: selectedIds.includes(x.id) }))
+        get()._upsert({ ...before, cli: { ...before.cli, scope } })
+      }
+      let result: SaveResult
+      try {
+        result = await ipc.setCliScope(id, selectedIds)
+      } catch (e) {
+        if (before) get()._upsert(before)
+        throw toIpcError(e)
+      }
+      get()._upsert(result.asset)
+      useSkillStore.getState()._onCompiled(result.statuses)
+      useDeliveryStore.getState()._onChanged(result)
+    }),
+
+    _upsert: (asset) =>
+      set((s) => ({
+        byId: { ...s.byId, [asset.id]: asset },
+        ids: s.ids.includes(asset.id) ? s.ids : [...s.ids, asset.id],
+      })),
+
+    _patchAgent: (id, patch) =>
+      set((s) => {
+        const a = s.byId[id]
+        return a ? { byId: { ...s.byId, [id]: { ...a, agent: { ...a.agent, ...patch } } } } : {}
+      }),
+  }
+})
 
 // ---------- selectors（派生数据不进 store） ----------
 

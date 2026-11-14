@@ -21,6 +21,7 @@ pub mod ssh;
 pub mod time;
 pub mod tray;
 pub mod update;
+mod window_chrome;
 
 #[cfg(test)]
 pub mod testkit;
@@ -34,6 +35,7 @@ pub fn run() {
     let paths = paths::Paths::from_env().expect("invalid CloudLink paths");
     let mut context = tauri::generate_context!();
     desktop::configure(context.config_mut(), &paths).expect("could not prepare CloudLink desktop storage");
+    let show_when_ready = window_chrome::prepare(context.config_mut());
     let log_dir = paths.log_dir();
 
     let mut builder = tauri::Builder::default();
@@ -50,7 +52,11 @@ pub fn run() {
         ));
     }
     let app = builder
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(window_chrome::restore_flags())
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -73,6 +79,7 @@ pub fn run() {
                 .build(),
         )
         .setup(move |app| {
+            app.manage(window_chrome::WindowChrome::new(show_when_ready));
             let events = Arc::new(ipc::TauriEvents(app.handle().clone()));
             let isolated = paths.isolated;
             let backend = ipc::Backend::open(paths, events)?;
@@ -151,10 +158,16 @@ pub fn run() {
             ipc::commands::install_update,
             ipc::commands::all_read_only,
             ipc::commands::set_tray_copy,
+            window_chrome::set_window_theme,
         ])
         .build(context)
         .expect("error while running CloudLink");
     app.run(|handle, event| {
+        if let tauri::RunEvent::WindowEvent { label, event, .. } = &event
+            && let Some(window) = handle.get_webview_window(label)
+        {
+            window_chrome::on_window_event(&window, event);
+        }
         // F-407：关闭窗口时留在托盘（设置里可改为退出）。托盘还没建好时照常关闭，免得窗口找不回来
         if let tauri::RunEvent::WindowEvent {
             label,

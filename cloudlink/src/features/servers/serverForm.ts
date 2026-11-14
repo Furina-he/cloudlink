@@ -1,8 +1,9 @@
 // 服务器表单与 AssetInput 之间的换算、别名生成、保存失败时的定位（PRD 6.4、6.5）
 import type { FieldErrors, FieldPath, UseFormReturn } from "react-hook-form"
 
-import type { ConnectionInput, EnvId, ServerAsset, ServerAssetInput } from "@/bindings"
-import type { ServerFormValues } from "@/lib/schemas"
+import type { ConnectionInput, EnvId, Service, ServerAsset, ServerAssetInput } from "@/bindings"
+import { copy } from "@/lib/copy"
+import { formatPorts, parsePorts, type ServerFormValues } from "@/lib/schemas"
 
 export const EMPTY_EXPORT = { resolvedConnection: false, listeningPorts: false, image: true }
 
@@ -11,7 +12,8 @@ export const sortEnvs = (ids: string[]) => [...ids].sort((a, b) => (a === "windo
 
 export function formValuesOf(asset: ServerAsset): ServerFormValues {
   const c = asset.connection
-  return {
+  // 草稿的列表和导出开关不能与持久化资源／打开时的基线共用可变引用。
+  return structuredClone({
     source: c.source,
     alias: c.sshAlias,
     connection: {
@@ -26,6 +28,7 @@ export function formValuesOf(asset: ServerAsset): ServerFormValues {
       definedIn: c.definedIn,
     },
     name: asset.name,
+    fallbackName: asset.name,
     production: asset.production,
     summary: asset.summary,
     tags: asset.tags,
@@ -34,17 +37,54 @@ export function formValuesOf(asset: ServerAsset): ServerFormValues {
     servedHostnames: asset.servedHostnames,
     notes: asset.notes,
     paths: asset.paths,
-    services: asset.services,
+    services: asset.services.map((s) => s.source === "manual" ? { ...s, portsText: formatPorts(s.ports) } : s),
     rules: asset.guardrails.rules,
     export: asset.export,
+  })
+}
+
+/** 连接弹窗只覆盖实际编辑的字段，导出修改不把后台转换得到的新密钥覆盖回去。 */
+export function connectionEditValues(draft: ServerFormValues, initial: ServerAsset, latest: ServerAsset): ServerFormValues {
+  const before = formValuesOf(initial), current = formValuesOf(latest)
+  const changed = <T,>(old: T, value: T, now: T): T => JSON.stringify(old) === JSON.stringify(value) ? now : value
+  const connection = { ...current.connection }
+  for (const key of ["host", "port", "user", "proxyJump", "definedIn", "method"] as const) {
+    // 各键都保持自己的类型，Object.assign 不把索引赋值推断成不可能的交集。
+    Object.assign(connection, { [key]: changed<unknown>(before.connection[key], draft.connection[key], current.connection[key]) })
+  }
+  connection.identityFile = { ...current.connection.identityFile }
+  for (const key of new Set([...Object.keys(before.connection.identityFile), ...Object.keys(draft.connection.identityFile)])) {
+    if (before.connection.identityFile[key] === draft.connection.identityFile[key]) continue
+    if (draft.connection.identityFile[key] === undefined) delete connection.identityFile[key]
+    else connection.identityFile[key] = draft.connection.identityFile[key]
+  }
+  connection.password = draft.connection.password
+  if (draft.connection.method === "password" && draft.connection.password) connection.method = "password"
+  return {
+    ...current,
+    alias: changed(before.alias, draft.alias, current.alias),
+    connection,
+    export: {
+      resolvedConnection: changed(before.export.resolvedConnection, draft.export.resolvedConnection, current.export.resolvedConnection),
+      listeningPorts: changed(before.export.listeningPorts, draft.export.listeningPorts, current.export.listeningPorts),
+      image: changed(before.export.image, draft.export.image, current.export.image),
+    },
   }
 }
 
+/** 名称与连接地址解耦；只在新草稿创建时分配一次，保存仍由后端核验别名唯一性。 */
+export function newServerIdentity(taken: string[]): { alias: string; name: string } {
+  const used = new Set(taken.map((a) => a.toLowerCase()))
+  let n = 1
+  while (used.has(`cloudlink-${n}`)) n++
+  return { alias: `cloudlink-${n}`, name: copy.create.defaultName(n) }
+}
+
 /** 新建表单（6.5）：默认端口 22、先选中密码、写入全部可用运行环境（F-107 AC5） */
-export function newServerValues(envIds: EnvId[]): ServerFormValues {
+export function newServerValues(envIds: EnvId[], identity = newServerIdentity([])): ServerFormValues {
   return {
     source: "managed",
-    alias: "",
+    alias: identity.alias,
     connection: {
       host: "",
       port: 22,
@@ -57,6 +97,7 @@ export function newServerValues(envIds: EnvId[]): ServerFormValues {
       definedIn: envIds,
     },
     name: "",
+    fallbackName: identity.name,
     production: true,
     summary: "",
     tags: [],
@@ -67,7 +108,7 @@ export function newServerValues(envIds: EnvId[]): ServerFormValues {
     paths: [],
     services: [],
     rules: [],
-    export: EMPTY_EXPORT,
+    export: { ...EMPTY_EXPORT },
   }
 }
 
@@ -98,13 +139,18 @@ export function connectionInputOfForm(v: Pick<ServerFormValues, "source" | "alia
 /** 已保存服务器的连接参数，与 connectionInputOfForm(formValuesOf(asset)) 一致 */
 export const connectionInputOf = (asset: ServerAsset): ConnectionInput => connectionInputOfForm(formValuesOf(asset))
 
+/** 端口输入是表单元数据，不能进入数据库或 Skill 契约。 */
+export function serviceInputOf(value: ServerFormValues["services"][number]): Service {
+  const { portsText, ...service } = value
+  return { ...service, ports: portsText === undefined ? service.ports : parsePorts(portsText) ?? [] }
+}
+
 /** 表单之外的字段（类型、探测得到的事实、监听端口）沿用已保存的服务器 */
 export function toAssetInput(v: ServerFormValues, base: ServerAsset | undefined): ServerAssetInput {
   return {
     id: base?.id,
     type: "vps",
-    // 新建时名称可以留空，用地址（PRD 6.5）
-    name: v.name.trim() || (v.source === "managed" ? v.connection.host.trim() : v.alias.trim()),
+    name: v.name.trim() || (base ? "" : v.fallbackName),
     production: v.production,
     provider: v.provider.trim() || undefined,
     region: v.region.trim() || undefined,
@@ -113,7 +159,7 @@ export function toAssetInput(v: ServerFormValues, base: ServerAsset | undefined)
     connection: connectionInputOfForm(v),
     facts: base?.facts ?? {},
     paths: v.paths,
-    services: v.services,
+    services: v.services.map(serviceInputOf),
     servedHostnames: v.servedHostnames,
     listeningPorts: base?.listeningPorts ?? [],
     guardrails: { rules: v.rules },
@@ -122,36 +168,9 @@ export function toAssetInput(v: ServerFormValues, base: ServerAsset | undefined)
   }
 }
 
-// ---------- 别名生成（6.5，2026-10-31 用户确认） ----------
-
-const kebab = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
-
-/**
- * 取名称中的英文字母和数字（「HK Edge」→ hk-edge）；没有时改用地址：
- * 域名取第一段（edge.example.com → edge），IPv4 写成 vps-203-0-113-10
- */
-export function baseAlias(name: string, host: string): string {
-  const fromName = kebab(name)
-  if (fromName) return fromName.slice(0, 63).replace(/-+$/, "")
-  const h = host.trim().toLowerCase().replace(/^\[|\]$/g, "")
-  if (!h) return ""
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return `vps-${h.replace(/\./g, "-")}`
-  if (h.includes(":")) return `vps-${kebab(h)}`
-  return kebab(h.split(".")[0])
-}
-
-/** 与已有别名重名时追加 -2、-3（不区分大小写） */
-export function uniqueAlias(base: string, taken: string[]): string {
-  if (!base) return ""
-  const used = new Set(taken.map((a) => a.toLowerCase()))
-  let alias = base
-  for (let n = 2; used.has(alias); n++) alias = `${base}-${n}`
-  return alias
-}
-
 // ---------- 保存校验失败：聚焦第一个出错字段，必要时展开「高级」（6.4） ----------
 
-/** 字段在界面上的顺序；连接编辑里的别名、跳板机、运行环境在「高级」里（添加表单的别名在名称下面，不用展开） */
+/** 字段在界面上的顺序；添加与连接编辑的别名、跳板机、运行环境都收进高级。 */
 const FIELD_ORDER: { path: string; advanced?: boolean }[] = [
   { path: "connection.host" },
   { path: "connection.port" },

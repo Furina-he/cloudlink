@@ -1276,7 +1276,7 @@ impl Backend {
             &serde_json::to_value(&merged)?,
         )?;
         let statuses = self.publish_locked()?;
-        Ok(SaveResult { asset, statuses })
+        self.save_result(asset, statuses)
     }
 
     pub fn undo_probe(&self, run_id: &str) -> Result<SaveResult> {
@@ -1306,10 +1306,7 @@ impl Backend {
             params! {"alias"=>restored.handle()},
             true,
         )?;
-        Ok(SaveResult {
-            asset: restored,
-            statuses,
-        })
+        self.save_result(restored, statuses)
     }
 
     pub fn cancel_asset_jobs(&self, asset_id: &str) {

@@ -6,6 +6,7 @@ use ts_rs::TS;
 use super::Params;
 use super::asset::{Asset, Mode};
 use super::compile::CompileStatus;
+use super::delivery::{Delivery, Inclusion};
 use super::env::EnvId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -189,6 +190,20 @@ impl Settings {
 pub struct SaveResult {
     pub asset: Asset,
     pub statuses: Vec<CompileStatus>,
+    pub inclusions: Vec<Inclusion>,
+    pub deliveries: Vec<Delivery>,
+}
+
+/// 分发开关返回真实结果，不能用授权开启或 Promise resolve 代替送达。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "misc.ts")]
+pub struct DistributeResult {
+    pub asset: Asset,
+    pub inclusions: Vec<Inclusion>,
+    pub deliveries: Vec<Delivery>,
+    pub statuses: Vec<CompileStatus>,
+    pub affected_agent_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

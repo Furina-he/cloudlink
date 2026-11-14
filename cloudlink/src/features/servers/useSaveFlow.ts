@@ -13,7 +13,7 @@ import { useSettingsStore } from "@/stores/settings"
 import { useTargetStore } from "@/stores/targets"
 import { setLeaveGuard, useUIStore } from "@/stores/ui"
 import { serverActions, toastError } from "./actions"
-import { connectionInputOf, connectionInputOfForm, firstError, formValuesOf, sortEnvs, toAssetInput } from "./serverForm"
+import { connectionEditValues, connectionInputOf, connectionInputOfForm, firstError, formValuesOf, sortEnvs, toAssetInput } from "./serverForm"
 
 export type RevealTarget = NonNullable<ReturnType<typeof firstError>>
 
@@ -49,6 +49,7 @@ export function useSaveFlow({
   testKey,
   reveal,
   quiet,
+  connectionOnly,
 }: {
   asset: ServerAsset | undefined
   form: UseFormReturn<ServerFormValues>
@@ -57,16 +58,25 @@ export function useSaveFlow({
   reveal: (target: RevealTarget) => void
   /** 添加流程：加入与否写在过程页的步骤里，最后只出一条提示（PRD 6.5），这里不另出提示条 */
   quiet?: boolean
+  /** 连接弹窗只保存连接和导出，其他资料以最新持久化资源为准。 */
+  connectionOnly?: boolean
 }) {
   const [confirm, setConfirm] = useState<SaveConfirm | null>(null)
   const [saving, setSaving] = useState(false)
   const [including, setIncluding] = useState(false)
   const [error, setError] = useState<IpcError | null>(null)
 
-  /** 连接参数和已保存的一致，或者当前参数刚测试通过，就不用提示「未验证」 */
+  const valuesFor = (v: ServerFormValues) => {
+    const latest = asset ? useAssetStore.getState().byId[asset.id] : undefined
+    const base = latest?.type === "vps" ? latest : asset
+    return { base, values: connectionOnly && asset && base ? connectionEditValues(v, asset, base) : v }
+  }
+
+  /** 验证证明必须对应实际将保存的连接，而不只是打开弹窗时的旧参数。 */
   const verifiedFor = (v: ServerFormValues) => {
-    const input = connectionInputOfForm(v)
-    if (asset && connectionSignature(connectionInputOf(asset)) === connectionSignature(input)) return true
+    const { values, base } = valuesFor(v)
+    const input = connectionInputOfForm(values)
+    if (base && connectionSignature(connectionInputOf(base)) === connectionSignature(input)) return true
     const t = useConnectionStore.getState().testsByKey[testKey]
     return isTestCurrent(t, input) && t?.status === "ok"
   }
@@ -74,15 +84,25 @@ export function useSaveFlow({
   const doSave = async (v: ServerFormValues, opts: SubmitOptions) => {
     setSaving(true)
     setError(null)
-    const t = useConnectionStore.getState().testsByKey[testKey]
-    const input = connectionInputOfForm(v)
-    const tested = isTestCurrent(t, input) && t?.status === "ok"
+    let values = v
+    let tested = false
+    const inputFor = (base: ServerAsset | undefined) => {
+      values = connectionOnly && asset && base ? connectionEditValues(v, asset, base) : v
+      const input = connectionInputOfForm(values)
+      const t = useConnectionStore.getState().testsByKey[testKey]
+      tested = isTestCurrent(t, input) && t?.status === "ok"
+      return { ...toAssetInput(values, base), testId: tested ? (t?.testId ?? undefined) : undefined }
+    }
     try {
-      const result = await useAssetStore.getState().save({ ...toAssetInput(v, asset), testId: tested ? (t?.testId ?? undefined) : undefined })
+      const store = useAssetStore.getState()
+      const result = asset ? await store.update(asset.id, (latest) => {
+        if (latest.type !== "vps") throw { id: "not-found" } satisfies IpcError
+        return inputFor(latest)
+      }) : await store.save(inputFor(undefined))
       const saved = result.asset as ServerAsset
       // 密码只经这一次 IPC 进系统凭据库（F-108）；新建时要等拿到 id
-      if (v.source === "managed" && v.connection.method === "password" && v.connection.password) {
-        await ipc.setPassword(saved.id, v.connection.password)
+      if (values.source === "managed" && values.connection.method === "password" && values.connection.password) {
+        await ipc.setPassword(saved.id, values.connection.password)
         await useAssetStore.getState().refresh()
       }
       // 必须关掉 keepDirtyValues：它只用于后台同步，RHF 的 reset() 也会带上 useForm 的 resetOptions
@@ -113,17 +133,18 @@ export function useSaveFlow({
   }
 
   const proceed = (stage: SaveConfirm["stage"], v: ServerFormValues, opts: SubmitOptions) => {
+    setError(null)
     if (stage === "unverified" && !opts.pipeline && !opts.skipUnverified && !verifiedFor(v)) {
       setConfirm({ stage: "unverified", values: v, opts })
       return
     }
-    const envIds = includeMissing(v)
+    const envIds = includeMissing(valuesFor(v).values)
     if (envIds.length) setConfirm({ stage: "include", values: v, envIds, opts })
     else void doSave(v, opts)
   }
 
   const submit = (opts: SubmitOptions = {}) => {
-    if (saving || form.formState.isSubmitting) return
+    if (saving || confirm || form.formState.isSubmitting) return
     void form.handleSubmit(
       (v) => proceed("unverified", v, opts),
       (errors: FieldErrors<ServerFormValues>) => {

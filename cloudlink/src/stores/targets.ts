@@ -11,7 +11,9 @@ import type {
   Target,
 } from "@/bindings"
 import { ipc, toIpcError } from "@/lib/ipc"
-import type { LoadStatus } from "./assets"
+import { useAssetStore, type LoadStatus } from "./assets"
+import { useDeliveryStore } from "./deliveries"
+import { useSkillStore } from "./skills"
 
 interface TargetState {
   environments: Environment[]
@@ -38,6 +40,14 @@ interface TargetState {
 }
 
 const replace = (list: Target[], t: Target) => list.map((x) => (x.id === t.id ? t : x))
+
+/** 目标变化可能收窄整个共用组的选择；完成后取真实快照，不依赖事件到达顺序。 */
+async function refreshPublication() {
+  const [assets, deliveries, inclusions, statuses] = await Promise.all([ipc.listAssets(), ipc.listDeliveries(), ipc.listInclusions(), ipc.getCompileStatus()])
+  useAssetStore.setState({ byId: Object.fromEntries(assets.map((a) => [a.id, a])), ids: assets.map((a) => a.id) })
+  useDeliveryStore.getState()._onChanged({ deliveries, inclusions })
+  useSkillStore.getState()._onCompiled(statuses)
+}
 
 export const useTargetStore = create<TargetState>()((set, get) => ({
   environments: [],
@@ -99,6 +109,7 @@ export const useTargetStore = create<TargetState>()((set, get) => ({
     try {
       const target = await ipc.setTargetEnabled(id, enabled)
       set((s) => ({ targets: replace(s.targets, target) }))
+      await refreshPublication()
       return target
     } catch (e) {
       throw toIpcError(e)
@@ -109,6 +120,7 @@ export const useTargetStore = create<TargetState>()((set, get) => ({
     try {
       const target = await ipc.addCustomTarget(req)
       set((s) => ({ targets: [...s.targets, target] }))
+      await refreshPublication()
       return target
     } catch (e) {
       throw toIpcError(e)
@@ -122,6 +134,7 @@ export const useTargetStore = create<TargetState>()((set, get) => ({
       throw toIpcError(e)
     }
     set({ targets: get().targets.filter((t) => t.id !== id) })
+    await refreshPublication()
   },
 }))
 

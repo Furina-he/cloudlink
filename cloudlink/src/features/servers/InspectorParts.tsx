@@ -12,6 +12,7 @@ import { useAssetStore } from "@/stores/assets"
 import { selectInclusionsByAsset, useDeliveryStore } from "@/stores/deliveries"
 import { compileKey, selectAssetCompile, useSkillStore } from "@/stores/skills"
 import { useUIStore } from "@/stores/ui"
+import { useTargetStore } from "@/stores/targets"
 
 /** 添加弹窗右上角的关闭按钮：回到资源列表；有未保存修改时先确认 */
 export function ClosePanelButton() {
@@ -44,11 +45,16 @@ export interface InclusionProblem {
 export function useInclusionProblems(asset: Asset): InclusionProblem[] {
   const inclusions = useDeliveryStore(useShallow((s) => selectInclusionsByAsset(s.inclusions, asset.id)))
   const { compileTargets } = useAgentOptions()
+  const targets = useTargetStore((s) => s.targets)
+  const byId = useDeliveryStore((s) => s.byId)
   const selected = asset.agent.agents
   return useMemo(() => {
     const groups = new Map<string, Omit<InclusionProblem, "title"> & { names: string[] }>()
     for (const inc of inclusions) {
       if (inc.included || !inc.reason || !selected.includes(inc.agentKey)) continue
+      const matching = targets.filter((t) => t.enabled && t.envId === inc.envId && t.agentKey === inc.agentKey)
+      // WSL 共用 Windows／目标路径失败不是连接字段缺失，不能给出「编辑连接」的误导修复。
+      if (matching.length && matching.every((t) => Object.values(byId).some((d) => d.targetId === t.id && (d.statusDetail?.id === "shared-windows" || d.status === "broken")))) continue
       const key = `${inc.envId}|${inc.reason.id}`
       const name = compileShort(compileTargets, inc)
       const found = groups.get(key)
@@ -57,7 +63,7 @@ export function useInclusionProblems(asset: Asset): InclusionProblem[] {
     }
     const kind = asset.type === "cli" ? "cli" : "server"
     return [...groups.values()].map(({ names, ...p }) => ({ ...p, title: copy.inclusion.cannotUse(copy.env.long(p.envId), names.join("、"), kind) }))
-  }, [inclusions, selected, compileTargets, asset.type])
+  }, [inclusions, selected, compileTargets, asset.type, targets, byId])
 }
 
 /** 编译摘要（PRD 6.4）：受阻或有警告时显示一行，点击打开预览并定位到 Lint；刚保存时显示「已保存，已编译」 */

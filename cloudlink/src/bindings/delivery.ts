@@ -102,6 +102,10 @@ export type DeliveryStatus =
   | "outdated"
   /** 目标位置已有同名目录，而且不是 CloudLink 创建的 */
   | "conflict"
+  /** 父目录或写入失败，不是外来同名 Skill */
+  | "broken"
+  /** 跨环境共用，或停用成员仍共享其他目标的副本，未单独写入 */
+  | "shared"
 
 /** 总 Skill 在一个目标中的受管副本 */
 export interface Delivery {
@@ -113,6 +117,10 @@ export interface Delivery {
   /** 只返回 id 和参数 */
   statusDetail?: { id: string; params?: Record<string, string | number> }
   checkedAt: string
+  /** 实际目录的分发单位，送达数量按它去重 */
+  unitId?: string
+  /** 同环境共用真实目录的 Agent，D15 跨环境成员不在其中 */
+  sharedAgentKeys?: AgentKey[]
 }
 
 /** 添加自定义目录（F-301 AC） */

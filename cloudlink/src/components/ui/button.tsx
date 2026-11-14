@@ -17,6 +17,9 @@ const buttonVariants = cva(
         destructive:
           "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
         link: "text-primary underline-offset-4 hover:underline",
+        title: "min-w-0 shrink border-0 bg-transparent text-foreground select-text active:not-aria-[haspopup]:translate-y-0 hover:decoration-dashed hover:underline hover:decoration-line hover:underline-offset-4 focus-visible:decoration-dashed focus-visible:underline focus-visible:underline-offset-4",
+        toolbar: "text-ctl-fg hover:bg-pill-hover hover:text-foreground active:not-aria-[haspopup]:translate-y-0",
+        add: "bg-ink text-primary-foreground hover:opacity-90 dark:bg-pill-hover dark:text-foreground",
       },
       size: {
         default:
@@ -24,6 +27,7 @@ const buttonVariants = cva(
         xs: "h-6 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
         sm: "h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
         lg: "h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+        title: "h-auto min-h-7 justify-start rounded-control p-0 text-lg leading-tight font-semibold",
         icon: "size-8",
         "icon-xs":
           "size-6 rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",

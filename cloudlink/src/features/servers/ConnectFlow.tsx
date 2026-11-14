@@ -377,7 +377,7 @@ export function ConnectFlow({
         </div>
       </div>
 
-      <Trace role="list" aria-label={copy.connect.title(alias)} className="gap-3">
+      <Trace role="list" aria-label={copy.connect.title(name || alias)} className="gap-3">
         {steps.map((step) => (
           <div key={step.id} role="listitem" data-step={step.id} data-state={step.state} className="flex flex-col gap-2">
             <TraceLine

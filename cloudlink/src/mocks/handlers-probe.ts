@@ -3,7 +3,7 @@ import { emit } from "@tauri-apps/api/event"
 
 import type { ProbeChange, ProbeError, ProbeStep, ServerAsset } from "@/bindings"
 import * as fx from "./fixtures"
-import { db, fail, logActivity, newId, now, recompile, serverById } from "./state"
+import { db, fail, logActivity, newId, now, recompile, saveSnapshot, serverById } from "./state"
 
 const STEPS: ProbeStep[] = ["resolve-alias", "connect", "collect-system", "collect-services", "collect-ports", "merge"]
 const STEP_MS = 500
@@ -107,7 +107,7 @@ function confirmItems(runId: string, changeIds: string[]) {
     }
   }
   asset.updatedAt = now()
-  return { asset, statuses: recompile() }
+  return saveSnapshot(asset)
 }
 
 function undoProbe(runId: string) {
@@ -117,7 +117,7 @@ function undoProbe(runId: string) {
   asset.updatedAt = now()
   snapshots.delete(assetId)
   logActivity({ kind: "probe", assetId, messageId: "probe-undone", params: { alias: asset.connection.sshAlias }, ok: true })
-  return { asset, statuses: recompile() }
+  return saveSnapshot(asset)
 }
 
 type Args = Record<string, unknown>

@@ -185,7 +185,7 @@ pub async fn set_distribute(
     asset_id: String,
     agent_key: String,
     on: bool,
-) -> Result<Vec<Inclusion>> {
+) -> Result<crate::model::misc::DistributeResult> {
     blocking(state, move |backend| backend.set_distribute(&asset_id, &agent_key, on)).await
 }
 

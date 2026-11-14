@@ -2,7 +2,7 @@
 import { emit } from "@tauri-apps/api/event"
 
 import type {
-  TrayCopy, ActivityItem, AgentId, Asset, AssetInput, CliAsset, CompileStatus, EnvId, Inclusion, IpcError, ServerAsset, Target } from "@/bindings"
+  TrayCopy, ActivityItem, AgentId, Asset, AssetInput, CliAsset, CompileStatus, EnvId, Inclusion, IpcError, SaveResult, ServerAsset, Target } from "@/bindings"
 import { cliEnvStatus, handleOf } from "@/stores/assets"
 import * as fx from "./fixtures"
 import { compileSkill, toStatus } from "./lint"
@@ -36,6 +36,8 @@ export const db = {
   passedTests: new Map<string, { at: string; envId: EnvId }>(),
   /** 前端交给托盘的文字（F-407），桌面版之外没有托盘 */
   trayCopy: null as TrayCopy | null,
+  sharedMismatches: new Set<string>(),
+  crossEnvironmentTargets: new Set<string>(),
 }
 
 /**
@@ -65,6 +67,30 @@ if (scenario === "degraded") {
   )
   const hk = db.assets.find((a) => a.id === "ast_hk_edge")
   if (hk) hk.notes = `${hk.notes}\npassword: hunter2`
+}
+// 新状态仍由目标/检测数据驱动，不给 Agent 页固定行数或品牌清单（P8a）。
+if (scenario === "shared") {
+  const common = db.targets.find((t) => t.envId === "windows" && t.agent === "universal")!
+  common.enabled = true
+  for (const brand of ["trae", "kiro"] as const) {
+    db.targets.push({ id: `tgt_p8_${brand}`, envId: "windows", agent: brand, agentKey: brand, label: brand, path: brand === "trae" ? common.path : "C:\\Users\\me\\.kiro\\skills", enabled: true, detected: true })
+    db.environments.find((e) => e.id === "windows")!.agents.push({ brand, reads: [brand] })
+  }
+}
+if (scenario === "cross-env") {
+  const common = db.targets.find((t) => t.envId === "windows" && t.agent === "universal")!
+  common.enabled = true
+  const wsl = db.targets.find((t) => t.envId === fx.WSL && t.agent === "universal")!
+  wsl.path = "/mnt/c/Users/me/.agents/skills"
+  db.crossEnvironmentTargets.add(wsl.id)
+  const d = db.deliveries.find((d) => d.targetId === wsl.id)!
+  d.status = "shared"
+  d.statusDetail = { id: "shared-windows", params: { env: "windows" } }
+}
+if (scenario === "delivery-failed") {
+  const d = db.deliveries.find((d) => d.status === "conflict")!
+  d.status = "broken"
+  d.statusDetail = { id: "path-unavailable" }
 }
 export const LATENCY = scenario === "slow" ? 1500 : 120
 
@@ -103,6 +129,34 @@ export const agentKeyOf = (agent: AgentId, label: string) => (agent === "custom"
 
 const AGENT_ORDER: Record<AgentId, number> = { "claude-code": 0, universal: 1, trae: 2, "trae-cn": 3, kiro: 4, continue: 5, custom: 6 }
 
+export const physicalUnit = (t: Target) => `${t.envId}|${t.envId === "windows" ? t.path.replaceAll("\\", "/").toLowerCase() : t.path}`
+export const directoryMembers = (t: Target) => db.targets.filter((other) => physicalUnit(other) === physicalUnit(t) && !db.crossEnvironmentTargets.has(other.id))
+
+function deliveryGroups(): Target[][] {
+  const groups = new Map<string, Target[]>()
+  const envs = new Set(availableEnvs().map((e) => e.id))
+  for (const t of db.targets.filter((t) => t.enabled && envs.has(t.envId) && !db.crossEnvironmentTargets.has(t.id))) {
+    const key = physicalUnit(t)
+    groups.set(key, [...(groups.get(key) ?? []), t])
+  }
+  return [...groups.values()]
+}
+
+export function sharedAgentKeys(key: string): string[] {
+  const keys = new Set([key])
+  const groups = deliveryGroups()
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const group of groups) {
+      if (!group.some((t) => keys.has(t.agentKey))) continue
+      db.sharedMismatches.delete(physicalUnit(group[0]))
+      for (const t of group) if (!keys.has(t.agentKey)) { keys.add(t.agentKey); changed = true }
+    }
+  }
+  return [...keys]
+}
+
 /** 编译单元：已启用目标里不同的「运行环境 × Agent」，每个编译一份总 Skill */
 export function compileUnits(): { envId: EnvId; agentKey: string; targets: Target[] }[] {
   const envs = availableEnvs().map((e) => e.id)
@@ -123,6 +177,8 @@ export function compileUnits(): { envId: EnvId; agentKey: string; targets: Targe
 export function inclusionFor(a: Asset, envId: EnvId, agentKey: string): Inclusion {
   const base = { assetId: a.id, envId, agentKey }
   const out = (id: NonNullable<Inclusion["reason"]>["id"]): Inclusion => ({ ...base, included: false, reason: { id, params: { env: envId, cli: a.type === "cli" ? a.cli.binary : "" } } })
+  const targets = db.targets.filter((t) => t.enabled && t.envId === envId && t.agentKey === agentKey)
+  if (targets.length && targets.every((t) => db.crossEnvironmentTargets.has(t.id) || db.deliveries.some((d) => d.targetId === t.id && d.status === "broken" && d.statusDetail?.id.startsWith("path-")))) return out("not-written")
   if (!a.agent.agents.includes(agentKey)) return out("agent-off")
   if (a.type === "cli") {
     const state = a.cli.envStates[envId]
@@ -157,6 +213,24 @@ export function emitDeliveries() {
  * silent 用于启动时（前端还没订阅事件）和调用方自己发事件、记活动的场合
  */
 export function recompile(opts: { silent?: boolean } = {}): CompileStatus[] {
+  const groups = deliveryGroups()
+  // 首次发现不同选择只收窄，跨环境共用的 AgentKey 链也要收敛到相同选择。
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const group of groups) {
+      const keys = [...new Set(group.map((t) => t.agentKey))]
+      if (keys.length < 2) continue
+      for (const a of db.assets) {
+        const selected = keys.filter((key) => a.agent.agents.includes(key))
+        if (selected.length && selected.length !== keys.length) {
+          db.sharedMismatches.add(physicalUnit(group[0]))
+          a.agent.agents = a.agent.agents.filter((key) => !keys.includes(key))
+          changed = true
+        }
+      }
+    }
+  }
   const units = compileUnits()
   db.inclusions = db.assets.flatMap((a) => units.map((u) => inclusionFor(a, u.envId, u.agentKey)))
   const previous = db.compile
@@ -169,14 +243,28 @@ export function recompile(opts: { silent?: boolean } = {}): CompileStatus[] {
     if (!status.blocked) {
       for (const t of u.targets) {
         const d = db.deliveries.find((x) => x.targetId === t.id)
+        if (db.crossEnvironmentTargets.has(t.id)) continue
         if (list.length === 0) {
-          // 一台都没有分发给这个 Agent：移除总 Skill（3.4）；冲突的目录不是我们的，不动
-          if (d && d.status !== "conflict" && d.status !== "modified") db.deliveries = db.deliveries.filter((x) => x !== d)
+          // 空交集也保留明确的两条提示，不能因为没有 Skill 就丢掉选择不一致状态。
+          const mismatch = db.sharedMismatches.has(physicalUnit(t))
+          if (mismatch && (!d || ["ok", "missing", "pending", "outdated"].includes(d.status))) {
+            if (d) d.status = "missing"
+            else db.deliveries.push({ id: newId("dlv"), targetId: t.id, envId: t.envId, path: `${t.path}${t.envId === "windows" ? "\\" : "/"}cloudlink-servers`, status: "missing", checkedAt: now() })
+          } else if (d && !["conflict", "modified", "broken", "shared"].includes(d.status)) db.deliveries = db.deliveries.filter((x) => x !== d)
         } else if (!d) {
           db.deliveries.push({ id: newId("dlv"), targetId: t.id, envId: u.envId, path: `${t.path}${u.envId === "windows" ? "\\" : "/"}cloudlink-servers`, status: "ok", checkedAt: now() })
-        } else if (d.status === "ok" || d.status === "outdated" || d.status === "pending") {
+        } else if (d.status === "ok" || d.status === "outdated" || d.status === "pending" || (d.status === "missing" && d.statusDetail?.id === "shared-selection-mismatch")) {
+          // 空交集的占位记录不是被用户删除的副本；有共同资源可写时走正常发布，随后更新共用说明。
           d.status = "ok"
           d.checkedAt = now()
+        }
+        const written = db.deliveries.find((d) => d.targetId === t.id)
+        const group = directoryMembers(t)
+        if (written) {
+          written.unitId = physicalUnit(t)
+          written.sharedAgentKeys = group.length > 1 ? [...new Set(group.map((member) => member.agentKey))] : undefined
+          if ((written.status === "ok" || written.status === "missing") && db.sharedMismatches.has(physicalUnit(t))) written.statusDetail = { id: "shared-selection-mismatch" }
+          else if (written.status === "ok") written.statusDetail = written.sharedAgentKeys ? { id: "shared-directory" } : undefined
         }
       }
     }
@@ -196,6 +284,10 @@ export function recompile(opts: { silent?: boolean } = {}): CompileStatus[] {
     emitDeliveries()
   }
   return statuses
+}
+
+export function saveSnapshot(asset: Asset, statuses = recompile()): SaveResult {
+  return { asset, statuses, inclusions: db.inclusions, deliveries: db.deliveries }
 }
 
 /** 编译单元变了（启用、停用、添加或移除目标）也要通知前端，消失的单元随之移除 */

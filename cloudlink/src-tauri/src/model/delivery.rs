@@ -166,6 +166,10 @@ pub enum DeliveryStatus {
     Modified,
     Outdated,
     Conflict,
+    /// 父目录或写入失败，不是外来的同名 Skill。
+    Broken,
+    /// 未单独写入：跨环境共用，或停用成员仍共享其他目标的副本。
+    Shared,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -181,6 +185,14 @@ pub struct Delivery {
     #[ts(optional)]
     pub status_detail: Option<Detail<String>>,
     pub checked_at: String,
+    // 实际写入目录的分发单位，送达数量按它去重。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub unit_id: Option<String>,
+    // 同环境共用真实目录的 Agent；不包含 D15 的跨环境成员。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub shared_agent_keys: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

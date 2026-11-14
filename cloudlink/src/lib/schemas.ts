@@ -70,6 +70,8 @@ export const serviceSchema = z.object({
   name: z.string().trim().min(1, "service-name-required"),
   image: z.string().optional(),
   ports: z.array(portMappingSchema),
+  // 仅表单草稿：允许保留未完成/无效的端口输入，提交前解析，绝不写入 Asset。
+  portsText: z.string().refine((s) => parsePorts(s) !== null, "ports-format").optional(),
   role: z.string().optional(),
   critical: z.boolean(),
   source: z.enum(["manual", "probe"]),
@@ -92,7 +94,7 @@ export interface AliasContext {
  * 服务器表单（PRD 6.4、6.5）。managed 才校验连接字段；imported 的连接信息由用户的 ssh config 维护。
  * 云厂商和地域用空串表示「未填」
  */
-export function serverFormSchema(ctx: AliasContext, opts: { nameOptional?: boolean } = {}) {
+export function serverFormSchema(ctx: AliasContext, opts: { nameOptional?: boolean; profileOnly?: boolean } = {}) {
   return z
     .object({
       source: z.enum(["managed", "imported"]),
@@ -109,8 +111,9 @@ export function serverFormSchema(ctx: AliasContext, opts: { nameOptional?: boole
         proxyJump: z.string().trim(),
         definedIn: z.array(z.string()),
       }),
-      // 添加表单里名称可空，保存时用地址（PRD 6.5）
+      // 新建名称可空，使用这份草稿稳定的中性名称，不从连接地址生成（P8 D7）。
       name: opts.nameOptional ? z.string().trim() : z.string().trim().min(1, "name-required"),
+      fallbackName: z.string(),
       production: z.boolean(),
       summary: z.string(),
       tags: z.array(z.string()),
@@ -129,6 +132,14 @@ export function serverFormSchema(ctx: AliasContext, opts: { nameOptional?: boole
     })
     .superRefine((v, issue) => {
       const add = (path: (string | number)[], message: string) => issue.addIssue({ code: "custom", path, message })
+      const services = new Set<string>()
+      v.services.forEach((s, i) => {
+        const key = `${s.kind}|${s.name}`
+        if (services.has(key)) add(["services", i, "name"], "service-duplicate")
+        services.add(key)
+      })
+      // 资料编辑不校验、修改或重新测试连接；保存时以最新持久化连接为准。
+      if (opts.profileOnly) return
       const alias = v.alias
       if (!alias) add(["alias"], "alias-required")
       else if (!ALIAS_PATTERN.test(alias)) add(["alias"], "alias-format")
@@ -210,25 +221,6 @@ export function formatPort(p: PortMapping): string {
 export function formatPorts(ports: PortMapping[]): string {
   return ports.map(formatPort).join(", ")
 }
-
-/** 「手动添加服务」对话框；kind + name 是合并键，不能和其他服务重复 */
-export function serviceDraftSchema(existing: { kind: string; name: string }[]) {
-  return z
-    .object({
-      kind: z.enum(["docker", "systemd"]),
-      name: z.string().trim().min(1, "service-name-required"),
-      image: z.string().trim(),
-      ports: z.string().refine((s) => parsePorts(s) !== null, "ports-format"),
-      role: z.string().trim(),
-      critical: z.boolean(),
-    })
-    .refine(
-      (v) => !existing.some((s) => s.kind === v.kind && s.name === v.name),
-      { message: "service-duplicate", path: ["name"] }
-    )
-}
-
-export type ServiceDraft = z.infer<ReturnType<typeof serviceDraftSchema>>
 
 /** 自定义目录（F-301 AC、PRD 6.6） */
 export const customTargetSchema = z.object({

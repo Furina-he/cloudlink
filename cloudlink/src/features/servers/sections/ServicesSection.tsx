@@ -1,201 +1,76 @@
-import { EllipsisIcon, PlusIcon, SearchXIcon, ShieldCheckIcon } from "lucide-react"
-import { useState } from "react"
+import { CheckIcon, PlusIcon, XIcon } from "lucide-react"
 import { Controller, useFieldArray, useFormContext, useWatch } from "react-hook-form"
-
 import type { Service } from "@/bindings"
-import { StateBadge } from "@/components/app/StateBadge"
-import { Truncate } from "@/components/app/Truncate"
 import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { FieldDescription, FieldLegend, FieldSet } from "@/components/ui/field"
+import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Item, ItemContent } from "@/components/ui/item"
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { copy } from "@/lib/copy"
 import { formatPorts, type ServerFormValues } from "@/lib/schemas"
-import { ExportSwitch } from "../ExportSwitch"
-import { ServiceDialog } from "../ServiceDialog"
+import { ValidationError } from "../ValidationError"
 
-const DASH = <span className="text-muted-foreground">—</span>
-
-/**
- * 服务分段（PRD 6.4）：探测得到的和手动添加的服务；角色、关键是人工标注。
- * 2026-11-10 由 9 列压成 6 列：类型和「手动」写在名称下面，「未发现」「已清洗」跟在名称后面，
- * 「探测」是常态不显示；固定列宽，760 宽窗口里不用横向滚动就能看到「关键」开关
- */
-export function ServicesSection() {
-  const { control, register } = useFormContext<ServerFormValues>()
-  const { fields, append, update, remove } = useFieldArray({ control, name: "services", keyName: "key" })
-  const services = useWatch({ control, name: "services" })
-  // 每次打开对话框换一个 session，表单从头来；关闭时保留 key，退场动画照常播放
-  const [dialog, setDialog] = useState<{ open: boolean; index: number | null; session: number }>({
-    open: false,
-    index: null,
-    session: 0,
-  })
-  const openDialog = (index: number | null) =>
-    setDialog((d) => ({ open: true, index, session: d.session + 1 }))
-  const editing = dialog.index === null ? undefined : services[dialog.index]
-  const others = services.filter((_, i) => i !== dialog.index)
-
-  const submit = (draft: Pick<Service, "kind" | "name" | "image" | "ports" | "role" | "critical">) => {
-    if (dialog.index === null) append({ ...draft, source: "manual", missing: false })
-    else update(dialog.index, { ...services[dialog.index], ...draft })
-  }
-
+/** 详情只展示事实和人工标注；编辑在资料弹窗，不在表格里即输即存（P8 D6）。 */
+export function ServiceInventory({ services }: { services: Service[] }) {
+  if (!services.length) return <p className="text-xs text-muted-foreground">{copy.services.empty}</p>
   return (
-    <div className="flex flex-col gap-6">
-      <FieldSet className="min-w-0 gap-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <FieldLegend className="sr-only">{copy.detail.groups.services}</FieldLegend>
-            <FieldDescription>{copy.services.hint}</FieldDescription>
-          </div>
-          <Button type="button" variant="outline" size="sm" onClick={() => openDialog(null)}>
-            <PlusIcon data-icon="inline-start" />
-            {copy.services.add}
-          </Button>
-        </div>
-        <ExportSwitch name="export.image" label={copy.services.exportImage} hint={copy.services.exportImageHint} />
+    <Table className="table-fixed [&_td]:whitespace-normal">
+      <colgroup><col className="w-[25%]" /><col className="w-[18%]" /><col className="w-[19%]" /><col /><col className="w-12" /></colgroup>
+      <TableHeader><TableRow>
+        <TableHead>{copy.services.columns.name}</TableHead><TableHead>{copy.services.columns.image}</TableHead><TableHead>{copy.services.columns.ports}</TableHead><TableHead>{copy.services.columns.role}</TableHead><TableHead>{copy.services.columns.critical}</TableHead>
+      </TableRow></TableHeader>
+      <TableBody>{services.map((s) => <TableRow key={`${s.kind}:${s.name}`}>
+        <TableCell><div className="flex flex-col gap-0.5"><span className="font-mono text-xs wrap-anywhere">{s.name}</span><span className="text-xs text-muted-foreground">{copy.services.meta(copy.services.kind[s.kind], s.source === "manual")}{s.missing ? ` · ${copy.services.missing}` : ""}{s.sanitized ? ` · ${copy.services.sanitized}` : ""}</span></div></TableCell>
+        <TableCell className="font-mono text-xs wrap-anywhere">{s.image || "—"}</TableCell>
+        <TableCell className="font-mono text-xs wrap-anywhere">{s.ports.length ? formatPorts(s.ports) : "—"}</TableCell>
+        <TableCell className="text-xs wrap-anywhere">{s.role || "—"}</TableCell>
+        <TableCell>{s.critical ? <CheckIcon className="size-3.5" aria-label={copy.services.columns.critical} /> : "—"}</TableCell>
+      </TableRow>)}</TableBody>
+    </Table>
+  )
+}
 
-        {fields.length > 0 ? (
-          <div className="rounded-lg border">
-            <Table className="table-fixed">
-              <colgroup>
-                <col className="w-[24%]" />
-                <col className="w-[16%]" />
-                <col className="w-[18%]" />
-                <col />
-                <col className="w-14" />
-                <col className="w-10" />
-              </colgroup>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead>{copy.services.columns.name}</TableHead>
-                  <TableHead>{copy.services.columns.image}</TableHead>
-                  <TableHead>{copy.services.columns.ports}</TableHead>
-                  <TableHead>{copy.services.columns.role}</TableHead>
-                  <TableHead>{copy.services.columns.critical}</TableHead>
-                  <TableHead>
-                    <span className="sr-only">{copy.services.columns.actions}</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {fields.map((f, i) => {
-                  const s = services[i] ?? f
-                  return (
-                    <TableRow key={f.key}>
-                      <TableCell>
-                        <div className="flex min-w-0 flex-col gap-0.5">
-                          <span className="flex min-w-0 items-center gap-1.5">
-                            <Truncate text={s.name} className="font-mono text-[0.8125rem]" />
-                            {s.sanitized && (
-                              <Tooltip>
-                                <TooltipTrigger render={<span tabIndex={0} className="shrink-0 rounded-4xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50" />}>
-                                  <StateBadge tone="warning" icon={ShieldCheckIcon}>
-                                    {copy.services.sanitized}
-                                  </StateBadge>
-                                </TooltipTrigger>
-                                <TooltipContent>{copy.services.sanitizedTip}</TooltipContent>
-                              </Tooltip>
-                            )}
-                            {s.missing && (
-                              <Tooltip>
-                                <TooltipTrigger render={<span tabIndex={0} className="shrink-0 rounded-4xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50" />}>
-                                  <StateBadge tone="warning" icon={SearchXIcon}>
-                                    {copy.services.missing}
-                                  </StateBadge>
-                                </TooltipTrigger>
-                                <TooltipContent>{copy.services.missingTip}</TooltipContent>
-                              </Tooltip>
-                            )}
-                          </span>
-                          <span className="text-xs text-muted-foreground">{copy.services.meta(copy.services.kind[s.kind], s.source === "manual")}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">{s.image ? <Truncate text={s.image} /> : DASH}</TableCell>
-                      <TableCell className="font-mono text-xs">{s.ports.length ? <Truncate text={formatPorts(s.ports)} /> : DASH}</TableCell>
-                      <TableCell>
-                        <Input
-                          className="h-7 w-full"
-                          placeholder={copy.services.rolePlaceholder}
-                          aria-label={copy.services.roleAria(s.name)}
-                          {...register(`services.${i}.role`)}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Controller
-                          name={`services.${i}.critical`}
-                          control={control}
-                          render={({ field }) => (
-                            <Switch
-                              size="sm"
-                              checked={field.value}
-                              onCheckedChange={field.onChange}
-                              aria-label={copy.services.criticalAria(s.name)}
-                            />
-                          )}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger
-                            render={
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon-xs"
-                                aria-label={copy.services.rowActions(s.name)}
-                              />
-                            }
-                          >
-                            <EllipsisIcon />
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            {s.source === "manual" && (
-                              <DropdownMenuItem onClick={() => openDialog(i)}>{copy.services.edit}</DropdownMenuItem>
-                            )}
-                            <DropdownMenuItem variant="destructive" onClick={() => remove(i)}>
-                              {copy.services.remove}
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        ) : (
-          <p className="rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
-            {copy.services.empty}
-          </p>
-        )}
-      </FieldSet>
-
-      <ServiceDialog
-        key={dialog.session}
-        open={dialog.open}
-        onOpenChange={(open) => setDialog((d) => ({ ...d, open }))}
-        editing={editing}
-        others={others}
-        onSubmit={submit}
-      />
-    </div>
+/** 统一草稿：探测事实只读，人工角色/关键可改，手工记录仍可维护类型、镜像和端口。 */
+export function ServicesSection() {
+  const { control, register, formState: { errors } } = useFormContext<ServerFormValues>()
+  const { fields, append, remove } = useFieldArray({ control, name: "services", keyName: "key" })
+  const services = useWatch({ control, name: "services" })
+  return (
+    <FieldSet className="min-w-0 gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <FieldLegend variant="label" className="mb-0">{copy.detail.groups.services}</FieldLegend>
+        <Button type="button" variant="ghost" size="xs" onClick={() => append({ kind: "docker", name: "", image: "", ports: [], portsText: "", role: "", critical: false, source: "manual", missing: false }, { focusName: `services.${fields.length}.name` })}><PlusIcon data-icon="inline-start" />{copy.services.add}</Button>
+      </div>
+      {fields.length > 0 ? <div className="divide-y divide-line-2">
+        {fields.map((f, i) => {
+          const s = services[i] ?? f, error = errors.services?.[i]
+          return (
+            <Item key={f.key} size="xs" className="items-stretch px-0">
+              <ItemContent className="min-w-0">
+                <FieldGroup className="gap-3">
+                  <FieldGroup className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-start gap-3">
+                    {s.source === "manual" ? <Field data-invalid={!!error?.name || undefined}>
+                      <FieldLabel htmlFor={`editor-service-${f.key}`}>{copy.serviceDialog.name}</FieldLabel>
+                      <Input id={`editor-service-${f.key}`} className="font-mono" aria-invalid={!!error?.name || undefined} {...register(`services.${i}.name`)} />
+                      <ValidationError error={error?.name} />
+                    </Field> : <div className="flex flex-col gap-0.5 pt-6"><span className="font-mono text-xs wrap-anywhere">{s.name}</span><span className="text-xs text-muted-foreground">{copy.services.kind[s.kind]}{s.missing ? ` · ${copy.services.missing}` : ""}</span></div>}
+                    <Field><FieldLabel htmlFor={`editor-role-${f.key}`}>{copy.serviceDialog.role}</FieldLabel><Input id={`editor-role-${f.key}`} {...register(`services.${i}.role`)} /></Field>
+                    <Field className="w-auto gap-2"><FieldLabel htmlFor={`editor-critical-${f.key}`}>{copy.services.columns.critical}</FieldLabel><Controller name={`services.${i}.critical`} control={control} render={({ field }) => <Switch id={`editor-critical-${f.key}`} checked={field.value} onCheckedChange={field.onChange} aria-label={copy.services.criticalAria(s.name)} />} /></Field>
+                    <Button type="button" variant="ghost" size="icon-xs" className="mt-5" aria-label={copy.services.removeRecord(s.name, i + 1)} onClick={() => remove(i)}><XIcon /></Button>
+                  </FieldGroup>
+                  {s.source === "manual" && <FieldGroup className="grid grid-cols-[6.5rem_minmax(0,1fr)_minmax(0,1fr)] items-start gap-3">
+                    <Field><FieldLabel htmlFor={`editor-kind-${f.key}`}>{copy.serviceDialog.kind}</FieldLabel><Controller name={`services.${i}.kind`} control={control} render={({ field }) => <Select value={field.value} onValueChange={(v) => v && field.onChange(v)}><SelectTrigger id={`editor-kind-${f.key}`} size="sm"><SelectValue>{copy.services.kind[field.value]}</SelectValue></SelectTrigger><SelectContent><SelectGroup>{(["docker", "systemd"] as const).map((k) => <SelectItem key={k} value={k}>{copy.services.kind[k]}</SelectItem>)}</SelectGroup></SelectContent></Select>} /></Field>
+                    <Field><FieldLabel htmlFor={`editor-image-${f.key}`}>{copy.serviceDialog.image}</FieldLabel><Input id={`editor-image-${f.key}`} className="font-mono" spellCheck={false} {...register(`services.${i}.image`)} /></Field>
+                    <Field data-invalid={!!error?.portsText || undefined}><FieldLabel htmlFor={`editor-ports-${f.key}`}>{copy.serviceDialog.ports}</FieldLabel><Input id={`editor-ports-${f.key}`} className="font-mono" aria-invalid={!!error?.portsText || undefined} {...register(`services.${i}.portsText`)} /><FieldDescription>{copy.serviceDialog.portsHint}</FieldDescription><ValidationError error={error?.portsText} /></Field>
+                  </FieldGroup>}
+                </FieldGroup>
+              </ItemContent>
+            </Item>
+          )
+        })}
+      </div> : <p className="text-xs text-muted-foreground">{copy.services.empty}</p>}
+    </FieldSet>
   )
 }

@@ -12,7 +12,7 @@ use crate::error::Result;
 use crate::model::Detail;
 use crate::model::asset::{Asset, ConnectionSource, ExportFlags};
 use crate::model::compile::{CompileStatus, LintId, LintItem, LintLevel};
-use crate::model::delivery::{Delivery, DeliveryStatus, Inclusion, InclusionReasonId, Target};
+use crate::model::delivery::{DeliveryStatus, Inclusion, InclusionReasonId};
 use crate::model::env::EnvId;
 use crate::model::misc::{ActivityKind, ActivityMessageId};
 use crate::params;
@@ -101,18 +101,6 @@ fn included_ids(items: &[Inclusion], env_id: &EnvId, agent_key: &str) -> BTreeSe
         .collect()
 }
 
-fn failure(target: &Target, now: &str, detail: &str) -> Delivery {
-    Delivery {
-        id: format!("dlv_{}", target.id),
-        target_id: target.id.clone(),
-        env_id: target.env_id.clone(),
-        path: format!("{}/{}", target.path.trim_end_matches(['/', '\\']), publish::SKILL_DIR),
-        status: DeliveryStatus::Outdated,
-        status_detail: Some(Detail::new(detail.into())),
-        checked_at: now.into(),
-    }
-}
-
 impl Backend {
     /// Every pass repairs missing/outdated copies and backs up modified ones before overwriting (F-309).
     /// Health mode only limits compile notifications to what changed.
@@ -120,6 +108,23 @@ impl Backend {
     pub(super) fn reconcile_locked(&self, health: bool) -> Result<Vec<CompileStatus>> {
         let mut assets = self.list_assets()?;
         let envs = self.contexts(true)?;
+        let all_envs = self.contexts(false)?;
+        let targets = self.list_targets()?;
+        let plan = deliver::groups::Plan::new(&self.paths, &all_envs, &targets);
+        let choices_before: BTreeMap<_, _> = assets
+            .iter()
+            .map(|a| (a.id().to_string(), a.agent().agents.clone()))
+            .collect();
+        let mismatched = plan.normalize_choices(&mut assets);
+        self.shared_mismatches
+            .lock()
+            .map_err(|_| crate::error::AppError::internal("sharing state unavailable"))?
+            .extend(mismatched);
+        for asset in &assets {
+            if choices_before.get(asset.id()) != Some(&asset.agent().agents) {
+                self.database()?.upsert_asset(asset)?;
+            }
+        }
         for asset in &mut assets {
             if let Asset::Vps(server) = asset
                 && server.connection.source == ConnectionSource::Imported
@@ -142,9 +147,9 @@ impl Backend {
             self.emit_guard_status()?;
             log::warn!("CloudLink guard policy could not be updated");
         }
-        let targets = self.list_targets()?;
         let previous_inclusions = self.list_inclusions()?;
         let mut inclusions = deliver::compute_inclusions(&assets, &envs, &targets);
+        plan.constrain_inclusions(&mut inclusions, &targets);
         // An exact generated file is necessary, but the user's other configuration can still override it.
         if !cfg!(test) {
             let tools = self.tools()?;
@@ -179,22 +184,23 @@ impl Backend {
         let settings = self.get_settings()?;
         let previous = self.get_compile_status()?;
         let now = crate::time::now_rfc3339();
-        let units: BTreeSet<_> = targets
-            .iter()
-            .filter(|t| t.enabled)
-            .map(|t| (t.env_id.clone(), t.agent_key.clone()))
-            .collect();
+        // 模板正文不随 Agent 品牌变化。共用组只渲染、发布一次，再给各目标返回状态。
+        let units = plan.units.iter().filter(|unit| unit.enabled());
         let mut statuses = Vec::new();
         let mut sources = BTreeMap::new();
         let mut hashes = BTreeMap::new();
         let mut withdraw = BTreeSet::new();
         let mut changed = BTreeSet::new();
         let mut notify_compile = !health;
-        for (env_id, agent_key) in units {
+        for unit in units {
+            let env_id = unit.env_id.clone();
+            let agent_key = unit.owner().agent_key.clone();
+            let active_keys = unit.active_keys();
+            let member_keys = if unit.keys().len() > 1 { unit.keys() } else { Vec::new() };
             let Some(env) = envs.iter().find(|e| e.id == env_id && e.available) else {
                 continue;
             };
-            let ids = included_ids(&inclusions, &env_id, &agent_key);
+            let ids = included_ids(&inclusions, &env_id, &active_keys[0]);
             let included: Vec<_> = assets.iter().filter(|a| ids.contains(a.id())).collect();
             let grants = included
                 .iter()
@@ -249,17 +255,26 @@ impl Backend {
                 let content_hash = publish::files_hash(&preview.files);
                 // Unchanged source keeps its published marker, so copies stay byte-identical to it
                 let marker = match old_source.as_ref() {
-                    Some((old, _)) if same_source && old.content_hash == content_hash => old.clone(),
+                    Some((old, _))
+                        if same_source && old.content_hash == content_hash && old.agent_keys == member_keys =>
+                    {
+                        old.clone()
+                    }
                     _ => Marker {
                         managed_by: publish::MANAGED_BY.into(),
                         env_id: env_id.to_string(),
                         agent_key: agent_key.clone(),
+                        agent_keys: member_keys.clone(),
                         content_hash: content_hash.clone(),
                         compiled_at: now.clone(),
                         template_version: 1,
                     },
                 };
-                let published = if same_source {
+                let published = if same_source
+                    && old_source
+                        .as_ref()
+                        .is_some_and(|(old, _)| old.agent_keys == member_keys)
+                {
                     Ok(())
                 } else {
                     publish::publish(&self.paths.compiled_dir(), &marker, &preview.files).map(|_| ())
@@ -310,60 +325,108 @@ impl Backend {
                     params! {"env" => env_id.as_str(), "target" => agent_key.clone(), "count" => if status.blocked { status.errors as usize } else { included.len() }}, !status.blocked)?;
             }
             notify_compile |= !preview.blocked && source_changed;
-            statuses.push(status);
+            for member in active_keys {
+                let mut member_status = status.clone();
+                member_status.agent_key = member;
+                statuses.push(member_status);
+            }
         }
         self.database()?.put_compile_statuses(&statuses)?;
         if notify_compile {
             self.emit("compile://finished", &serde_json::json!({ "statuses": statuses }));
         }
-        let all_envs = self.contexts(false)?;
         let mut backups = Vec::new();
-        for target in &targets {
-            if !target.enabled || !envs.iter().any(|e| e.id == target.env_id) {
-                self.database()?.delete_delivery(&format!("dlv_{}", target.id))?;
+        let mut handled = BTreeSet::new();
+        let mismatches = self
+            .shared_mismatches
+            .lock()
+            .map_err(|_| crate::error::AppError::internal("sharing state unavailable"))?
+            .clone();
+        for unit in &plan.units {
+            handled.extend(unit.targets.iter().map(|t| t.id.clone()));
+            if !unit.enabled() || !envs.iter().any(|e| e.id == unit.env_id) {
+                for target in &unit.targets {
+                    self.database()?.delete_delivery(&format!("dlv_{}", target.id))?;
+                }
                 continue;
             }
-            let Some(env) = all_envs.iter().find(|e| e.id == target.env_id) else {
+            let Some(env) = all_envs.iter().find(|e| e.id == unit.env_id) else {
                 continue;
             };
-            let key = (target.env_id.clone(), target.agent_key.clone());
+            let key = (unit.env_id.clone(), unit.owner().agent_key.clone());
             let hash = hashes.get(&key).map(String::as_str);
             let outcome = if withdraw.contains(&key) {
-                deliver::remove(&self.paths, env, target).and_then(|_| {
+                deliver::inspect_unit(&self.paths, env, unit, hash).and_then(|checked| {
+                    if checked.status == DeliveryStatus::Conflict {
+                        return Ok(checked);
+                    }
+                    deliver::remove_unit(&self.paths, env, unit)?;
                     if let Some((marker, files)) = sources.get(&key) {
-                        deliver::sync(&self.paths, env, target, files, marker, false)
+                        deliver::sync_unit(&self.paths, env, unit, files, marker)
                     } else {
-                        deliver::inspect(&self.paths, env, target, hash)
+                        deliver::inspect_unit(&self.paths, env, unit, hash)
                     }
                 })
             } else if let Some((marker, files)) = sources.get(&key) {
-                // F-309 AC1/AC2：每次检查都把缺失、过期的副本补上；被改动的先备份再覆盖
-                deliver::sync_auto(&self.paths, env, target, files, marker).map(|(delivery, saved)| {
+                deliver::sync_unit_auto(&self.paths, env, unit, files, marker).map(|(delivery, saved)| {
                     if let Some(saved) = saved {
                         backups.push(saved);
                     }
                     delivery
                 })
             } else {
-                deliver::inspect(&self.paths, env, target, hash)
+                deliver::inspect_unit(&self.paths, env, unit, hash)
             };
-            let delivery = outcome.unwrap_or_else(|_| {
-                failure(
-                    target,
-                    &now,
-                    if withdraw.contains(&key) {
-                        "withdraw-failed"
-                    } else {
-                        "sync-failed"
-                    },
-                )
-            });
-            if sources.get(&key).is_some_and(|(_, files)| files.is_empty())
-                && delivery.status == DeliveryStatus::Missing
-            {
-                self.database()?.delete_delivery(&delivery.id)?;
-            } else {
-                self.database()?.upsert_delivery(&delivery)?;
+            let checked = outcome.unwrap_or_else(|error| deliver::broken(unit.owner(), &error));
+            for target in &unit.targets {
+                let delivery = unit.decorate(checked.clone(), target, mismatches.contains(&target.id));
+                if delivery.status == DeliveryStatus::Missing
+                    && !mismatches.contains(&target.id)
+                    && sources.get(&key).is_some_and(|(_, files)| files.is_empty())
+                {
+                    self.database()?.delete_delivery(&delivery.id)?;
+                } else {
+                    self.database()?.upsert_delivery(&delivery)?;
+                }
+            }
+        }
+        for target in targets.iter().filter(|target| !handled.contains(&target.id)) {
+            if !target.enabled || !envs.iter().any(|e| e.id == target.env_id) {
+                self.database()?.delete_delivery(&format!("dlv_{}", target.id))?;
+                continue;
+            }
+            let mut delivery = deliver::delivery(target, DeliveryStatus::Pending);
+            if let Some(writer) = plan.windows_shared.get(&target.id) {
+                delivery.status = DeliveryStatus::Shared;
+                delivery.unit_id = Some(writer.clone());
+                delivery.status_detail = Some(Detail::with(
+                    "shared-windows".into(),
+                    params! {"targetId" => writer.clone(), "env" => "windows"},
+                ));
+            } else if let Some(detail) = plan.invalid.get(&target.id) {
+                delivery.status = DeliveryStatus::Broken;
+                delivery.status_detail = Some(detail.clone());
+            }
+            self.database()?.upsert_delivery(&delivery)?;
+        }
+        // 已并成共用组的其他成员不再保留独立编译源；其状态仍按原 Agent key 返回。
+        let owners: BTreeSet<_> = plan
+            .units
+            .iter()
+            .map(|u| (u.env_id.clone(), u.owner().agent_key.clone()))
+            .collect();
+        for unit in &plan.units {
+            for key in unit.keys().into_iter().filter(|key| key != &unit.owner().agent_key) {
+                if !owners.contains(&(unit.env_id.clone(), key.clone())) {
+                    let source = publish::output_dir(&self.paths.compiled_dir(), &unit.env_id, &key);
+                    if deliver::load_source(&self.paths, &unit.env_id, &key)
+                        .ok()
+                        .flatten()
+                        .is_some()
+                    {
+                        let _ = publish::remove_owned(&source);
+                    }
+                }
             }
         }
         self.emit_deliveries()?;

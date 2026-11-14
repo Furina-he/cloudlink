@@ -200,7 +200,7 @@ function ClFake {
 
 test("Windows nonzero unauthenticated JSON does not expose credentials", windowsOnly, () => {
   const metadata = powershellBridge("identity", "vercel", `
-function ClFake { Set-Variable -Name LASTEXITCODE -Scope 1 -Value 1; '{"authenticated":false,"expired":true,"token":"${privateMarker}"}' }
+function ClFake { Set-Variable -Name LASTEXITCODE -Scope Global -Value 1; '{"authenticated":false,"expired":true,"token":"${privateMarker}"}' }
 `);
   assert.deepEqual(metadata, { authenticated: false, expired: true });
 });
@@ -230,10 +230,10 @@ function ClFake {
   if ($args -contains 'compartment') { '["ocid1.compartment.test.allowed","ocid1.compartment.test.network-denied"]';return }
   if ($args -contains '--query' -and $args[$args.IndexOf('--query')+1] -ne 'data') { throw 'quoted-native-query' }
   if ($args -contains 'list-vnics') {
-    if ($args -contains 'ocid1.instance.test.no-network') { Set-Variable -Name LASTEXITCODE -Scope 1 -Value 1; Write-Error '403 NotAuthorizedOrNotFound ${privateMarker}' -ErrorAction Continue;return }
+    if ($args -contains 'ocid1.instance.test.no-network') { Set-Variable -Name LASTEXITCODE -Scope Global -Value 1; Write-Error '403 NotAuthorizedOrNotFound ${privateMarker}' -ErrorAction Continue;return }
     '[{"public-ip":"203.0.113.7","private-ip":"10.0.0.1","secret":"${privateMarker}"}]';return
   }
-  if ($args -contains 'ocid1.tenancy.test.example') { Set-Variable -Name LASTEXITCODE -Scope 1 -Value 1; Write-Error '404 NotAuthorizedOrNotFound ${privateMarker}' -ErrorAction Continue;return }
+  if ($args -contains 'ocid1.tenancy.test.example') { Set-Variable -Name LASTEXITCODE -Scope Global -Value 1; Write-Error '404 NotAuthorizedOrNotFound ${privateMarker}' -ErrorAction Continue;return }
   if ($args -contains 'ocid1.compartment.test.allowed') { '[{"id":"ocid1.instance.test.live","display-name":"计算节点","lifecycle-state":"RUNNING","metadata":{"secret":"${privateMarker}"}},{"id":"ocid1.instance.test.deleted","display-name":"Deleted","lifecycle-state":"TERMINATED"}]';return }
   '[{"id":"ocid1.instance.test.no-network","display-name":"No network","lifecycle-state":"RUNNING"}]'
 }`);

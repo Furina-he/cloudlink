@@ -5,7 +5,7 @@ import type { ActivityItem, ActivityQuery, Operation, OperationQuery, Settings }
 import * as fx from "./fixtures"
 import { setAutoCheck } from "./handlers-update"
 import { secretRule } from "./lint"
-import { aliasOf, assetById, db, fail, logActivity, now, recompile } from "./state"
+import { aliasOf, assetById, db, fail, logActivity, now, recompile, saveSnapshot } from "./state"
 
 function mergeNotes(items: { id: string; text?: string }[]) {
   if (items.length === 0 || items.length > 100 || new Set(items.map((i) => i.id)).size !== items.length) fail("settings-invalid")
@@ -24,7 +24,7 @@ function mergeNotes(items: { id: string; text?: string }[]) {
   asset.updatedAt = now()
   notes.forEach((n) => (n.status = "merged"))
   logActivity({ kind: "note", assetId: asset.id, messageId: "notes-merged", params: { alias: aliasOf(asset.id), count: items.length }, ok: true })
-  return { asset, statuses: recompile() }
+  return saveSnapshot(asset)
 }
 
 function dismissNotes(ids: string[]) {

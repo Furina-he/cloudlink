@@ -19,9 +19,10 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 import { copy } from "@/lib/copy"
+import { deliveryProblemsText, targetSyncOutcome } from "@/lib/deliveryFeedback"
 import { ipc } from "@/lib/ipc"
-import { toastError } from "@/features/servers/actions"
-import { useDeliveryStore } from "@/stores/deliveries"
+import { currentDeliverySnapshot, toastError } from "@/features/servers/actions"
+import { isDeliveryProblem, useDeliveryStore } from "@/stores/deliveries"
 import { useTargetStore } from "@/stores/targets"
 
 type PendingTarget = { kind: "disable" | "remove"; targetIds: string[] } | null
@@ -65,7 +66,14 @@ export const targetActions = {
     }
     void withBusy(ids, async () => {
       for (const id of ids) await useTargetStore.getState().setEnabled(id, true)
-      toast.add({ title: copy.targets.enabledToast(targetLabel(targets[0])), type: "success" })
+      const label = targetLabel(targets[0])
+      const current = useTargetStore.getState().targets.filter((t) => ids.includes(t.id))
+      const outcome = targetSyncOutcome(current, currentDeliverySnapshot())
+      toast.add({
+        title: outcome.problems.length ? copy.targets.enabledPartial(label) : outcome.resources ? copy.targets.enabledToast(label) : copy.targets.enabledEmpty(label),
+        description: outcome.problems.length ? deliveryProblemsText(outcome.problems) : undefined,
+        type: outcome.problems.length ? "warning" : outcome.resources ? "success" : undefined,
+      })
     })
   },
 
@@ -91,6 +99,12 @@ export function TargetDialogs() {
   const shown = pending ?? last
   const targets = useTargetStore((s) => s.targets)
   const chosen = targets.filter((t) => shown?.targetIds.includes(t.id))
+  const deliveriesById = useDeliveryStore((s) => s.byId)
+  const deliveries = Object.values(deliveriesById)
+  const sharesDirectory = chosen.some((t) => {
+    const d = deliveries.find((d) => d.targetId === t.id)
+    return d?.statusDetail?.id === "shared-windows" || d?.sharedAgentKeys?.some((key) => targets.some((other) => other.enabled && other.envId === t.envId && other.agentKey === key && !shown?.targetIds.includes(other.id)))
+  })
   const [busy, setBusy] = useState(false)
   const close = () => useTargetUI.getState().set(null)
   const label = chosen[0] ? targetLabel(chosen[0]) : ""
@@ -103,7 +117,20 @@ export function TargetDialogs() {
         if (shown.kind === "disable") await useTargetStore.getState().setEnabled(t.id, false)
         else await useTargetStore.getState().removeCustom(t.id)
       }
-      toast.add({ title: shown.kind === "disable" ? copy.targets.disabledToast(label) : copy.targets.removed(label) })
+      const remaining = currentDeliverySnapshot().deliveries.filter((d) => shown.targetIds.includes(d.targetId))
+      const problems = remaining.filter((d) => d.status !== "conflict" && isDeliveryProblem(d))
+      const shared = remaining.some((d) => d.status === "shared")
+      toast.add({
+        title: shown.kind === "remove" ? copy.targets.removed(label)
+          : problems.length ? copy.targets.disabledPartial(label)
+          : shared ? copy.targets.disabledShared(label)
+          : remaining.some((d) => d.status === "conflict") ? copy.targets.disabledConflict(label) : copy.targets.disabledToast(label),
+        description: problems.length ? deliveryProblemsText(problems.flatMap((d) => {
+          const t = chosen.find((t) => t.id === d.targetId)
+          return t ? [{ target: t, id: d.statusDetail?.id ?? d.status, params: d.statusDetail?.params }] : []
+        })) : undefined,
+        type: problems.length ? "warning" : undefined,
+      })
       close()
     } catch (e) {
       toastError(e)
@@ -115,7 +142,7 @@ export function TargetDialogs() {
   const text =
     shown?.kind === "remove"
       ? { title: copy.targets.removeTitle(label), description: copy.targets.removeDescription, confirm: copy.targets.removeCustom }
-      : { title: copy.targets.disableTitle(label), description: copy.targets.disableDescription, confirm: copy.targets.disableConfirm }
+      : { title: copy.targets.disableTitle(label), description: sharesDirectory ? copy.targets.disableSharedDescription : copy.targets.disableDescription, confirm: copy.targets.disableConfirm }
 
   return (
     <AlertDialog open={!!pending && chosen.length > 0} onOpenChange={(open) => !open && !busy && close()}>

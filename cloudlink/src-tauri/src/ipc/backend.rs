@@ -50,6 +50,8 @@ pub struct Backend {
     pub(super) db: Mutex<Db>,
     pub(super) envs: Mutex<Vec<EnvContext>>,
     pub(super) mutation: Mutex<()>,
+    /// 本会话首次发现共用目录选择不一致；收窄后仍提示，明确开关一次后清除。
+    pub(super) shared_mismatches: Mutex<BTreeSet<String>>,
     pub(super) credentials: Arc<dyn CredentialStore>,
     pub(super) system: Arc<dyn System>,
     pub(super) cli: cli::Service,
@@ -219,6 +221,7 @@ impl Backend {
             db: Mutex::new(db),
             envs: Mutex::new(Vec::new()),
             mutation: Mutex::new(()),
+            shared_mismatches: Mutex::new(BTreeSet::new()),
             credentials,
             system,
             cli,
@@ -343,6 +346,26 @@ impl Backend {
     }
     pub fn get_skill_config(&self) -> Result<SkillConfig> {
         self.database()?.get_skill_config()
+    }
+
+    pub(super) fn delivery_plan(&self) -> Result<deliver::groups::Plan> {
+        Ok(deliver::groups::Plan::new(
+            &self.paths,
+            &self.contexts(false)?,
+            &self.list_targets()?,
+        ))
+    }
+
+    pub(super) fn save_result(&self, asset: Asset, statuses: Vec<CompileStatus>) -> Result<SaveResult> {
+        let asset = self.database()?.require_asset(asset.id())?;
+        let inclusions = self.list_inclusions()?;
+        let deliveries = self.list_deliveries()?;
+        Ok(SaveResult {
+            asset,
+            statuses,
+            inclusions,
+            deliveries,
+        })
     }
 
     /// 这个环境里装了哪些 Agent：先看目录，Claude Code 和 Codex 再看 PATH 里有没有命令（2026-11-07）
@@ -599,11 +622,19 @@ impl Backend {
             return Err(AppError::ipc(IpcErrorId::CompileBlocked));
         }
         let env = self.context(&target.env_id)?;
-        let (marker, files) = deliver::load_source(&self.paths, &target.env_id, &target.agent_key)?
+        let plan = self.delivery_plan()?;
+        let unit = plan
+            .unit_for(&target.id)
+            .ok_or_else(|| AppError::ipc(IpcErrorId::TargetExists))?;
+        let (marker, files) = deliver::load_source(&self.paths, &target.env_id, &unit.owner().agent_key)?
             .ok_or_else(|| AppError::ipc(IpcErrorId::SourceMissing))?;
-        let (delivery, saved) = deliver::take_over(&self.paths, &env, &target, &files, &marker)?;
-        self.database()?.upsert_delivery(&delivery)?;
-        self.emit_deliveries()?;
+        let (_, saved) = deliver::take_over_unit(&self.paths, &env, &target, unit, &files, &marker)?;
+        self.publish_locked()?;
+        let delivery = self
+            .list_deliveries()?
+            .into_iter()
+            .find(|d| d.target_id == target.id)
+            .ok_or_else(|| AppError::ipc(IpcErrorId::NotFound))?;
         self.backed_up(&saved)?;
         if deliver::backup::prune(&self.paths, crate::time::now_secs()).is_err() {
             log::warn!("CloudLink could not prune old backups");
@@ -617,10 +648,18 @@ impl Backend {
         let target_id = deliver::backup::target_of(&self.paths, backup_id)?;
         let mut target = self.require_target(&target_id)?;
         let env = self.context(&target.env_id)?;
-        deliver::restore_backup(&self.paths, &env, &target, backup_id)?;
+        let plan = self.delivery_plan()?;
+        let unit = plan
+            .unit_for(&target.id)
+            .ok_or_else(|| AppError::ipc(IpcErrorId::TargetExists))?;
+        deliver::restore_backup_unit(&self.paths, &env, &target, unit, backup_id)?;
+        // 一个共用目录是一份副本；撤销必须暂停全部写入成员，不能马上由另一个成员覆盖回来。
+        for mut member in unit.targets.clone() {
+            member.enabled = false;
+            self.database()?.upsert_target(&member)?;
+            self.database()?.delete_delivery(&format!("dlv_{}", member.id))?;
+        }
         target.enabled = false;
-        self.database()?.upsert_target(&target)?;
-        self.database()?.delete_delivery(&format!("dlv_{}", target.id))?;
         self.activity(
             ActivityKind::Repair,
             ActivityMessageId::BackupUndone,
@@ -646,9 +685,17 @@ impl Backend {
     pub fn set_target_enabled(&self, id: &str, enabled: bool) -> Result<Target> {
         let _edit = self.edit()?;
         let mut target = self.require_target(id)?;
-        if !enabled {
-            let env = self.context(&target.env_id)?;
-            deliver::remove(&self.paths, &env, &target)?;
+        if !enabled && target.enabled {
+            let plan = self.delivery_plan()?;
+            if let Some(unit) = plan.unit_for(&target.id) {
+                if !unit.targets.iter().any(|t| t.id != target.id && t.enabled) {
+                    let env = self.context(&target.env_id)?;
+                    deliver::remove_unit(&self.paths, &env, unit)?;
+                }
+            } else if !plan.windows_shared.contains_key(&target.id) {
+                let env = self.context(&target.env_id)?;
+                deliver::remove(&self.paths, &env, &target)?;
+            }
         }
         target.enabled = enabled;
         self.database()?.upsert_target(&target)?;
@@ -682,7 +729,17 @@ impl Backend {
             return Err(AppError::ipc(IpcErrorId::NotFound));
         }
         let env = self.context(&target.env_id)?;
-        deliver::remove(&self.paths, &env, &target)?;
+        let plan = self.delivery_plan()?;
+        if let Some(unit) = plan.unit_for(id) {
+            let remaining: Vec<_> = unit.targets.iter().filter(|t| t.id != id).cloned().collect();
+            if remaining.iter().any(|t| t.enabled) {
+                deliver::retag_unit(&self.paths, &env, unit, &remaining)?;
+            } else {
+                deliver::remove_unit(&self.paths, &env, unit)?;
+            }
+        } else if !plan.windows_shared.contains_key(id) {
+            deliver::remove(&self.paths, &env, &target)?;
+        }
         self.database()?.delete_target(id)?;
         if !self.list_targets()?.iter().any(|t| t.agent_key == target.agent_key) {
             for mut asset in self.list_assets()? {
@@ -696,21 +753,40 @@ impl Backend {
 
     pub fn remove_all_deliveries(&self) -> Result<()> {
         let _edit = self.edit()?;
-        // Persist each successful removal. A later target failure must not hide earlier removals.
+        // 按真实目录撤回一次；成功的组先记下，后续失败不掩盖已经完成的撤回。
+        let plan = self.delivery_plan()?;
         let mut failure = None;
-        for mut target in self.list_targets()? {
-            let result = self
-                .context(&target.env_id)
-                .and_then(|env| deliver::remove(&self.paths, &env, &target));
+        let mut handled = BTreeSet::new();
+        for unit in &plan.units {
+            handled.extend(unit.targets.iter().map(|t| t.id.clone()));
+            match self
+                .context(&unit.env_id)
+                .and_then(|env| deliver::remove_unit(&self.paths, &env, unit))
+            {
+                Ok(_) => {
+                    for mut target in unit.targets.clone() {
+                        target.enabled = false;
+                        self.database()?.upsert_target(&target)?;
+                        self.database()?.delete_delivery(&format!("dlv_{}", target.id))?;
+                    }
+                }
+                Err(error) => failure = Some(error),
+            }
+        }
+        for mut target in self.list_targets()?.into_iter().filter(|t| !handled.contains(&t.id)) {
+            let result = if plan.windows_shared.contains_key(&target.id) {
+                Ok(false)
+            } else {
+                self.context(&target.env_id)
+                    .and_then(|env| deliver::remove(&self.paths, &env, &target))
+            };
             match result {
                 Ok(_) => {
                     target.enabled = false;
                     self.database()?.upsert_target(&target)?;
                     self.database()?.delete_delivery(&format!("dlv_{}", target.id))?;
                 }
-                Err(e) => {
-                    failure = Some(e);
-                }
+                Err(error) => failure = Some(error),
             }
         }
         self.publish_locked()?;
@@ -857,12 +933,20 @@ impl Backend {
             {
                 return Err(AppError::ipc(IpcErrorId::SettingsInvalid));
             }
-            // Disabling an environment removes only its owned deliveries, before recording the setting.
+            // 同一环境的共用目录只撤回一次；WSL 共用 Windows 的目录不从 WSL 删除。
+            let plan = self.delivery_plan()?;
+            let mut removed = BTreeSet::new();
             for target in self.list_targets()? {
                 if v.iter().any(|s| s.id == target.env_id && !s.enabled)
                     && let Some(env) = envs.iter().find(|e| e.id == target.env_id)
                 {
-                    deliver::remove(&self.paths, env, &target)?;
+                    if let Some(unit) = plan.unit_for(&target.id) {
+                        if removed.insert(unit.id().to_string()) {
+                            deliver::remove_unit(&self.paths, env, unit)?;
+                        }
+                    } else if !plan.windows_shared.contains_key(&target.id) {
+                        deliver::remove(&self.paths, env, &target)?;
+                    }
                 }
             }
             settings.environments = v;
@@ -1019,7 +1103,7 @@ impl Backend {
         cli.updated_at = crate::time::now_rfc3339();
         self.database()?.upsert_asset(&asset)?;
         let statuses = self.publish_locked()?;
-        Ok(SaveResult { asset, statuses })
+        self.save_result(asset, statuses)
     }
 }
 

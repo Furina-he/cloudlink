@@ -12,11 +12,13 @@ import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 import { useAgentOptions } from "@/features/agents/agentKeys"
 import { copy, ipcErrorText } from "@/lib/copy"
+import { deliveryOutcome, deliveryProblemsText } from "@/lib/deliveryFeedback"
 import { cliEnvStatus, useAssetStore } from "@/stores/assets"
 import { emptyDetection, scopeIsReady, useCliStore } from "@/stores/cli"
 import { useUIStore } from "@/stores/ui"
+import { useTargetStore } from "@/stores/targets"
 import { loginCommand } from "@/lib/cliProviders"
-import { serverActions, toastError } from "./actions"
+import { currentDeliverySnapshot, serverActions, toastError } from "./actions"
 import { CliEnvList, CliScopeList, RecheckButton } from "./CliParts"
 import { CreateHeader } from "./CreateParts"
 import { DetailGroup } from "./DetailParts"
@@ -118,7 +120,13 @@ export function NewCliForm({ provider }: { provider: CliProvider }) {
       // 云平台按生产对待，从只读巡检开始（F-202 AC2）；同步给全部已启用的 Agent
       for (const a of agents)
         await useAssetStore.getState().setDistribute(saved.id, a.key, true)
-      toast.add({ title: copy.cli.enabled(saved.name), type: "success" })
+      const outcome = deliveryOutcome(saved.id, agents.map((a) => a.key), true, currentDeliverySnapshot(), useTargetStore.getState().targets)
+      toast.add({
+        title: outcome.complete ? copy.create.added(saved.name, outcome.count) : copy.deliveryFeedback.addedPartial(saved.name, outcome.count),
+        description: outcome.complete ? undefined : outcome.problems.length ? deliveryProblemsText(outcome.problems) : copy.deliveryFeedback.none,
+        type: outcome.complete ? "success" : "warning",
+      })
+      useAssetStore.getState().flash([saved.id])
       // 完成后关闭弹窗回到主列表（PRD 6.5）
       useUIStore.getState().closeInspector({ force: true })
     } catch (e) {

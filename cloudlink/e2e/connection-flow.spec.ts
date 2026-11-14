@@ -1,8 +1,8 @@
 import { expect, test, type Page } from "@playwright/test"
 
-import { collectConsoleErrors, ready, row, toastText } from "./helpers"
+import { collectConsoleErrors, ready, row, setSshAlias, shot, toastText } from "./helpers"
 
-// 填表时标题是「添加 SSH 服务器」，点连接后同一个区域切到「连接 <别名>」的连接过程
+// 填表时标题是「添加 SSH 服务器」，点连接后同一个区域切到「连接 <显示名称>」的连接过程
 const sshForm = (page: Page) =>
   page.getByRole("region", { name: /^(添加 SSH 服务器|连接 )/ })
 const connectEnable = (page: Page) =>
@@ -10,7 +10,7 @@ const connectEnable = (page: Page) =>
 // 「让 Agent 能用别名连接」在连接过程里就地问，不再叠一层对话框（PRD 6.5）
 const includeDialog = (page: Page) => sshForm(page).getByTestId("connect-include")
 
-async function fillNew(page: Page, name: string, password = false) {
+async function fillNew(page: Page, name: string, password = false, alias?: string) {
   await page.keyboard.press("Control+n")
   await page.getByRole("button", { name: /^SSH 服务器/ }).click()
   const form = sshForm(page)
@@ -23,6 +23,7 @@ async function fillNew(page: Page, name: string, password = false) {
     .click()
   if (password) await form.getByLabel(/^密码/).fill("fixture-pass")
   await form.getByLabel(/^名称/).fill(name)
+  if (alias) await setSshAlias(form, alias)
 }
 
 /** 一次受控拒绝后恢复真实 IPC 封装；后续重试仍走现有 Mock 后端完整流程。 */
@@ -69,7 +70,7 @@ async function rejectOnce(
 test.describe("连接流水线的 IPC 中断与恢复", () => {
   test("启动订阅失败时显示重试，恢复后列表和连接事件都正常", async ({
     page,
-  }, testInfo) => {
+  }) => {
     const errors = collectConsoleErrors(page)
     type StartupWindow = Window & { __cloudlinkRejectStartup: boolean }
     await page.addInitScript(() => {
@@ -98,10 +99,7 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
     await expect(
       page.getByRole("heading", { level: 1, name: "资源" })
     ).toHaveCount(0)
-    await page.screenshot({
-      path: testInfo.outputPath("startup-failed.png"),
-      animations: "disabled",
-    })
+    await shot(page, "connection-flow-startup-failed")
 
     await page.evaluate(() => {
       ;(window as StartupWindow).__cloudlinkRejectStartup = false
@@ -109,10 +107,7 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
     await page.getByRole("button", { name: "重试", exact: true }).click()
     await expect(failure).toBeHidden()
     await expect(row(page, "hk-edge")).toBeVisible()
-    await page.screenshot({
-      path: testInfo.outputPath("startup-recovered.png"),
-      animations: "disabled",
-    })
+    await shot(page, "connection-flow-startup-recovered")
     // 连接完成事件必须推进到「加入 SSH 配置」这一步，验证重试后真正恢复了事件订阅。
     await fillNew(page, "Startup Recovery")
     await connectEnable(page).click()
@@ -122,10 +117,10 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
 
   test("测试 invoke 拒绝后可以仅保存，服务器保持未验证", async ({
     page,
-  }, testInfo) => {
+  }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
-    await fillNew(page, "Invoke Recovery")
+    await fillNew(page, "Invoke Recovery", false, "invoke-recovery")
     await rejectOnce(page, "testConnection")
     await connectEnable(page).click()
     const saveOnly = sshForm(page).getByRole("button", {
@@ -133,10 +128,7 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
     })
     await expect(saveOnly).toBeEnabled()
     await expect(connectEnable(page)).toBeEnabled()
-    await page.screenshot({
-      path: testInfo.outputPath("invoke-rejected.png"),
-      animations: "disabled",
-    })
+    await shot(page, "connection-flow-invoke-rejected")
     await saveOnly.click()
     await includeDialog(page).getByRole("button", { name: "暂不加入" }).click()
     await expect(sshForm(page)).toHaveCount(0)
@@ -146,10 +138,10 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
 
   test("仅保存失败后点击错误提示的重试，不重新连接、转密钥或授权", async ({
     page,
-  }, testInfo) => {
+  }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
-    await fillNew(page, "Save Only Retry", true)
+    await fillNew(page, "Save Only Retry", true, "save-only-retry")
     await rejectOnce(page, "testConnection")
     await connectEnable(page).click()
     const saveOnly = sshForm(page).getByRole("button", {
@@ -164,10 +156,7 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
       .filter({ hasText: "保存失败" })
     await expect(saveError).toBeVisible()
     await expect(saveOnly).toBeEnabled()
-    await page.screenshot({
-      path: testInfo.outputPath("save-only-rejected.png"),
-      animations: "disabled",
-    })
+    await shot(page, "connection-flow-save-only-rejected")
 
     // 首次拒绝已恢复正常连接能力；重试仍必须遵守用户明确选择的「仅保存」。
     const calls = await page.evaluateHandle(async () => {
@@ -211,10 +200,10 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
 
   test("保存失败后点击错误提示的重试，继续转密钥并启用", async ({
     page,
-  }, testInfo) => {
+  }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
-    await fillNew(page, "Save Recovery", true)
+    await fillNew(page, "Save Recovery", true, "save-recovery")
     await rejectOnce(page, "saveAsset")
     await connectEnable(page).click()
     await includeDialog(page).getByRole("button", { name: "暂不加入" }).click()
@@ -224,10 +213,7 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
     await expect(saveError).toBeVisible()
     await expect(connectEnable(page)).toBeEnabled()
     await expect(sshForm(page).getByLabel(/^名称/)).toHaveValue("Save Recovery")
-    await page.screenshot({
-      path: testInfo.outputPath("save-rejected.png"),
-      animations: "disabled",
-    })
+    await shot(page, "connection-flow-save-rejected")
     await saveError.getByRole("button", { name: "重试", exact: true }).click()
     // 忙碌时按钮只写一句，阶段写在步骤列表里
     await expect(
@@ -246,10 +232,10 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
 
   test("在加入 SSH 配置这一步「返回修改」会结束本次流水线，草稿保留且可以重试", async ({
     page,
-  }, testInfo) => {
+  }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
-    await fillNew(page, "Include Cancel")
+    await fillNew(page, "Include Cancel", false, "include-cancel")
     await connectEnable(page).click()
     const include = includeDialog(page)
     await expect(include).toBeVisible()
@@ -263,10 +249,7 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
       "Include Cancel"
     )
     await expect(row(page, "include-cancel")).toHaveCount(0)
-    await page.screenshot({
-      path: testInfo.outputPath("include-cancelled.png"),
-      animations: "disabled",
-    })
+    await shot(page, "connection-flow-include-cancelled")
     await connectEnable(page).click()
     await include.getByRole("button", { name: "暂不加入" }).click()
     await expect(sshForm(page)).toHaveCount(0)
@@ -276,10 +259,10 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
 
   test("加入 SSH 配置失败不保存资源，连接按钮恢复后可重试成功", async ({
     page,
-  }, testInfo) => {
+  }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
-    await fillNew(page, "Include Recovery")
+    await fillNew(page, "Include Recovery", false, "include-recovery")
     await rejectOnce(page, "addSshInclude")
     await connectEnable(page).click()
     await includeDialog(page)
@@ -290,10 +273,7 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
     ).toBeVisible()
     await expect(connectEnable(page)).toBeEnabled()
     await expect(row(page, "include-recovery")).toHaveCount(0)
-    await page.screenshot({
-      path: testInfo.outputPath("include-rejected.png"),
-      animations: "disabled",
-    })
+    await shot(page, "connection-flow-include-rejected")
     await connectEnable(page).click()
     await includeDialog(page)
       .getByRole("button", { name: "加入", exact: true })

@@ -6,7 +6,6 @@ import {
   hostnameError,
   hostSchema,
   parsePorts,
-  serviceDraftSchema,
   settingsNumbersSchema,
   skillConfigSchema,
 } from "./schemas"
@@ -63,20 +62,6 @@ describe("承载的站点", () => {
     expect(hostnameError("example.com:8443")).toBe("hostname-format")
     expect(hostnameError("-bad.example.com")).toBe("hostname-format")
     expect(hostnameError("a.*.example.com")).toBe("hostname-format")
-  })
-})
-
-describe("手动添加服务", () => {
-  const draft = { kind: "docker", name: "openresty", image: "", ports: "", role: "", critical: false }
-
-  it("同类型、同名称的服务不能重复", () => {
-    const schema = serviceDraftSchema([{ kind: "docker", name: "openresty" }])
-    expect(err(schema.safeParse(draft))).toBe("service-duplicate")
-    expect(schema.safeParse({ ...draft, kind: "systemd" }).success).toBe(true)
-  })
-
-  it("端口格式不对时报错", () => {
-    expect(err(serviceDraftSchema([]).safeParse({ ...draft, ports: "8080" }))).toBe("ports-format")
   })
 })
 

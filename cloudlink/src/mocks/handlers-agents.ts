@@ -5,7 +5,7 @@ import type { AddCustomTargetRequest, BackupReason, Delivery, EnvId, PreviewRequ
 import * as fx from "./fixtures"
 import { compileSkill } from "./lint"
 import { deriveRelations, withHidden } from "./relations"
-import { agentKeyOf, db, draftToAsset, emitCompiled, emitDeliveries, fail, includedIn, logActivity, newId, now, recompile, sleep } from "./state"
+import { agentKeyOf, db, directoryMembers, draftToAsset, emitCompiled, emitDeliveries, fail, includedIn, logActivity, newId, now, physicalUnit, recompile, sleep } from "./state"
 
 /** 预览（F-204）：带 asset 时，这台服务器按「已列入」计算（2026-10-31 用户确认）；带 config 时预览全局内容草稿 */
 function previewSkill(req: PreviewRequest) {
@@ -27,9 +27,16 @@ async function setTargetEnabled(id: string, enabled: boolean) {
   t.enabled = enabled
   t.detected = t.detected || enabled
   if (!enabled) {
-    // 只移除 CloudLink 创建的副本（F-302 AC2）；冲突的目录不是我们的
+    const members = directoryMembers(t)
     const d = db.deliveries.find((x) => x.targetId === id)
-    if (d && d.status !== "conflict") db.deliveries = db.deliveries.filter((x) => x !== d)
+    if (members.some((other) => other.enabled) && d && d.status !== "missing") {
+      d.status = "shared"
+      d.statusDetail = { id: "shared-agent", params: { agents: members.filter((m) => m.enabled).map((m) => m.agentKey).join(",") } }
+      d.unitId = physicalUnit(t)
+      d.sharedAgentKeys = [...new Set(members.map((m) => m.agentKey))]
+    } else if (d && !["conflict", "broken", "modified"].includes(d.status) && !db.crossEnvironmentTargets.has(t.id)) {
+      db.deliveries = db.deliveries.filter((x) => !members.some((m) => m.id === x.targetId))
+    }
     logActivity({ kind: "remove", messageId: "remove-ok", params: { target: t.label, env: t.envId }, ok: true })
   } else {
     logActivity({ kind: "deliver", messageId: "deliver-ok", params: { target: t.label, env: t.envId }, ok: true })
@@ -69,10 +76,15 @@ function removeCustomTarget(id: string) {
 
 /** 健康检查（F-309）：缺失、过期的直接重写，被改动的先备份再恢复；同名冲突不动 */
 function checkDeliveries() {
+  const backedUnits = new Set<string>()
   for (const d of db.deliveries) {
     d.checkedAt = now()
-    if (d.status === "modified") backedUp(d.targetId, "modified", "modified")
-    if (d.status !== "conflict" && d.status !== "pending") d.status = "ok"
+    if (d.status === "modified" && !backedUnits.has(d.unitId ?? d.targetId)) {
+      backedUp(d.targetId, "modified", "modified")
+      backedUnits.add(d.unitId ?? d.targetId)
+    }
+    // 不能把路径失败或 WSL 未单独提供，健康检查一次就冒报成已同步。
+    if (["missing", "modified", "outdated"].includes(d.status) && d.statusDetail?.id !== "shared-selection-mismatch") d.status = "ok"
   }
   recompile({ silent: true })
   emitDeliveries()
@@ -108,10 +120,11 @@ async function undoBackup(backupId: string) {
   const t = targetById(saved.targetId)
   await sleep(200)
   backups.delete(backupId)
-  t.enabled = false
-  const d = db.deliveries.find((x) => x.targetId === t.id)
-  if (d && saved.status === "conflict") d.status = "conflict"
-  else db.deliveries = db.deliveries.filter((x) => x.targetId !== t.id)
+  const members = directoryMembers(t)
+  members.forEach((member) => (member.enabled = false))
+  const ids = members.map((m) => m.id)
+  if (saved.status === "conflict") db.deliveries.filter((d) => ids.includes(d.targetId)).forEach((d) => (d.status = "conflict"))
+  else db.deliveries = db.deliveries.filter((d) => !ids.includes(d.targetId))
   logActivity({ kind: "repair", messageId: "backup-undone", params: { target: t.label, env: t.envId }, ok: true })
   recompile({ silent: true })
   emitCompiled()

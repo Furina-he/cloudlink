@@ -1,8 +1,8 @@
-//! 受管复制（F-304、F-309）：不覆盖外来目录；被改动的副本先备份再覆盖。
-//! 所有文件系统操作先检查归属及链接/重解析点；数据库与事件由 IPC 层负责。
+//! 受管复制（F-304、F-309）：父级链接透明解析，叶子与内部文件仍严格检查所有权。
 
 pub mod agents;
 pub mod backup;
+pub(crate) mod groups;
 mod inclusion;
 mod paths;
 
@@ -24,17 +24,29 @@ use crate::model::env::EnvId;
 use crate::model::misc::IpcErrorId;
 use crate::paths::Paths;
 
-fn marker_matches(marker: &Marker, env_id: &EnvId, agent_key: &str) -> bool {
+fn marker_valid(marker: &Marker, env_id: &EnvId) -> bool {
     marker.managed_by == MANAGED_BY
         && marker.env_id == env_id.as_str()
-        && marker.agent_key == agent_key
         && marker.template_version > 0
         && marker.content_hash.len() == 64
         && marker.content_hash.bytes().all(|b| b.is_ascii_hexdigit())
         && crate::time::parse_rfc3339(&marker.compiled_at).is_some()
+        && marker.agent_keys.len() <= 64
+        && marker.agent_keys.iter().collect::<BTreeSet<_>>().len() == marker.agent_keys.len()
 }
 
-fn delivery(target: &Target, status: DeliveryStatus) -> Delivery {
+fn marker_matches(marker: &Marker, env_id: &EnvId, agent_key: &str) -> bool {
+    marker_valid(marker, env_id) && marker.agent_key == agent_key
+}
+
+fn marker_matches_group(marker: &Marker, env_id: &EnvId, keys: &[String]) -> bool {
+    marker_valid(marker, env_id)
+        && keys.contains(&marker.agent_key)
+        && marker.agent_keys.iter().all(|key| keys.contains(key))
+        && (marker.agent_keys.is_empty() || marker.agent_keys.contains(&marker.agent_key))
+}
+
+pub(crate) fn delivery(target: &Target, status: DeliveryStatus) -> Delivery {
     Delivery {
         id: format!("dlv_{}", target.id),
         target_id: target.id.clone(),
@@ -47,7 +59,15 @@ fn delivery(target: &Target, status: DeliveryStatus) -> Delivery {
         status,
         status_detail: None,
         checked_at: crate::time::now_rfc3339(),
+        unit_id: None,
+        shared_agent_keys: None,
     }
+}
+
+pub(crate) fn broken(target: &Target, error: &AppError) -> Delivery {
+    let mut result = delivery(target, DeliveryStatus::Broken);
+    result.status_detail = Some(groups::error_detail(error));
+    result
 }
 
 /// 遇到任何非普通文件或链接都拒绝删除/交换，显式修复也不例外。
@@ -70,19 +90,16 @@ pub(crate) fn ordinary_tree(path: &Path) -> io::Result<bool> {
     Ok(true)
 }
 
-fn inspect_path(path: &Path, target: &Target, latest_hash: Option<&str>) -> Result<DeliveryStatus> {
-    if paths::reject_link_ancestors(path).is_err() {
-        return Ok(DeliveryStatus::Conflict);
-    }
+fn inspect_path(path: &Path, target: &Target, latest_hash: Option<&str>, keys: &[String]) -> Result<DeliveryStatus> {
+    // 叶子本身的链接是冲突；父目录异常不能冒充外来同名 Skill。
     match fs::symlink_metadata(path) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(DeliveryStatus::Missing),
         Err(e) => return Err(e.into()),
         Ok(meta) if !meta.is_dir() || fsx::is_link(&meta) => return Ok(DeliveryStatus::Conflict),
         Ok(_) => {}
     }
-    let Some(marker) =
-        publish::read_marker(path).filter(|marker| marker_matches(marker, &target.env_id, &target.agent_key))
-    else {
+    paths::reject_link_ancestors(path)?;
+    let Some(marker) = publish::read_marker(path).filter(|m| marker_matches_group(m, &target.env_id, keys)) else {
         return Ok(DeliveryStatus::Conflict);
     };
     if publish::dir_hash(path)?.as_deref() != Some(marker.content_hash.as_str()) {
@@ -95,20 +112,39 @@ fn inspect_path(path: &Path, target: &Target, latest_hash: Option<&str>) -> Resu
     })
 }
 
-/// 健康检查只读目标。`latest_hash` 是当前最新成功编译产物的哈希。
+fn recheck(paths: &Paths, env: &EnvContext, targets: &[Target], parent: &Path) -> Result<()> {
+    for target in targets {
+        paths::recheck_parent(paths, env, target, parent)?;
+    }
+    Ok(())
+}
+
 pub fn inspect(paths: &Paths, env: &EnvContext, target: &Target, latest_hash: Option<&str>) -> Result<Delivery> {
     if !env.available {
         return Ok(delivery(target, DeliveryStatus::Pending));
     }
-    let skills_dir = match resolve_target_path(paths, env, target) {
+    let parent = match resolve_target_path(paths, env, target) {
         Ok(path) => path,
-        Err(AppError::Io(error)) if error.kind() == io::ErrorKind::PermissionDenied => {
-            return Ok(delivery(target, DeliveryStatus::Conflict));
-        }
-        Err(e) => return Err(e),
+        Err(error) => return Ok(broken(target, &error)),
     };
-    let status = inspect_path(&skills_dir.join(SKILL_DIR), target, latest_hash)?;
+    let status = inspect_path(
+        &parent.join(SKILL_DIR),
+        target,
+        latest_hash,
+        std::slice::from_ref(&target.agent_key),
+    )?;
     Ok(delivery(target, status))
+}
+
+pub(crate) fn inspect_unit(
+    paths: &Paths,
+    env: &EnvContext,
+    unit: &groups::Unit,
+    latest_hash: Option<&str>,
+) -> Result<Delivery> {
+    recheck(paths, env, &unit.targets, &unit.parent)?;
+    let status = inspect_path(&unit.parent.join(SKILL_DIR), unit.owner(), latest_hash, &unit.keys())?;
+    Ok(delivery(unit.owner(), status))
 }
 
 fn files_are_safe(files: &[CompiledFile]) -> bool {
@@ -137,7 +173,7 @@ fn files_are_safe(files: &[CompiledFile]) -> bool {
     })
 }
 
-/// 读取上一份成功产物用于修复。缺失时为 None；归属、哈希或树不合法时拒绝读取。
+/// 编译源始终在应用私有目录，不允许链接；共用组从其主成员的源读取。
 pub fn load_source(paths: &Paths, env_id: &EnvId, agent_key: &str) -> Result<Option<(Marker, Vec<CompiledFile>)>> {
     let source = publish::output_dir(&paths.compiled_dir(), env_id, agent_key);
     paths::reject_link_ancestors(&source)?;
@@ -148,7 +184,7 @@ pub fn load_source(paths: &Paths, env_id: &EnvId, agent_key: &str) -> Result<Opt
         Ok(_) => {}
     }
     let marker = publish::read_marker(&source)
-        .filter(|marker| marker_matches(marker, env_id, agent_key))
+        .filter(|m| marker_matches(m, env_id, agent_key))
         .ok_or_else(|| AppError::ipc(IpcErrorId::SourceMissing))?;
     if publish::dir_hash(&source)?.as_deref() != Some(marker.content_hash.as_str()) {
         return Err(AppError::ipc(IpcErrorId::SourceMissing));
@@ -165,8 +201,9 @@ pub fn load_source(paths: &Paths, env_id: &EnvId, agent_key: &str) -> Result<Opt
             } else {
                 let relative = path
                     .strip_prefix(root)
-                    .map_err(|_| AppError::ipc(IpcErrorId::SourceMissing))?;
-                let relative = relative.to_string_lossy().replace('\\', "/");
+                    .map_err(|_| AppError::ipc(IpcErrorId::SourceMissing))?
+                    .to_string_lossy()
+                    .replace('\\', "/");
                 if relative != MARKER_FILE {
                     files.push(CompiledFile {
                         path: relative,
@@ -191,8 +228,6 @@ pub fn load_source(paths: &Paths, env_id: &EnvId, agent_key: &str) -> Result<Opt
     Ok(Some((marker, files)))
 }
 
-/// 同步一个目标。I/O 错误由调用方记录为待同步，其余目标可以继续。
-/// `repair_modified` 为 true 时覆盖被改动的副本（不备份），冲突永不覆盖。
 pub fn sync(
     paths: &Paths,
     env: &EnvContext,
@@ -201,10 +236,19 @@ pub fn sync(
     marker: &Marker,
     repair_modified: bool,
 ) -> Result<Delivery> {
-    sync_inner(paths, env, target, files, marker, repair_modified, false).map(|(delivery, _)| delivery)
+    sync_inner(
+        paths,
+        env,
+        std::slice::from_ref(target),
+        None,
+        files,
+        marker,
+        repair_modified,
+        false,
+    )
+    .map(|(delivery, _)| delivery)
 }
 
-/// 自动同步（F-309 AC2）：副本被改动时先备份改动的版本再覆盖，返回这份备份
 pub fn sync_auto(
     paths: &Paths,
     env: &EnvContext,
@@ -212,10 +256,48 @@ pub fn sync_auto(
     files: &[CompiledFile],
     marker: &Marker,
 ) -> Result<(Delivery, Option<backup::BackupMeta>)> {
-    sync_inner(paths, env, target, files, marker, true, true)
+    sync_inner(
+        paths,
+        env,
+        std::slice::from_ref(target),
+        None,
+        files,
+        marker,
+        true,
+        true,
+    )
 }
 
-/// 「备份并接管」（F-309 AC3）：目录里是不带 CloudLink 标记的同名 Skill 时，移进备份再写入
+pub(crate) fn sync_unit_auto(
+    paths: &Paths,
+    env: &EnvContext,
+    unit: &groups::Unit,
+    files: &[CompiledFile],
+    marker: &Marker,
+) -> Result<(Delivery, Option<backup::BackupMeta>)> {
+    sync_inner(paths, env, &unit.targets, Some(&unit.parent), files, marker, true, true)
+}
+
+pub(crate) fn sync_unit(
+    paths: &Paths,
+    env: &EnvContext,
+    unit: &groups::Unit,
+    files: &[CompiledFile],
+    marker: &Marker,
+) -> Result<Delivery> {
+    sync_inner(
+        paths,
+        env,
+        &unit.targets,
+        Some(&unit.parent),
+        files,
+        marker,
+        false,
+        false,
+    )
+    .map(|(d, _)| d)
+}
+
 pub fn take_over(
     paths: &Paths,
     env: &EnvContext,
@@ -223,85 +305,152 @@ pub fn take_over(
     files: &[CompiledFile],
     marker: &Marker,
 ) -> Result<(Delivery, backup::BackupMeta)> {
-    let checked = inspect(paths, env, target, Some(&marker.content_hash))?;
-    if checked.status != DeliveryStatus::Conflict {
+    take_over_inner(paths, env, target, std::slice::from_ref(target), None, files, marker)
+}
+
+pub(crate) fn take_over_unit(
+    paths: &Paths,
+    env: &EnvContext,
+    target: &Target,
+    unit: &groups::Unit,
+    files: &[CompiledFile],
+    marker: &Marker,
+) -> Result<(Delivery, backup::BackupMeta)> {
+    take_over_inner(paths, env, target, &unit.targets, Some(&unit.parent), files, marker)
+}
+
+fn take_over_inner(
+    paths: &Paths,
+    env: &EnvContext,
+    target: &Target,
+    targets: &[Target],
+    expected: Option<&Path>,
+    files: &[CompiledFile],
+    marker: &Marker,
+) -> Result<(Delivery, backup::BackupMeta)> {
+    let parent = expected
+        .map(Path::to_path_buf)
+        .map(Ok)
+        .unwrap_or_else(|| resolve_target_path(paths, env, target))?;
+    recheck(paths, env, targets, &parent)?;
+    let keys: Vec<_> = targets.iter().map(|t| t.agent_key.clone()).collect();
+    let destination = parent.join(SKILL_DIR);
+    if inspect_path(&destination, target, Some(&marker.content_hash), &keys)? != DeliveryStatus::Conflict {
         return Err(AppError::ipc(IpcErrorId::NotFound));
     }
-    let destination = resolve_target_path(paths, env, target)?.join(SKILL_DIR);
     if publish::read_marker(&destination).is_some_and(|m| m.managed_by == MANAGED_BY) {
-        // 别的目标（或损坏）的 CloudLink 副本不算外来 Skill，不接管
         return Err(AppError::ipc(IpcErrorId::TargetExists));
     }
     let saved = backup::take_over(paths, target, &destination)?;
-    let (delivery, _) = sync_inner(paths, env, target, files, marker, false, false)?;
+    recheck(paths, env, targets, &parent)?;
+    let (delivery, _) = sync_inner(paths, env, targets, Some(&parent), files, marker, false, false)?;
     Ok((delivery, saved))
 }
 
-/// 撤销一份备份：删掉 CloudLink 写入的副本（只删归属匹配的），把备份写回原处
 pub fn restore_backup(paths: &Paths, env: &EnvContext, target: &Target, backup_id: &str) -> Result<BackupReason> {
+    restore_inner(paths, env, target, std::slice::from_ref(target), None, backup_id)
+}
+
+pub(crate) fn restore_backup_unit(
+    paths: &Paths,
+    env: &EnvContext,
+    target: &Target,
+    unit: &groups::Unit,
+    backup_id: &str,
+) -> Result<BackupReason> {
+    restore_inner(paths, env, target, &unit.targets, Some(&unit.parent), backup_id)
+}
+
+fn restore_inner(
+    paths: &Paths,
+    env: &EnvContext,
+    target: &Target,
+    targets: &[Target],
+    expected: Option<&Path>,
+    backup_id: &str,
+) -> Result<BackupReason> {
     if !env.available {
         return Err(AppError::ipc(IpcErrorId::TargetExists));
     }
     let (meta, tree) = backup::load(paths, backup_id, target)?;
-    let destination = resolve_target_path(paths, env, target)?.join(SKILL_DIR);
+    let parent = expected
+        .map(Path::to_path_buf)
+        .map(Ok)
+        .unwrap_or_else(|| resolve_target_path(paths, env, target))?;
+    recheck(paths, env, targets, &parent)?;
+    let destination = parent.join(SKILL_DIR);
     paths::reject_link_ancestors(&destination)?;
     if fs::symlink_metadata(&destination).is_ok() {
-        remove(paths, env, target)?;
+        remove_inner(paths, env, targets, Some(&parent))?;
     }
+    recheck(paths, env, targets, &parent)?;
     backup::restore_into(&tree, &destination)?;
     Ok(meta.reason)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sync_inner(
     paths: &Paths,
     env: &EnvContext,
-    target: &Target,
+    targets: &[Target],
+    expected: Option<&Path>,
     files: &[CompiledFile],
     marker: &Marker,
     repair_modified: bool,
     backup_modified: bool,
 ) -> Result<(Delivery, Option<backup::BackupMeta>)> {
-    if !marker_matches(marker, &target.env_id, &target.agent_key)
+    let target = &targets[0];
+    let keys: Vec<_> = targets.iter().map(|t| t.agent_key.clone()).collect();
+    if !marker_matches_group(marker, &target.env_id, &keys)
         || !files_are_safe(files)
         || publish::files_hash(files) != marker.content_hash
     {
         return Err(AppError::ipc(IpcErrorId::SourceMissing));
     }
-    let checked = inspect(paths, env, target, Some(&marker.content_hash))?;
-    if matches!(checked.status, DeliveryStatus::Conflict | DeliveryStatus::Pending)
-        || (checked.status == DeliveryStatus::Modified && !repair_modified)
-    {
-        return Ok((checked, None));
+    if !env.available {
+        return Ok((delivery(target, DeliveryStatus::Pending), None));
     }
-    let skills_dir = resolve_target_path(paths, env, target)?;
-    let destination = skills_dir.join(SKILL_DIR);
+    let parent = match expected
+        .map(Path::to_path_buf)
+        .map(Ok)
+        .unwrap_or_else(|| resolve_target_path(paths, env, target))
+    {
+        Ok(p) => p,
+        Err(error) => return Ok((broken(target, &error), None)),
+    };
+    recheck(paths, env, targets, &parent)?;
+    let destination = parent.join(SKILL_DIR);
+    let checked = inspect_path(&destination, target, Some(&marker.content_hash), &keys)?;
+    if checked == DeliveryStatus::Conflict || (checked == DeliveryStatus::Modified && !repair_modified) {
+        return Ok((delivery(target, checked), None));
+    }
     if files.is_empty() {
-        remove(paths, env, target)?;
+        remove_inner(paths, env, targets, Some(&parent))?;
         return Ok((delivery(target, DeliveryStatus::Missing), None));
     }
-    if checked.status == DeliveryStatus::Ok {
-        return Ok((checked, None));
+    let metadata_current = publish::read_marker(&destination)
+        .is_some_and(|old| old.agent_key == marker.agent_key && old.agent_keys == marker.agent_keys);
+    if checked == DeliveryStatus::Ok && metadata_current {
+        return Ok((delivery(target, checked), None));
     }
     if fs::symlink_metadata(&destination).is_ok() && !ordinary_tree(&destination)? {
         return Err(AppError::ipc(IpcErrorId::TargetExists));
     }
-    paths::reject_link_ancestors(&skills_dir)?;
-    fs::create_dir_all(&skills_dir)?;
+    paths::reject_link_ancestors(&parent)?;
+    fs::create_dir_all(&parent)?;
     let nonce = ulid::Ulid::generate();
-    let staged = skills_dir.join(format!(".{SKILL_DIR}.cloudlink-stage-{nonce}"));
-    let trash = skills_dir.join(format!(".{SKILL_DIR}.cloudlink-trash-{nonce}"));
+    let staged = parent.join(format!(".{SKILL_DIR}.cloudlink-stage-{nonce}"));
+    let trash = parent.join(format!(".{SKILL_DIR}.cloudlink-trash-{nonce}"));
     fs::create_dir(&staged)?;
     let mut saved = None;
     let result = (|| {
-        // 标记先写：即使后续写文件失败，清理也能验证这是本次创建的目录。
         fsx::write_atomic(&staged.join(MARKER_FILE), &serde_json::to_vec_pretty(marker)?)?;
         publish::write_tree(&staged, files, marker)?;
         if publish::dir_hash(&staged)?.as_deref() != Some(marker.content_hash.as_str()) {
             return Err(AppError::ipc(IpcErrorId::SourceMissing));
         }
-        paths::reject_link_ancestors(&destination)?;
-        // 暂存期间外部程序可能改了副本；交换前再次核对，避免覆盖刚发生的改动。
-        let current = inspect_path(&destination, target, Some(&marker.content_hash))?;
+        recheck(paths, env, targets, &parent)?;
+        let current = inspect_path(&destination, target, Some(&marker.content_hash), &keys)?;
         if current == DeliveryStatus::Conflict || (current == DeliveryStatus::Modified && !repair_modified) {
             return Ok(current);
         }
@@ -309,46 +458,83 @@ fn sync_inner(
             saved = Some(backup::create(paths, target, &destination, BackupReason::Modified)?);
         }
         if fs::symlink_metadata(&destination).is_ok() {
-            let owns = publish::read_marker(&destination)
-                .is_some_and(|old| marker_matches(&old, &target.env_id, &target.agent_key));
+            let owns =
+                publish::read_marker(&destination).is_some_and(|old| marker_matches_group(&old, &target.env_id, &keys));
             if !owns || !ordinary_tree(&destination)? {
                 return Err(AppError::ipc(IpcErrorId::TargetExists));
             }
         }
+        recheck(paths, env, targets, &parent)?;
         publish::swap_in(&staged, &destination, &trash)?;
         Ok(DeliveryStatus::Ok)
     })();
     if publish::read_marker(&staged).is_some() && ordinary_tree(&staged).unwrap_or(false) {
         let _ = publish::remove_owned(&staged);
     } else {
-        // 第一次写标记失败时只能清理已空的本次暂存目录，不能递归删无标记的树。
         let _ = fs::remove_dir(&staged);
     }
-    // swap_in 删除它自己创建的 owned 子目录；这里只移除已空的父目录，不递归删除。
     let _ = fs::remove_dir(&trash);
-    match result? {
-        DeliveryStatus::Ok => Ok((inspect(paths, env, target, Some(&marker.content_hash))?, saved)),
-        status => Ok((delivery(target, status), saved)),
-    }
+    Ok((delivery(target, result?), saved))
 }
 
-/// 已确认的停用/移除：只删归属匹配且完全由普通文件组成的副本，不删 skills 根。
 pub fn remove(paths: &Paths, env: &EnvContext, target: &Target) -> Result<bool> {
+    remove_inner(paths, env, std::slice::from_ref(target), None)
+}
+
+pub(crate) fn remove_unit(paths: &Paths, env: &EnvContext, unit: &groups::Unit) -> Result<bool> {
+    remove_inner(paths, env, &unit.targets, Some(&unit.parent))
+}
+
+/// 显式移除共用成员时转交同一受管叶子的标记，避免把自己的旧标记误报成外来冲突。
+pub(crate) fn retag_unit(paths: &Paths, env: &EnvContext, unit: &groups::Unit, remaining: &[Target]) -> Result<()> {
+    recheck(paths, env, &unit.targets, &unit.parent)?;
+    let destination = unit.parent.join(SKILL_DIR);
+    if !destination.exists() {
+        return Ok(());
+    }
+    let mut marker = publish::read_marker(&destination)
+        .filter(|m| marker_matches_group(m, &unit.env_id, &unit.keys()))
+        .ok_or_else(|| AppError::ipc(IpcErrorId::TargetExists))?;
+    if !ordinary_tree(&destination)? || remaining.is_empty() {
+        return Err(AppError::ipc(IpcErrorId::TargetExists));
+    }
+    let keys: Vec<_> = remaining
+        .iter()
+        .map(|t| t.agent_key.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    marker.agent_key = keys[0].clone();
+    marker.agent_keys = if keys.len() > 1 { keys } else { Vec::new() };
+    recheck(paths, env, &unit.targets, &unit.parent)?;
+    fsx::write_atomic(&destination.join(MARKER_FILE), &serde_json::to_vec_pretty(&marker)?)?;
+    Ok(())
+}
+
+fn remove_inner(paths: &Paths, env: &EnvContext, targets: &[Target], expected: Option<&Path>) -> Result<bool> {
+    let target = &targets[0];
     if !env.available {
         return Err(AppError::ipc(IpcErrorId::TargetExists));
     }
-    let destination = resolve_target_path(paths, env, target)?.join(SKILL_DIR);
+    let parent = expected
+        .map(Path::to_path_buf)
+        .map(Ok)
+        .unwrap_or_else(|| resolve_target_path(paths, env, target))?;
+    recheck(paths, env, targets, &parent)?;
+    let destination = parent.join(SKILL_DIR);
     match fs::symlink_metadata(&destination) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(e.into()),
         Ok(_) => {}
     }
     paths::reject_link_ancestors(&destination)?;
-    let owns = publish::read_marker(&destination)
-        .is_some_and(|marker| marker_matches(&marker, &target.env_id, &target.agent_key));
+    let keys: Vec<_> = targets.iter().map(|t| t.agent_key.clone()).collect();
+    let owns =
+        publish::read_marker(&destination).is_some_and(|marker| marker_matches_group(&marker, &target.env_id, &keys));
     if !owns || !ordinary_tree(&destination)? {
         return Err(AppError::ipc(IpcErrorId::TargetExists));
     }
+    recheck(paths, env, targets, &parent)?;
     publish::remove_owned(&destination)
 }
 

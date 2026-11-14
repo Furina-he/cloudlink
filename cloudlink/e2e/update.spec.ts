@@ -1,10 +1,9 @@
 import { expect, test, type Page } from "@playwright/test"
 
-import { collectConsoleErrors, inspector, openServer, ready } from "./helpers"
+import { SHOTS, collectConsoleErrors, inspector, openServer, ready } from "./helpers"
 
 // 检测更新（F-406，PRD 6.15）：magpie 式，发现新版本就在后台下载，下好才在顶栏提醒；按钮只写「更新」。
-// 提醒、对话框、后台下载、失败重试、等待任务和设置开关。状态截图是验收证据，不随提交
-const SHOTS = "../test-results/p6"
+// 提醒、对话框、后台下载、失败重试、等待任务和设置开关。状态截图随本批次写到根 test-results/p8，不随提交
 
 const reminder = (page: Page) => page.getByRole("banner").getByRole("button", { name: /新版本|下载失败|正在安装/ })
 const dialog = (page: Page) => page.getByRole("dialog", { name: "新版本 0.2.0" })
@@ -69,7 +68,7 @@ test.describe("检测更新", () => {
     await shot(page, "update-tooltip-760")
   })
 
-  test("顶栏的更新提醒不会盖住居中的导航：760–1000 各宽度、搜索展开时都互不重叠", async ({ page }) => {
+  test("顶栏的更新提醒不会盖住靠左的导航：760–1000 各宽度、搜索展开时都互不重叠", async ({ page }) => {
     await ready(page, "?update=available")
     const nav = page.getByRole("banner").getByRole("navigation")
     const gap = async () => {

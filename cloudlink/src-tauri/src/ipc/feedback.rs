@@ -216,7 +216,7 @@ impl Backend {
         )?;
         let statuses = self.publish_locked()?;
         self.emit("notes://new", &serde_json::json!({ "assetId": asset.id(), "count": 0 }));
-        Ok(SaveResult { asset, statuses })
+        self.save_result(asset, statuses)
     }
 
     pub fn dismiss_notes(&self, ids: &[String]) -> Result<()> {

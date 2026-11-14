@@ -1,6 +1,5 @@
 // 唯一允许调用 invoke 的地方（PRD 7.3、7.8）
 import { invoke } from "@tauri-apps/api/core"
-import { getCurrentWindow } from "@tauri-apps/api/window"
 import { open } from "@tauri-apps/plugin-dialog"
 import { revealItemInDir } from "@tauri-apps/plugin-opener"
 
@@ -19,6 +18,7 @@ import type {
   ConnectionTestRequest,
   Delivery,
   DeleteResult,
+  DistributeResult,
   EnvId,
   Environment,
   GuardRules,
@@ -41,6 +41,7 @@ import type {
   Target,
   TrayCopy,
   UpdateStatus,
+  Theme,
 } from "@/bindings"
 
 export type CliEnvStates = Partial<Record<EnvId, CliEnvState>>
@@ -79,9 +80,9 @@ export const ipc = {
   getSshConfigStatus: () => invoke<SshConfigStatus[]>("get_ssh_config_status"),
   addSshInclude: (envId: EnvId) =>
     invoke<SshConfigStatus>("add_ssh_include", { envId }),
-  /** 把服务器分发给某个 Agent，或者停止分发（F-303）；返回这台服务器的列入情况 */
+  /** P8a：返回实际送达快照和共用目录的受影响 Agent，不以选择/列入冒充成功。 */
   setDistribute: (assetId: string, agentKey: string, on: boolean) =>
-    invoke<Inclusion[]>("set_distribute", { assetId, agentKey, on }),
+    invoke<DistributeResult>("set_distribute", { assetId, agentKey, on }),
   setMode: (assetId: string, mode: Mode) =>
     invoke<SaveResult>("set_mode", { assetId, mode }),
   /** F-104 AC1：只检测已启用 Agent 所在的运行环境（Login Shell）；带 assetId 时同时更新这项资源 */
@@ -171,10 +172,8 @@ export const ipc = {
   pickDirectory: () => open({ directory: true, multiple: false }),
   /** 选择私钥文件（PRD 6.5）；取消时返回 null */
   pickFile: () => open({ directory: false, multiple: false }),
-  /** 自绘窗口按钮（PRD 6.2，decorations: false） */
-  minimizeWindow: () => getCurrentWindow().minimize(),
-  toggleMaximizeWindow: () => getCurrentWindow().toggleMaximize(),
-  closeWindow: () => getCurrentWindow().close(),
+  /** P8b：系统标题栏配色与前端偏好一致；窗口控制保留原生行为。 */
+  setWindowTheme: (theme: Theme) => invoke<void>("set_window_theme", { theme }),
 }
 
 /** 把 invoke 的拒绝值规整为 IpcError。后端约定抛出 { id, params } */

@@ -1,11 +1,11 @@
 // 服务器详情的标题行、状态行和问题行（PRD 6.4）
-import { CopyIcon, EllipsisIcon, FolderOpenIcon, PackageIcon, RadarIcon, RefreshCwIcon, ServerIcon, Trash2Icon } from "lucide-react"
+import { CopyIcon, EllipsisIcon, FolderOpenIcon, PackageIcon, PencilIcon, RadarIcon, RefreshCwIcon, ServerIcon, Trash2Icon } from "lucide-react"
 import type { RefObject } from "react"
 
 import type { ServerAsset } from "@/bindings"
 import { CONN_STATE, StateText, TONE_TEXT, PROBE_STATE } from "@/components/app/StateBadge"
 import { Button } from "@/components/ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -22,6 +22,7 @@ import { serverActions, toastError, useConverting } from "./actions"
 import type { ConnTest } from "./ConnectionTest"
 import { DetailTitle, ProblemRow } from "./DetailParts"
 import { useInclusionProblems } from "./InspectorParts"
+import { ResourceName } from "./ResourceName"
 
 /** 系统摘要：「Ubuntu 24.04 · 2C/2G」 */
 function factsSummary(f: ServerAsset["facts"]): string[] {
@@ -102,6 +103,8 @@ export function DetailHeader({
   titleRef,
   conn,
   onTest,
+  onEditConnection,
+  onEditProfile,
 }: {
   asset: ServerAsset
   name: string
@@ -109,6 +112,8 @@ export function DetailHeader({
   titleRef: RefObject<HTMLHeadingElement | null>
   conn: ConnTest
   onTest: () => void
+  onEditConnection: () => void
+  onEditProfile: () => void
 }) {
   const probing = useProbeStore((s) => isProbing(s, asset.id))
   const now = useMinuteTick()
@@ -128,12 +133,18 @@ export function DetailHeader({
       </Button>
       <DropdownMenu>
         <Tooltip>
-          <TooltipTrigger render={<DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={copy.common.more} />} />}>
+          <TooltipTrigger render={<DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={copy.common.more} data-detail-more />} />}>
             <EllipsisIcon />
           </TooltipTrigger>
           <TooltipContent>{copy.common.more}</TooltipContent>
         </Tooltip>
         <DropdownMenuContent align="end" className="w-auto min-w-48">
+          <DropdownMenuGroup>
+            <DropdownMenuItem onClick={onEditConnection}><PencilIcon />{asset.connection.source === "managed" ? copy.detail.editConnection : copy.detail.editExport}</DropdownMenuItem>
+            <DropdownMenuItem onClick={onEditProfile}><PencilIcon />{copy.detail.editProfile}</DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
           <DropdownMenuItem onClick={probe}>
             {probing ? <Spinner aria-hidden /> : <RadarIcon />}
             {probing ? copy.detail.cancelProbe : copy.detail.probe}
@@ -150,11 +161,12 @@ export function DetailHeader({
             <FolderOpenIcon />
             {copy.detail.revealCompiled}
           </DropdownMenuItem>
+          </DropdownMenuGroup>
           <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" onClick={() => serverActions.requestDelete(asset)}>
+          <DropdownMenuGroup><DropdownMenuItem variant="destructive" onClick={() => serverActions.requestDelete(asset)}>
             <Trash2Icon />
             {copy.detail.delete}
-          </DropdownMenuItem>
+          </DropdownMenuItem></DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>
     </>
@@ -165,6 +177,7 @@ export function DetailHeader({
     <DetailTitle
       mark={<ServerIcon className="size-5" aria-hidden />}
       name={name}
+      nameControl={<ResourceName asset={asset} />}
       alias={alias !== name ? alias : undefined}
       handle={alias}
       production={production}

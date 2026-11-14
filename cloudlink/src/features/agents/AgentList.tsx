@@ -13,10 +13,12 @@ import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { copy } from "@/lib/copy"
+import { deliveryReasonText } from "@/lib/deliveryFeedback"
 import { sortEnvs } from "@/features/servers/serverForm"
-import { useDeliveryStore } from "@/stores/deliveries"
+import { isDeliveryProblem, useDeliveryStore } from "@/stores/deliveries"
 import { useGuardStore } from "@/stores/guard"
 import { useSettingsStore } from "@/stores/settings"
+import { useSkillStore } from "@/stores/skills"
 import { selectAvailableEnvs, useTargetStore } from "@/stores/targets"
 import { useUIStore } from "@/stores/ui"
 import { AGENT_ORDER, readersOf } from "./agentKeys"
@@ -33,18 +35,20 @@ interface AgentGroup {
   deliveries: (Delivery | undefined)[]
   readers: AgentBrand[]
   resources: number
+  blocked: boolean
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "")
 
 /** 自定义目录的名称是某个已检测到的 Agent，而它已经读取一个启用的内置目录：会看到两份 */
-function duplicateOf(target: Target, envs: Environment[], targets: Target[]): { brand: AgentBrand; via: Target } | null {
+function duplicateOf(target: Target, envs: Environment[], targets: Target[], delivery?: Delivery): { brand: AgentBrand; via: Target } | null {
   if (target.agent !== "custom" || !target.enabled) return null
   const env = envs.find((e) => e.id === target.envId)
   const found = env?.agents.find((a) => norm(copy.brand[a.brand]) === norm(target.label))
   if (!found) return null
   const via = targets.find((t) => t.envId === target.envId && t.enabled && t.agent !== "custom" && found.reads.includes(t.agent))
-  return via ? { brand: found.brand, via } : null
+  // 共用同一物理副本不是「会看到两份」。
+  return via && !delivery?.sharedAgentKeys?.includes(via.agentKey) ? { brand: found.brand, via } : null
 }
 
 /** 通用目录名称后面的小 Logo（悬停显示名字） */
@@ -114,10 +118,15 @@ function AgentRow({ group, envs, allTargets }: { group: AgentGroup; envs: Enviro
   const guards = isClaude && guardLoaded ? enabled.map((t) => guardByEnv[t.envId] ?? null) : []
   const broken = guards.filter((g) => g?.state === "broken")
   const conflicted = enabled.filter((t) => group.deliveries[group.targets.indexOf(t)]?.status === "conflict")
-  const failed = enabled.some((t) => group.deliveries[group.targets.indexOf(t)]?.statusDetail)
-  const syncing = busy || enabled.some((t) => group.deliveries[group.targets.indexOf(t)]?.status === "pending")
-  const duplicate = group.targets.map((t) => duplicateOf(t, envs, allTargets)).find(Boolean)
-  const envNames = sortEnvs(enabled.map((t) => t.envId)).map((id: EnvId) => copy.env.short(id)).join("、")
+  const problem = enabled.map((t) => group.deliveries[group.targets.indexOf(t)]).find((d) => d && isDeliveryProblem(d))
+  const syncing = busy || enabled.some((t) => { const d = group.deliveries[group.targets.indexOf(t)]; return d?.status === "pending" && !d.statusDetail })
+  const duplicate = group.targets.map((t, i) => duplicateOf(t, envs, allTargets, group.deliveries[i])).find(Boolean)
+  const envNames = sortEnvs(enabled.filter((t) => group.deliveries[group.targets.indexOf(t)]?.status === "ok").map((t) => t.envId)).map((id: EnvId) => copy.env.short(id)).join("、")
+  const sharedNotes = group.deliveries.filter((d): d is Delivery => !!d && d.status === "shared")
+  const otherNames = (d: Delivery) => (d.sharedAgentKeys ?? []).filter((key) => key !== group.key).map((key) => {
+    const t = allTargets.find((t) => t.agentKey === key)
+    return t ? targetLabel(t) : key
+  })
 
   let sub
   if (!on) {
@@ -148,11 +157,16 @@ function AgentRow({ group, envs, allTargets }: { group: AgentGroup; envs: Enviro
         {copy.agents.syncing}
       </>
     )
+  } else if (problem || group.blocked) {
+    const reason = problem?.statusDetail?.id
+    sub = <span className="flex items-center text-warning"><StatusDot tone="warn" />{reason === "shared-selection-mismatch" && problem && otherNames(problem).length ? copy.deliveryFeedback.mismatchWith(otherNames(problem)) : deliveryReasonText(reason ?? (group.blocked ? "compile-blocked" : problem?.status ?? "broken"), problem?.statusDetail?.params)}</span>
+  } else if (group.resources === 0) {
+    sub = <><StatusDot tone="off" />{copy.agents.awaitingResources}</>
   } else {
     sub = (
       <>
-        <StatusDot tone={failed ? "warn" : "ok"} />
-        {failed ? copy.agents.syncFailed : copy.agents.synced}
+        <StatusDot tone="ok" />
+        {copy.agents.synced}
         <span aria-hidden className="px-1.5 text-faint">·</span>
         {copy.agents.resources(group.resources)}
         {first.agent === "universal" && group.readers.length > 0 ? (
@@ -174,7 +188,7 @@ function AgentRow({ group, envs, allTargets }: { group: AgentGroup; envs: Enviro
 
   const reveal = () => targetActions.reveal(enabled[0] ?? first, group.deliveries[group.targets.indexOf(enabled[0] ?? first)])
   return (
-    <div role="listitem" data-problem={conflicted.length > 0 || broken.length > 0 || undefined} className="flex min-h-14 items-center gap-3 px-3.5 py-2.5">
+    <div role="listitem" data-problem={!!problem || group.blocked || broken.length > 0 || undefined} className="flex min-h-14 items-center gap-3 px-3.5 py-2.5">
       <BrandTile>
         <AgentMark agent={first.agent} label={label} lit={on} className="size-4.5" />
       </BrandTile>
@@ -183,7 +197,10 @@ function AgentRow({ group, envs, allTargets }: { group: AgentGroup; envs: Enviro
           <span className="truncate text-[13px] font-medium">{label}</span>
           {first.agent === "universal" && <ReaderLogos brands={group.readers} />}
         </div>
-        <div className="flex min-w-0 items-center text-xs text-muted-foreground">{sub}</div>
+        <div className="flex min-w-0 flex-wrap items-center gap-y-1 text-xs text-muted-foreground">
+          {sub}
+          {sharedNotes.map((d) => <span key={d.id}><span aria-hidden className="px-1.5 text-faint">·</span>{copy.deliveryFeedback.envReason(copy.env.short(d.envId), deliveryReasonText(d.statusDetail?.id ?? "shared", d.statusDetail?.params))}</span>)}
+        </div>
         {duplicate && <p className="text-xs text-muted-foreground">{copy.agents.duplicate(copy.brand[duplicate.brand], targetLabel(duplicate.via))}</p>}
       </div>
       <div className="flex shrink-0 items-center gap-2">
@@ -263,6 +280,7 @@ export function AgentList() {
   const loading = useTargetStore((s) => s.status === "idle" || s.status === "loading") && targets.length === 0
   const byId = useDeliveryStore((s) => s.byId)
   const inclusions = useDeliveryStore((s) => s.inclusions)
+  const statusByKey = useSkillStore((s) => s.statusByKey)
   const [customOpen, setCustomOpen] = useState(false)
 
   const { groups, envs, others } = useMemo(() => {
@@ -278,12 +296,13 @@ export function AgentList() {
         targets: list,
         deliveries: list.map((t) => deliveries.find((d) => d.targetId === t.id)),
         readers: [...new Set(envIds.flatMap((envId) => readersOf(envs, envId, list[0].agent)))],
-        resources: new Set(inclusions.filter((i) => i.included && i.agentKey === key && envIds.includes(i.envId)).map((i) => i.assetId)).size,
+        resources: new Set(inclusions.filter((i) => i.included && i.agentKey === key && list.some((t) => t.enabled && t.envId === i.envId && deliveries.some((d) => d.targetId === t.id && d.status === "ok")) && !Object.values(statusByKey).some((s) => s.envId === i.envId && s.agentKey === key && s.blocked)).map((i) => i.assetId)).size,
+        blocked: Object.values(statusByKey).some((s) => s.agentKey === key && s.blocked && list.some((t) => t.enabled && t.envId === s.envId)),
       }
     })
     const detected = new Set(envs.flatMap((e) => e.agents.map((a) => a.brand)))
     return { groups, envs, others: ALL_BRANDS.filter((b) => !detected.has(b)) }
-  }, [targets, environments, enabledEnvs, byId, inclusions])
+  }, [targets, environments, enabledEnvs, byId, inclusions, statusByKey])
 
   const actions = (
     <DropdownMenu>

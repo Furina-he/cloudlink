@@ -4,21 +4,24 @@ import { cn } from "cn"
 function ScrollArea({
   className,
   contentClassName,
+  layout = "block",
   children,
   ...props
 }: ScrollAreaPrimitive.Root.Props & {
   /** 内容容器的类名。默认是普通块级盒子，子元素的布局和直接放在视口里一样 */
   contentClassName?: string
+  /** max-height 弹窗中的 flex 子项：让视口跟随分配的高度，不能让 100% 退回内容高度。 */
+  layout?: "block" | "flex"
 }) {
   return (
     <ScrollAreaPrimitive.Root
       data-slot="scroll-area"
-      className={cn("relative", className)}
+      className={cn("relative", layout === "flex" && "flex min-h-0 flex-col", className)}
       {...props}
     >
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
-        className="size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1"
+        className={cn("size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1", layout === "flex" && "min-h-0 flex-1")}
       >
         {/*
           Base UI 的 Content 监听内容高度：内容异步加载或展开后重新计算是否可滚动，滚动条和视口的 Tab 停靠点才跟得上

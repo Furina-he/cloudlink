@@ -88,25 +88,30 @@ impl Backend {
             check_ancestors(&self.paths.db_file())?;
             let envs = self.contexts(false)?;
             let targets = self.list_targets()?;
-            let mut deliveries = Vec::new();
             for target in &targets {
-                let env = envs
-                    .iter()
-                    .find(|e| e.id == target.env_id)
-                    .ok_or_else(|| AppError::ipc(IpcErrorId::ResetIncomplete))?;
-                if !env.available {
+                if !envs.iter().any(|e| e.id == target.env_id && e.available) {
                     return Err(AppError::ipc(IpcErrorId::ResetIncomplete));
                 }
-                let path = deliver::resolve_target_path(&self.paths, env, target)?.join(SKILL_DIR);
-                check_ancestors(&path)?;
-                if let Some(marker) = publish::read_marker(&path)
-                    && marker.env_id == target.env_id.as_str()
-                    && marker.agent_key == target.agent_key
-                {
-                    ordinary_tree(&path, 0)?;
-                    deliveries.push((env, target));
+            }
+            let plan = deliver::groups::Plan::new(&self.paths, &envs, &targets);
+            if !plan.invalid.is_empty() {
+                return Err(AppError::ipc(IpcErrorId::ResetIncomplete));
+            }
+            let mut deliveries = Vec::new();
+            for unit in &plan.units {
+                let env = envs
+                    .iter()
+                    .find(|e| e.id == unit.env_id)
+                    .ok_or_else(|| AppError::ipc(IpcErrorId::ResetIncomplete))?;
+                let checked = deliver::inspect_unit(&self.paths, env, unit, None)?;
+                if !matches!(
+                    checked.status,
+                    crate::model::delivery::DeliveryStatus::Conflict | crate::model::delivery::DeliveryStatus::Missing
+                ) {
+                    ordinary_tree(&unit.parent.join(SKILL_DIR), 0)?;
+                    deliveries.push((env, unit));
                 }
-                // A user's same-named Skill is a conflict, never part of the reset.
+                // 外来同名目录或叶子链接不是受管副本；保留它们，跨环境共用不重复删除。
             }
             let mut compiled = Vec::new();
             compiled_roots(&self.paths.compiled_dir(), 0, &mut compiled)?;
@@ -147,8 +152,8 @@ impl Backend {
             }
             // Remove the hook/binary first, before consuming the final guard records.
             guard::reset_managed_files(&self.paths, &envs)?;
-            for (env, target) in deliveries {
-                deliver::remove(&self.paths, env, target)?;
+            for (env, unit) in deliveries {
+                deliver::remove_unit(&self.paths, env, unit)?;
             }
             for path in compiled {
                 check_ancestors(&path)?;
@@ -168,6 +173,10 @@ impl Backend {
                 operations::cleanup(&self.paths, &db)?;
                 db.reset_domain()?;
             }
+            self.shared_mismatches
+                .lock()
+                .map_err(|_| AppError::internal("sharing state unavailable"))?
+                .clear();
             drop(lock);
             // An OS credential UI/service may block. Neither state nor SQLite locks may be held.
             self.cleanup_credentials()?;

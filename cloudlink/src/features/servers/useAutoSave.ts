@@ -38,7 +38,7 @@ export function useAutoSave<T extends FieldValues>({
   save: (values: T) => Promise<void>
 }) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const busy = useRef(false)
+  const pending = useRef<Promise<void> | null>(null)
   const again = useRef(false)
   const saveRef = useRef(save)
   const fieldsRef = useRef(fields)
@@ -48,36 +48,35 @@ export function useAutoSave<T extends FieldValues>({
   })
   const [error, setError] = useState<IpcError | null>(null)
 
-  const flush = useCallback(async (): Promise<void> => {
+  const flush = useCallback(function flushPending(): Promise<void> {
     if (timer.current) clearTimeout(timer.current)
     timer.current = null
-    if (busy.current) {
+    if (pending.current) {
       again.current = true
-      return
+      return pending.current
     }
-    // control._defaultValues 是 RHF 当前的默认值（values 同步后立即更新）；formState.defaultValues 要等下一次渲染
-    if (sameValues(form.getValues(), form.control._defaultValues)) return
-    if (!(await form.trigger(fieldsRef.current))) return
-    busy.current = true
-    try {
-      await saveRef.current(form.getValues())
-      setError(null)
-      toast.add({ id: SAVED_TOAST_ID, title: copy.detail.saved })
-    } catch (e) {
-      setError(e as IpcError)
-    } finally {
-      busy.current = false
+    // 在异步校验之前登记请求，重复 flush 等到当前和后续保存都完成。
+    const task = Promise.resolve().then(async () => {
+      // control._defaultValues 是 RHF 当前的默认值（values 同步后立即更新）；formState.defaultValues 要等下一次渲染
+      if (sameValues(form.getValues(), form.control._defaultValues)) return
+      if (!(await form.trigger(fieldsRef.current))) return
+      try {
+        await saveRef.current(form.getValues())
+        setError(null)
+        toast.add({ id: SAVED_TOAST_ID, title: copy.detail.saved })
+      } catch (e) {
+        setError(e as IpcError)
+      }
+    }).finally(async () => {
+      pending.current = null
       if (again.current) {
         again.current = false
-        void flushRef.current()
+        await flushPending()
       }
-    }
+    })
+    pending.current = task
+    return task
   }, [form])
-  // 保存途中又有改动：保存完再来一次（通过 ref 调用，避免回调引用自己）
-  const flushRef = useRef(flush)
-  useEffect(() => {
-    flushRef.current = flush
-  }, [flush])
 
   // 每次改动重新计时；资源在后台更新（values 同步）也会触发，但值和已保存的一样，不会保存
   useEffect(() => {

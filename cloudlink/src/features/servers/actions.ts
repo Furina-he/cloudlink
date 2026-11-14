@@ -4,6 +4,7 @@ import { create } from "zustand"
 import type { Asset, CliAsset, CliProvider, EnvId, IpcError, ServerAsset } from "@/bindings"
 import { toast } from "@/components/ui/toast"
 import { copy, ipcErrorText } from "@/lib/copy"
+import { deliveryOutcome, deliveryProblemsText } from "@/lib/deliveryFeedback"
 import { installCommand, loginCommand } from "@/lib/cliProviders"
 import { compiledDir } from "@/lib/paths"
 import { ipc } from "@/lib/ipc"
@@ -13,9 +14,10 @@ import { announceTest, useConnectionStore } from "@/stores/connection"
 import { useDeliveryStore } from "@/stores/deliveries"
 import { selectActiveRun, useProbeStore } from "@/stores/probe"
 import { useSettingsStore } from "@/stores/settings"
+import { useSkillStore } from "@/stores/skills"
 import { useTargetStore } from "@/stores/targets"
 import { useUIStore } from "@/stores/ui"
-import { missingIncludeEnvs, syncedDirs } from "./includeState"
+import { missingIncludeEnvs } from "./includeState"
 import { connectionInputOf } from "./serverForm"
 
 export type PendingAction = { kind: "mode" | "delete"; assetId: string } | null
@@ -38,6 +40,13 @@ export const useConverting = create<{ ids: string[]; set: (id: string, on: boole
 }))
 
 const alias = handleOf
+
+/** 使用发布返回的完整快照，不把资源选择或列入当作送达。 */
+export const currentDeliverySnapshot = () => ({
+  inclusions: useDeliveryStore.getState().inclusions,
+  deliveries: Object.values(useDeliveryStore.getState().byId),
+  statuses: Object.values(useSkillStore.getState().statusByKey),
+})
 
 export const serverActions = {
   /** 用已保存的连接参数测试；结果用 Toast 播报（详情里的「测试连接」用表单草稿，原地显示） */
@@ -69,13 +78,28 @@ export const serverActions = {
     useAssetStore
       .getState()
       .setDistribute(asset.id, agent.key, on)
-      .then(() =>
-        toast.add(
-          on
-            ? { title: copy.agentSection.distributed(alias(asset), agent.label), description: copy.agentSection.effectHint, type: "success", timeout: 8000 }
-            : { title: copy.agentSection.undistributed(alias(asset), agent.label) }
-        )
-      )
+      .then((result) => {
+        const targets = useTargetStore.getState().targets
+        const outcome = deliveryOutcome(asset.id, result.affectedAgentKeys, on, result, targets)
+        const names = result.affectedAgentKeys.map((key) => {
+          const t = targets.find((t) => t.agentKey === key)
+          return t ? t.agent === "custom" ? t.label : copy.agent[t.agent] : key
+        })
+        if (!outcome.complete) {
+          toast.add({
+            title: on ? copy.deliveryFeedback.partial(result.asset.name, outcome.count) : copy.deliveryFeedback.withdrawPartial(result.asset.name),
+            description: [names.length > 1 ? copy.deliveryFeedback.sharedHint(names) : "", outcome.problems.length ? deliveryProblemsText(outcome.problems) : copy.deliveryFeedback.none].filter(Boolean).join("\n"),
+            type: "warning",
+          })
+          return
+        }
+        toast.add({
+          title: names.length > 1 ? copy.deliveryFeedback.shared(names, result.asset.name, on) : on ? copy.agentSection.distributed(alias(result.asset), agent.label) : copy.agentSection.undistributed(alias(result.asset), agent.label),
+          description: on ? copy.agentSection.effectHint : undefined,
+          type: on ? "success" : undefined,
+          actionProps: { children: copy.common.undo, onClick: () => void useAssetStore.getState().setDistribute(asset.id, agent.key, !on).catch(toastError) },
+        })
+      })
       .catch(toastError)
   },
 
@@ -89,10 +113,17 @@ export const serverActions = {
       if (asset.agent.agents.length === 0 && selectCanDistribute(asset).ok) {
         for (const key of agentKeys) await useAssetStore.getState().setDistribute(asset.id, key, true)
       }
-      // 加入之后各份 Skill 都重新算过，列入情况以后端为准
-      await useDeliveryStore.getState().load()
+      // 加入之后重新读取实际结果，不能因 Include 写入成功就冒报 Skill 已同步。
+      const [deliveries, inclusions, statuses] = await Promise.all([ipc.listDeliveries(), ipc.listInclusions(), ipc.getCompileStatus()])
+      useDeliveryStore.getState()._onChanged({ deliveries, inclusions })
+      useSkillStore.getState()._onCompiled(statuses)
       const current = useAssetStore.getState().byId[asset.id] ?? asset
-      toast.add({ title: copy.include.joined(current.name, syncedDirs(useDeliveryStore.getState().inclusions, current)), type: "success" })
+      const outcome = deliveryOutcome(current.id, current.agent.agents, true, { deliveries, inclusions, statuses }, useTargetStore.getState().targets)
+      toast.add({
+        title: outcome.complete ? copy.include.joined(current.name, outcome.count) : copy.deliveryFeedback.joinedPartial(current.name, outcome.count),
+        description: outcome.complete ? undefined : outcome.problems.length ? deliveryProblemsText(outcome.problems) : copy.deliveryFeedback.none,
+        type: outcome.complete ? "success" : "warning",
+      })
     } catch (e) {
       toastError(e)
     }

@@ -8,23 +8,22 @@ import { Keys } from "@/components/app/Keys"
 import { FoldRow, PrefRow } from "@/components/app/SettingsList"
 import { Button } from "@/components/ui/button"
 import { FieldGroup } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { toast } from "@/components/ui/toast"
 import { useAgentOptions } from "@/features/agents/agentKeys"
 import { copy } from "@/lib/copy"
+import { deliveryOutcome, deliveryProblemsText } from "@/lib/deliveryFeedback"
 import { HOTKEY_OPTIONS, HOTKEYS, isAlertOpen, KEY_HINT } from "@/lib/hotkeys"
 import { ipc } from "@/lib/ipc"
 import { mntToWindows } from "@/lib/paths"
 import { selectCanDistribute, useAssetStore } from "@/stores/assets"
 import { NEW_KEY, useConnectionStore } from "@/stores/connection"
-import { useDeliveryStore } from "@/stores/deliveries"
 import { useProbeStore } from "@/stores/probe"
 import { useTargetStore } from "@/stores/targets"
 import { useUIStore } from "@/stores/ui"
-import { toastError } from "./actions"
+import { currentDeliverySnapshot, toastError } from "./actions"
 import { AdvancedExtras } from "./AdvancedFields"
 import { ConnectFlow, stepOfError, type EnableStage, type IncludeState } from "./ConnectFlow"
 import { AuthMethodFields, HostPortFields, UserField } from "./ConnectionFields"
@@ -32,15 +31,14 @@ import { useConnectionTest } from "./ConnectionTest"
 import { CopyKeyDialog, type CopyKeyRequest } from "./CopyKeyDialog"
 import { CreateHeader } from "./CreateParts"
 import { DraftPreview, SaveErrorAlert } from "./DraftPreview"
-import { isUnreachableByAgents, syncedDirs } from "./includeState"
+import { isUnreachableByAgents } from "./includeState"
 import { forgetKeyCheck } from "./keyCheck"
 import { LeaveDialog, useLeaveGuard } from "./LeaveDialog"
 import { SaveFlowDialogs } from "./SaveFlowDialogs"
 import { NameField } from "./sections/BasicSection"
 import { firstError, focusField } from "./serverForm"
-import { useAliasContext, useAliasFollow, useServerForm } from "./useServerForm"
+import { useAliasContext, useServerForm } from "./useServerForm"
 import { includeMissing, useSaveFlow, type RevealTarget } from "./useSaveFlow"
-import { ValidationError } from "./ValidationError"
 
 type Stage = "testing" | EnableStage
 
@@ -58,7 +56,6 @@ const TEST_ENV: EnvId = "windows"
 export function NewServerForm() {
   const ctx = useAliasContext(undefined)
   const form = useServerForm(undefined, ctx)
-  const alias = useAliasFollow(form, ctx)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const conn = useConnectionTest(form, NEW_KEY, undefined)
   const [stage, setStage] = useState<Stage | null>(null)
@@ -70,11 +67,10 @@ export function NewServerForm() {
   // 这次要不要问「加入 SSH 配置」，以及用户的决定：决定之后这一步留在列表里
   const [askInclude, setAskInclude] = useState(false)
   const [includeDecision, setIncludeDecision] = useState<"added" | "declined" | null>(null)
-  const [aliasValue, nameValue, connection] = useWatch({ control: form.control, name: ["alias", "name", "connection"] })
+  const [aliasValue, nameValue, fallbackName, connection] = useWatch({ control: form.control, name: ["alias", "name", "fallbackName", "connection"] })
 
   const reveal = (target: RevealTarget) => {
-    // 别名在名称下面的别名行，不在「高级」里
-    if (target.advanced && target.path !== "alias") setAdvancedOpen(true)
+    if (target.advanced) setAdvancedOpen(true)
     focusField(form, target.path)
   }
   const flow = useSaveFlow({ asset: undefined, form, testKey: NEW_KEY, reveal, quiet: true })
@@ -86,7 +82,6 @@ export function NewServerForm() {
     if (prefill) {
       form.setValue("name", prefill.name, { shouldDirty: true })
       form.setValue("connection.host", prefill.host, { shouldDirty: true })
-      alias.sync()
     }
     form.setFocus(prefill ? "connection.user" : "connection.host")
     // 只在打开面板时预填一次
@@ -104,10 +99,15 @@ export function NewServerForm() {
   )
 
   /** 添加成功的提示条（PRD 6.5），并让新行短暂高亮 */
-  const announce = (asset: ServerAsset) => {
+  const announce = (asset: ServerAsset, wanted: boolean) => {
     const unreachable = isUnreachableByAgents(asset, useTargetStore.getState().environments)
-    const dirs = syncedDirs(useDeliveryStore.getState().inclusions, asset)
-    toast.add({ title: unreachable && asset.connection.verified?.ok ? copy.create.addedNoSshConfig(asset.name) : copy.create.added(asset.name, dirs), type: "success" })
+    const outcome = deliveryOutcome(asset.id, agents.map((a) => a.key), true, currentDeliverySnapshot(), useTargetStore.getState().targets)
+    const partial = wanted && !unreachable && !outcome.complete
+    toast.add({
+      title: unreachable && asset.connection.verified?.ok ? copy.create.addedNoSshConfig(asset.name) : partial ? copy.deliveryFeedback.addedPartial(asset.name, outcome.count) : copy.create.added(asset.name, wanted ? outcome.count : 0),
+      description: partial ? outcome.problems.length ? deliveryProblemsText(outcome.problems) : copy.deliveryFeedback.none : undefined,
+      type: partial ? "warning" : "success",
+    })
     useAssetStore.getState().flash([asset.id])
   }
 
@@ -132,7 +132,7 @@ export function NewServerForm() {
         for (const a of agents) await useAssetStore.getState().setDistribute(asset.id, a.key, true)
       }
       void useProbeStore.getState().start(current.id).catch(toastError)
-      announce((useAssetStore.getState().byId[asset.id] ?? current) as ServerAsset)
+      announce((useAssetStore.getState().byId[asset.id] ?? current) as ServerAsset, true)
     } catch (e) {
       toastError(e)
     } finally {
@@ -180,7 +180,7 @@ export function NewServerForm() {
     if (stage || flow.saving) return
     setSaveIntent("save-only")
     prepareInclude()
-    flow.submit({ skipUnverified: true, after: announce })
+    flow.submit({ skipUnverified: true, after: (saved) => announce(saved, false) })
   }
 
   /** 保存失败后的重试沿用用户上次的选择：「仅保存」不会重新连接、转密钥或授权 */
@@ -231,7 +231,6 @@ export function NewServerForm() {
   const enableStage: EnableStage | null = asking || flow.including ? null : stage && stage !== "testing" ? stage : flow.saving ? "saving" : null
   // 会同步到几个目录：已启用的「运行环境 × 目录」里，这台服务器可用的那些
   const dirs = includeDecision === "declined" ? 0 : compileTargets.filter((t) => connection.definedIn.includes(t.envId)).length
-  const aliasError = form.formState.errors.alias
   const keyError = test?.status === "failed" && test.error && stepOfError(test.error.id) === "key" ? test.error : undefined
   const keyFix =
     keyError?.id === "key-permissions" ? (
@@ -246,7 +245,7 @@ export function NewServerForm() {
     <FormProvider {...form}>
       <section aria-labelledby="detail-title" className="flex h-full min-h-0 flex-col">
         <CreateHeader
-          title={view === "connect" ? copy.connect.title(echo || connection.host) : copy.create.titleSsh}
+          title={view === "connect" ? copy.connect.title(nameValue.trim() || fallbackName) : copy.create.titleSsh}
           back={!busy}
           onBack={view === "connect" ? { label: copy.connect.back, run: () => (running ? conn.cancel() : backToForm()) } : undefined}
         />
@@ -258,31 +257,10 @@ export function NewServerForm() {
               <SaveErrorAlert error={flow.error} onRetry={retrySave} />
             )}
             <FieldGroup className="@container/field-group gap-3.5">
-              <HostPortFields onHostChange={alias.sync} />
+              <HostPortFields />
               <div className="grid grid-cols-[8.75rem_minmax(0,1fr)] gap-3">
                 <UserField />
-                <NameField onChange={alias.sync} optional />
-              </div>
-              {/* 别名行（PRD 6.5）：跟着名称和地址变，手改之后不再跟随 */}
-              <div className="-mt-1 flex flex-col gap-1">
-                <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
-                  <span>{copy.create.aliasLead}</span>
-                  <code className="rounded-[5px] bg-pill px-[7px] py-0.5 font-mono text-[11.5px] text-fg-2">{copy.create.aliasCommand}</code>
-                  <Input
-                    id="server-alias"
-                    aria-label={copy.create.aliasLabel}
-                    aria-required
-                    aria-invalid={!!aliasError || undefined}
-                    placeholder={copy.create.aliasPlaceholder}
-                    className="h-6 w-auto bg-card-2 px-1.5 font-mono text-xs"
-                    style={{ width: `${Math.max(8, echo.length + 3)}ch` }}
-                    spellCheck={false}
-                    autoComplete="off"
-                    {...form.register("alias", { onChange: (ev: { target: { value: string } }) => alias.markTouched(ev.target.value) })}
-                  />
-                  <span>{copy.create.aliasTail}</span>
-                </div>
-                <ValidationError error={aliasError} />
+                <NameField optional fallbackName={fallbackName} />
               </div>
               <AuthMethodFields compact />
               <div className="divide-y divide-line-2 overflow-hidden rounded-list border border-line bg-card">
@@ -307,7 +285,7 @@ export function NewServerForm() {
                 <SaveErrorAlert error={flow.error} onRetry={retrySave} />
               )}
               <ConnectFlow
-                name={nameValue}
+                name={nameValue.trim() || fallbackName}
                 alias={echo || connection.host}
                 user={connection.user}
                 host={connection.host}

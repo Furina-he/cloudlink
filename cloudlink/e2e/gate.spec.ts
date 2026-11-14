@@ -1,8 +1,9 @@
 import { expect, test, type Page } from "@playwright/test"
 
-import { GATE, collectConsoleErrors, openServer, ready } from "./helpers"
+import { SHOTS, collectConsoleErrors, openServer, ready } from "./helpers"
 
-// 门槛截图：资源（配电盘、首次启动、服务器详情、云平台详情）、添加 SSH 服务器、添加云平台、Agent、设置，以及有新版本时的顶栏提醒和更新对话框 × 浅色 / 深色 × 900×640 / 760×520，随提交
+// P8 回归视图证据：列表、首次启动、详情、添加、Agent、设置与更新 × 两种尺寸。
+// 本批次只校准测试逻辑，截图写根 test-results/p8，不覆盖既有 e2e/__screenshots__ 门禁 PNG。
 
 const VIEWS: { name: string; query?: string; empty?: boolean; open: (page: Page) => Promise<void> }[] = [
   { name: "servers-list", open: async () => {} },
@@ -13,6 +14,8 @@ const VIEWS: { name: string; query?: string; empty?: boolean; open: (page: Page)
     empty: true,
     open: async (page) => {
       await expect(page.getByRole("button", { name: "从 ~/.ssh/config 导入 · 3 台" })).toBeVisible()
+      await expect(page.getByText("看看服务器的磁盘还剩多少", { exact: true })).toBeVisible()
+      await expect(page.getByRole("button", { name: "复制示例" })).toHaveCount(0)
     },
   },
   { name: "servers-detail", open: (page) => openServer(page, "hk-edge") },
@@ -26,9 +29,12 @@ const VIEWS: { name: string; query?: string; empty?: boolean; open: (page: Page)
       // 截图前会移走焦点，失焦即校验：先填好必填项，免得截到「请填写地址」
       await page.getByRole("textbox", { name: /^地址/ }).fill("203.0.113.10")
       await page.getByRole("textbox", { name: /^名称/ }).fill("香港边缘节点")
-      // 门槛（EXECUTION-PLAN P7d）：760×520 下「名称」和别名行不用滚动就看得到
-      await expect(page.getByRole("textbox", { name: /^名称/ })).toBeInViewport({ ratio: 1 })
-      await expect(page.getByRole("textbox", { name: "别名" })).toBeInViewport({ ratio: 1 })
+      // P8b：日常只填名称；760×520 下名称在首屏，稳定别名默认收进高级。
+      const name = page.getByRole("textbox", { name: /^名称/ })
+      await expect(name).toBeInViewport({ ratio: 1 })
+      await expect(name).toHaveAttribute("placeholder", "留空将使用“服务器 1”")
+      await expect(page.getByRole("button", { name: /^高级/ })).toHaveAttribute("aria-expanded", "false")
+      await expect(page.getByRole("textbox", { name: /^SSH 别名/ })).toHaveCount(0)
     },
   },
   {
@@ -79,11 +85,12 @@ const VIEWS: { name: string; query?: string; empty?: boolean; open: (page: Page)
   },
 ]
 
-// P7 门槛（EXECUTION-PLAN P7 第 4 条）：顶栏浅色、顶栏深色、侧栏浅色 × 1000 与 760 宽
+// P8 门槛：浅色/深色 × 顶栏/侧栏 × 1000 与 760 宽。
 const SHELLS = [
   { nav: "top", scheme: "light" },
   { nav: "top", scheme: "dark" },
   { nav: "side", scheme: "light" },
+  { nav: "side", scheme: "dark" },
 ] as const
 
 for (const { nav, scheme } of SHELLS) {
@@ -100,7 +107,7 @@ for (const { nav, scheme } of SHELLS) {
         await v.open(page)
         // 焦点环不进截图
         await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
-        await page.screenshot({ path: `${GATE}/${v.name}-${nav}-${scheme}-${width}.png`, animations: "disabled" })
+        await page.screenshot({ path: `${SHOTS}/gate-${v.name}-${nav}-${scheme}-${width}.png`, animations: "disabled" })
         expect(errors).toEqual([])
       })
     }

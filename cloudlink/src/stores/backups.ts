@@ -6,18 +6,19 @@ import { ipc, toIpcError } from "@/lib/ipc"
 import { usePendingAction } from "@/features/servers/actions"
 import { useAssetStore } from "./assets"
 import { useTargetStore } from "./targets"
+import { useDeliveryStore } from "./deliveries"
+import { useSkillStore } from "./skills"
 
 const nameOf = (t: Target | undefined) => (t ? (t.agent === "custom" ? t.label : copy.agent[t.agent]) : "")
-
-function replaceTarget(target: Target) {
-  useTargetStore.setState((s) => ({ targets: s.targets.map((t) => (t.id === target.id ? target : t)) }))
-}
 
 /** 撤销：备份写回原处，这个目标停用，直到用户再次启用（AC2） */
 export async function undoBackup(backupId: string) {
   try {
     const target = await ipc.undoBackup(backupId)
-    replaceTarget(target)
+    const [targets, deliveries, inclusions, statuses] = await Promise.all([ipc.listTargets(), ipc.listDeliveries(), ipc.listInclusions(), ipc.getCompileStatus()])
+    useTargetStore.setState({ targets })
+    useDeliveryStore.getState()._onChanged({ deliveries, inclusions })
+    useSkillStore.getState()._onCompiled(statuses)
     toast.add({ title: copy.backups.undone(nameOf(target)) })
   } catch (e) {
     const err = toIpcError(e)

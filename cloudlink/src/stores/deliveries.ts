@@ -18,7 +18,6 @@ interface DeliveryState {
   takeOver: (targetId: string) => Promise<Delivery>
   removeAll: () => Promise<void>
   _onChanged: (e: { deliveries: Delivery[]; inclusions: Inclusion[] }) => void
-  _setInclusions: (inclusions: Inclusion[]) => void
 }
 
 const byIdOf = (list: Delivery[]) => Object.fromEntries(list.map((d) => [d.id, d]))
@@ -68,13 +67,7 @@ export const useDeliveryStore = create<DeliveryState>()((set) => ({
     set({ byId: {} })
   },
 
-  _onChanged: ({ deliveries, inclusions }) => set({ byId: byIdOf(deliveries), inclusions }),
-  _setInclusions: (incoming) =>
-    set((s) => {
-      // set_distribute 只返回这台服务器的列入情况，其余保持不变
-      const assets = new Set(incoming.map((i) => i.assetId))
-      return { inclusions: [...s.inclusions.filter((i) => !assets.has(i.assetId)), ...incoming] }
-    }),
+  _onChanged: ({ deliveries, inclusions }) => set({ byId: byIdOf(deliveries), inclusions, status: "ready", error: null }),
 }))
 
 // ---------- selectors ----------
@@ -92,9 +85,11 @@ export function selectDeliveriesByEnv(byId: Record<string, Delivery>): Partial<R
 }
 
 /** 需要处理的副本状态（F-305 的四类问题） */
-export const PROBLEM_STATUSES: DeliveryStatus[] = ["missing", "modified", "outdated", "conflict"]
+export const PROBLEM_STATUSES: DeliveryStatus[] = ["missing", "modified", "outdated", "conflict", "broken"]
 
-export const isDeliveryProblem = (d: Delivery) => PROBLEM_STATUSES.includes(d.status)
+export const isDeliveryProblem = (d: Delivery) => PROBLEM_STATUSES.includes(d.status) || d.statusDetail?.id === "shared-selection-mismatch"
+
+export { countDeliveredForAsset } from "@/lib/deliveryFeedback"
 
 /** 一个目标里的总 Skill 列入了几台服务器：同一个运行环境、同一个 Agent */
 export function countIncluded(inclusions: Inclusion[], target: Target): number {

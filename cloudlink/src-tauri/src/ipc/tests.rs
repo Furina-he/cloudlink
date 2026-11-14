@@ -793,16 +793,24 @@ fn custom_targets_reject_existing_target_overlap_and_protected_directories() {
             path: path.to_string_lossy().into_owned(),
         })
         .unwrap();
-    for duplicate in [path.clone(), path.join("nested")] {
-        assert_ipc(
-            fixture.backend.add_custom_target(AddCustomTargetRequest {
-                env_id: EnvId::windows(),
-                label: "Another editor".into(),
-                path: duplicate.to_string_lossy().into_owned(),
-            }),
-            IpcErrorId::TargetExists,
-        );
-    }
+    assert_ipc(
+        fixture.backend.add_custom_target(AddCustomTargetRequest {
+            env_id: EnvId::windows(),
+            label: "Nested editor".into(),
+            path: path.join("nested").to_string_lossy().into_owned(),
+        }),
+        IpcErrorId::TargetExists,
+    );
+    // P8a：同一个真实目录允许多个动态目标共用，嵌套仍拒绝。
+    let same = fixture
+        .backend
+        .add_custom_target(AddCustomTargetRequest {
+            env_id: EnvId::windows(),
+            label: "Another editor".into(),
+            path: path.to_string_lossy().into_owned(),
+        })
+        .unwrap();
+    fixture.backend.remove_custom_target(&same.id).unwrap();
     fixture.backend.remove_custom_target(&added.id).unwrap();
     assert_eq!(fixture.backend.list_targets().unwrap(), before);
     fixture.assert_neighbors_untouched();
@@ -893,7 +901,11 @@ fn saved_account_controls_requests_and_per_environment_inclusion() {
         .save_asset(AssetInput::Cli(cli_input(ACCOUNT_B, Some(catalog))))
         .unwrap()
         .asset;
-    let inclusions = fixture.backend.set_distribute(saved.id(), "claude-code", true).unwrap();
+    let inclusions = fixture
+        .backend
+        .set_distribute(saved.id(), "claude-code", true)
+        .unwrap()
+        .inclusions;
     assert!(
         inclusions
             .iter()
@@ -1557,6 +1569,429 @@ fn successful_authorization_withdrawal_removes_modified_copy_before_fresh_sync()
             .all(|bytes| !String::from_utf8_lossy(bytes).contains("secondary-box"))
     );
     fixture.assert_neighbors_untouched();
+}
+
+#[cfg(any(windows, unix))]
+fn p8_link_dir(link: &Path, target: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        match std::os::windows::fs::symlink_dir(target, link) {
+            Ok(()) => {}
+            Err(error) if error.raw_os_error() == Some(1314) => {
+                let output = crate::proc::command("cmd.exe")
+                    .args(["/D", "/V:OFF", "/C"])
+                    .raw_arg(r#"mklink /J "%CLOUDLINK_TEST_LINK%" "%CLOUDLINK_TEST_TARGET%""#)
+                    .env("CLOUDLINK_TEST_LINK", link)
+                    .env("CLOUDLINK_TEST_TARGET", target)
+                    .output()
+                    .unwrap();
+                assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            }
+            Err(error) => panic!("cannot create isolated link: {error}"),
+        }
+    }
+}
+
+#[cfg(any(windows, unix))]
+fn p8_shared_target(fixture: &Fixture) -> Target {
+    let shared = PathBuf::from(&fixture.target().path);
+    let link = fixture.paths.user_home.join(".mirror/skills");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    p8_link_dir(&link, &shared);
+    fixture
+        .backend
+        .add_custom_target(AddCustomTargetRequest {
+            env_id: EnvId::windows(),
+            label: "Mirror".into(),
+            path: link.to_string_lossy().into_owned(),
+        })
+        .unwrap()
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn p8_shared_directory_uses_intersection_then_one_explicit_switch_aligns_members() {
+    let fixture = Fixture::new();
+    let saved = fixture.seed_ready_server();
+    let primary = fixture.target();
+    let shared = p8_shared_target(&fixture);
+    assert!(
+        fixture
+            .backend
+            .database()
+            .unwrap()
+            .require_asset(saved.id())
+            .unwrap()
+            .agent()
+            .agents
+            .is_empty()
+    );
+    assert!(
+        !fixture.destination(&primary).exists(),
+        "discovering a sharer must not expand grants"
+    );
+    let mismatches: Vec<_> = fixture
+        .backend
+        .list_deliveries()
+        .unwrap()
+        .into_iter()
+        .filter(|d| d.target_id == primary.id || d.target_id == shared.id)
+        .collect();
+    assert_eq!(
+        mismatches.len(),
+        2,
+        "an empty intersection still keeps every mismatch row"
+    );
+    assert!(mismatches.iter().all(|d| {
+        d.status == DeliveryStatus::Missing
+            && d.status_detail
+                .as_ref()
+                .is_some_and(|detail| detail.id == "shared-selection-mismatch")
+    }));
+    let checked = fixture.backend.check_deliveries().unwrap();
+    assert_eq!(
+        checked
+            .iter()
+            .filter(|d| (d.target_id == primary.id || d.target_id == shared.id)
+                && d.status_detail
+                    .as_ref()
+                    .is_some_and(|detail| detail.id == "shared-selection-mismatch"))
+            .count(),
+        2,
+        "health checks must not drop the empty-source mismatch"
+    );
+
+    let result = fixture
+        .backend
+        .set_distribute(saved.id(), &shared.agent_key, true)
+        .unwrap();
+    assert_eq!(
+        result.affected_agent_keys,
+        vec![primary.agent_key.clone(), shared.agent_key.clone()]
+    );
+    assert!(result.asset.agent().agents.contains(&primary.agent_key));
+    assert!(result.asset.agent().agents.contains(&shared.agent_key));
+    let delivered: Vec<_> = result
+        .deliveries
+        .iter()
+        .filter(|d| d.status == DeliveryStatus::Ok)
+        .collect();
+    assert_eq!(delivered.len(), 2);
+    assert!(
+        delivered.iter().all(|d| d
+            .status_detail
+            .as_ref()
+            .is_some_and(|detail| detail.id == "shared-directory")),
+        "an explicit switch clears the mismatch, not the shared-directory explanation"
+    );
+    assert_eq!(
+        delivered
+            .iter()
+            .map(|d| d.unit_id.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        1
+    );
+    let marker = publish::read_marker(&fixture.destination(&primary)).unwrap();
+    assert_eq!(marker.agent_keys, result.affected_agent_keys);
+    assert!(
+        !fixture.source(&shared).exists(),
+        "a shared directory has no duplicate source"
+    );
+
+    let off = fixture
+        .backend
+        .set_distribute(saved.id(), &primary.agent_key, false)
+        .unwrap();
+    assert!(!off.asset.agent().agents.contains(&primary.agent_key));
+    assert!(!off.asset.agent().agents.contains(&shared.agent_key));
+    assert!(!fixture.destination(&primary).exists());
+    fixture.assert_neighbors_untouched();
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn p8_legacy_group_marker_is_upgraded_and_outsider_markers_are_not_claimed() {
+    let fixture = Fixture::new();
+    let saved = fixture.seed_ready_server();
+    let shared = p8_shared_target(&fixture);
+    fixture
+        .backend
+        .set_distribute(saved.id(), &shared.agent_key, true)
+        .unwrap();
+    let leaf = fixture.destination(&fixture.target());
+    let original = publish::read_marker(&leaf).unwrap();
+    let mut old = original.clone();
+    old.agent_key = shared.agent_key.clone();
+    old.agent_keys.clear();
+    fs::write(leaf.join(MARKER_FILE), serde_json::to_vec(&old).unwrap()).unwrap();
+    assert!(
+        fixture
+            .backend
+            .check_deliveries()
+            .unwrap()
+            .iter()
+            .filter(|d| d.target_id == shared.id || d.target_id == fixture.target().id)
+            .all(|d| d.status == DeliveryStatus::Ok)
+    );
+    assert_eq!(publish::read_marker(&leaf).unwrap().agent_keys, original.agent_keys);
+
+    let mut outsider = original.clone();
+    outsider.agent_key = "custom:Unregistered".into();
+    outsider.agent_keys = vec!["custom:Unregistered".into()];
+    fs::write(leaf.join(MARKER_FILE), serde_json::to_vec(&outsider).unwrap()).unwrap();
+    assert!(
+        fixture
+            .backend
+            .check_deliveries()
+            .unwrap()
+            .iter()
+            .filter(|d| d.target_id == shared.id || d.target_id == fixture.target().id)
+            .all(|d| d.status == DeliveryStatus::Conflict)
+    );
+    assert_eq!(publish::read_marker(&leaf).unwrap(), outsider);
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn p8_disabling_one_shared_target_keeps_copy_until_the_last_target_stops() {
+    let fixture = Fixture::new();
+    let saved = fixture.seed_ready_server();
+    let shared = p8_shared_target(&fixture);
+    fixture
+        .backend
+        .set_distribute(saved.id(), &shared.agent_key, true)
+        .unwrap();
+    let primary = fixture.target();
+    fixture.backend.set_target_enabled(&primary.id, false).unwrap();
+    assert!(fixture.destination(&primary).join("SKILL.md").exists());
+    assert!(
+        fixture
+            .backend
+            .list_deliveries()
+            .unwrap()
+            .iter()
+            .any(|d| d.target_id == primary.id && d.status == DeliveryStatus::Shared)
+    );
+    fixture.backend.set_target_enabled(&shared.id, false).unwrap();
+    assert!(!fixture.destination(&primary).exists());
+    fixture.assert_neighbors_untouched();
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn p8_removing_a_shared_custom_member_preserves_and_retags_the_owned_copy() {
+    let fixture = Fixture::new();
+    let saved = fixture.seed_ready_server();
+    let shared = p8_shared_target(&fixture);
+    fixture
+        .backend
+        .set_distribute(saved.id(), &shared.agent_key, true)
+        .unwrap();
+    fixture.backend.remove_custom_target(&shared.id).unwrap();
+    let primary = fixture.target();
+    let marker = publish::read_marker(&fixture.destination(&primary)).unwrap();
+    assert_eq!(marker.agent_key, primary.agent_key);
+    assert!(marker.agent_keys.is_empty());
+    assert!(
+        fixture
+            .backend
+            .list_deliveries()
+            .unwrap()
+            .iter()
+            .any(|d| d.target_id == primary.id && d.status == DeliveryStatus::Ok)
+    );
+    fixture.assert_neighbors_untouched();
+}
+
+#[test]
+fn p8_distribution_snapshot_distinguishes_grant_compile_and_real_conflict() {
+    let fixture = Fixture::new();
+    let saved = fixture.seed_ready_server();
+    let target = fixture.target();
+    let env = fixture.backend.context(&target.env_id).unwrap();
+    crate::deliver::remove(&fixture.paths, &env, &target).unwrap();
+    let leaf = fixture.destination(&target);
+    fs::create_dir_all(&leaf).unwrap();
+    fs::write(leaf.join("SKILL.md"), b"user-owned skill").unwrap();
+    let result = fixture
+        .backend
+        .set_distribute(saved.id(), &target.agent_key, true)
+        .unwrap();
+    assert!(result.asset.agent().agents.contains(&target.agent_key));
+    assert!(result.inclusions.iter().any(|i| i.asset_id == saved.id() && i.included));
+    assert!(result.statuses.iter().all(|s| !s.blocked));
+    assert!(
+        result
+            .deliveries
+            .iter()
+            .any(|d| d.target_id == target.id && d.status == DeliveryStatus::Conflict)
+    );
+    assert_eq!(fs::read(leaf.join("SKILL.md")).unwrap(), b"user-owned skill");
+}
+
+#[test]
+fn p8_blank_name_is_neutral_and_compiles_without_exposing_the_connection_address() {
+    let fixture = Fixture::new();
+    let mut input = server_input(&fixture.server(), None);
+    input.name.clear();
+    if let ConnectionInput::Managed { ssh_alias, .. } = &mut input.connection {
+        *ssh_alias = "cloudlink-1".into();
+    }
+    let result = fixture.backend.save_asset(AssetInput::Vps(input)).unwrap();
+    assert_eq!(result.asset.name(), "Server 1");
+    let mut ready = result.asset;
+    let Asset::Vps(server) = &mut ready else { unreachable!() };
+    server.connection.verified = Some(ConnectionVerified {
+        ok: true,
+        at: crate::testkit::NOW.into(),
+        env_ids: vec![EnvId::windows()],
+    });
+    fixture.backend.database().unwrap().upsert_asset(&ready).unwrap();
+    fixture.backend.write_managed_configs().unwrap();
+    let result = fixture.backend.set_distribute(ready.id(), "claude-code", true).unwrap();
+    assert!(result.statuses.iter().all(|s| !s.blocked));
+    let source = fixture.source(&fixture.target());
+    for bytes in tree_bytes(&source).values() {
+        assert!(!String::from_utf8_lossy(bytes).contains("203.0.113.10"));
+    }
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn p8_shared_backup_undo_pauses_every_writer_and_preserves_the_edited_copy() {
+    let fixture = Fixture::new();
+    let saved = fixture.seed_ready_server();
+    let shared = p8_shared_target(&fixture);
+    fixture
+        .backend
+        .set_distribute(saved.id(), &shared.agent_key, true)
+        .unwrap();
+    let primary = fixture.target();
+    let leaf = fixture.destination(&primary);
+    fs::write(leaf.join("SKILL.md"), b"edited shared skill").unwrap();
+    fixture.events.clear();
+    fixture.backend.check_deliveries().unwrap();
+    let events = fixture.events.payloads("deliveries://backed-up");
+    assert_eq!(events.len(), 1, "one physical directory makes one backup");
+    let id = events[0]["backupId"].as_str().unwrap();
+    fixture.backend.undo_backup(id).unwrap();
+    assert_eq!(fs::read(leaf.join("SKILL.md")).unwrap(), b"edited shared skill");
+    assert!(
+        fixture
+            .backend
+            .list_targets()
+            .unwrap()
+            .iter()
+            .filter(|t| t.id == primary.id || t.id == shared.id)
+            .all(|t| !t.enabled)
+    );
+    fixture.backend.check_deliveries().unwrap();
+    assert_eq!(fs::read(leaf.join("SKILL.md")).unwrap(), b"edited shared skill");
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn p8_shared_reset_removes_only_the_owned_leaf_and_keeps_parent_links_and_neighbors() {
+    let fixture = Fixture::new();
+    let saved = fixture.seed_ready_server();
+    let shared = p8_shared_target(&fixture);
+    fixture
+        .backend
+        .set_distribute(saved.id(), &shared.agent_key, true)
+        .unwrap();
+    let leaf = fixture.destination(&fixture.target());
+    let link = PathBuf::from(&shared.path);
+    fixture.backend.reset_data().unwrap();
+    assert!(!leaf.exists());
+    assert!(fsx::path_is_link(&link));
+    assert_eq!(
+        fs::read(fixture.paths.user_home.join(".claude/skills/user-skill/SKILL.md")).unwrap(),
+        b"keep this neighboring user skill\n"
+    );
+    assert!(fixture.backend.list_assets().unwrap().is_empty());
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn p8_shared_reset_preserves_foreign_leaf_links_and_external_content() {
+    let fixture = Fixture::new();
+    let shared = p8_shared_target(&fixture);
+    let outside = fixture.paths.user_home.join("outside-leaf");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("SKILL.md"), b"external skill").unwrap();
+    let leaf = fixture.destination(&fixture.target());
+    p8_link_dir(&leaf, &outside);
+    fixture.backend.reset_data().unwrap();
+    assert!(fsx::path_is_link(&leaf));
+    assert!(fsx::path_is_link(Path::new(&shared.path)));
+    assert_eq!(fs::read(outside.join("SKILL.md")).unwrap(), b"external skill");
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn p8_wsl_linked_to_registered_windows_directory_is_not_written_twice() {
+    let fixture = Fixture::with_runner(Arc::new(cli::EmptyRunner), true);
+    let windows = fixture.target();
+    let wsl = fixture
+        .backend
+        .list_targets()
+        .unwrap()
+        .into_iter()
+        .find(|t| !t.env_id.is_windows() && t.agent == AgentId::ClaudeCode)
+        .unwrap();
+    let env = fixture.backend.context(&wsl.env_id).unwrap();
+    let wsl_parent = env.to_host(&wsl.path);
+    let kept = env.host_in_home(&["previous-skills"]);
+    fs::rename(&wsl_parent, &kept).unwrap();
+    p8_link_dir(&wsl_parent, Path::new(&windows.path));
+    fixture.seed_ready_server();
+    let deliveries = fixture.backend.list_deliveries().unwrap();
+    let shadow = deliveries.iter().find(|d| d.target_id == wsl.id).unwrap();
+    assert_eq!(shadow.status, DeliveryStatus::Shared);
+    assert_eq!(shadow.status_detail.as_ref().unwrap().id, "shared-windows");
+    assert_eq!(
+        shadow.unit_id,
+        deliveries.iter().find(|d| d.target_id == windows.id).unwrap().unit_id
+    );
+    assert!(!fixture.source(&wsl).exists());
+    let marker = publish::read_marker(&fixture.destination(&windows)).unwrap();
+    assert_eq!(marker.env_id, "windows");
+    fixture.backend.set_target_enabled(&wsl.id, false).unwrap();
+    assert!(fixture.destination(&windows).exists());
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn p8_wsl_linked_to_unregistered_windows_directory_reports_a_path_error() {
+    let fixture = Fixture::with_runner(Arc::new(cli::EmptyRunner), true);
+    let wsl = fixture
+        .backend
+        .list_targets()
+        .unwrap()
+        .into_iter()
+        .find(|t| !t.env_id.is_windows() && t.agent == AgentId::ClaudeCode)
+        .unwrap();
+    let env = fixture.backend.context(&wsl.env_id).unwrap();
+    let wsl_parent = env.to_host(&wsl.path);
+    fs::rename(&wsl_parent, env.host_in_home(&["previous-skills"])).unwrap();
+    let unregistered = fixture.paths.user_home.join("unregistered-skills");
+    fs::create_dir_all(&unregistered).unwrap();
+    p8_link_dir(&wsl_parent, &unregistered);
+    fixture.seed_ready_server();
+    let broken = fixture
+        .backend
+        .list_deliveries()
+        .unwrap()
+        .into_iter()
+        .find(|d| d.target_id == wsl.id)
+        .unwrap();
+    assert_eq!(broken.status, DeliveryStatus::Broken);
+    assert_eq!(broken.status_detail.as_ref().unwrap().id, "wsl-path-unsupported");
+    assert!(!unregistered.join(SKILL_DIR).exists());
 }
 
 #[derive(Default)]

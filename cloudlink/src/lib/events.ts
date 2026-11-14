@@ -39,7 +39,11 @@ export async function subscribeBackendEvents(): Promise<UnlistenFn> {
     ),
     listen<{ deliveries: Delivery[]; inclusions: Inclusion[] }>(
       "deliveries://changed",
-      (e) => useDeliveryStore.getState()._onChanged(e.payload)
+      (e) => {
+        useDeliveryStore.getState()._onChanged(e.payload)
+        // 检测到新的共用组时后端可能按交集收窄选择，图标也要取最新资源。
+        if (e.payload.deliveries.some((d) => (d.sharedAgentKeys?.length ?? 0) > 1)) void useAssetStore.getState().refresh()
+      }
     ),
     listen<{ statuses: CompileStatus[] }>("compile://finished", (e) =>
       useSkillStore.getState()._onCompiled(e.payload.statuses)

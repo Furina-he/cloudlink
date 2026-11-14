@@ -1,18 +1,18 @@
 import { zodResolver } from "@hookform/resolvers/zod"
-import { ChevronDownIcon, EllipsisIcon, FolderOpenIcon, PackageIcon, RefreshCwIcon, Trash2Icon } from "lucide-react"
+import { ChevronDownIcon, EllipsisIcon, FolderOpenIcon, PackageIcon, PencilIcon, RefreshCwIcon, Trash2Icon } from "lucide-react"
 import { useMemo, useRef, useState } from "react"
 import { FormProvider, useForm, useWatch, type Control } from "react-hook-form"
 import { useHotkeys } from "react-hotkeys-hook"
 import { useShallow } from "zustand/react/shallow"
 
-import type { CliAsset, CliAssetInput } from "@/bindings"
+import type { CliAsset } from "@/bindings"
 import { PreviewSheet } from "@/components/app/PreviewSheet"
 import { ProviderMark } from "@/components/app/ProviderMark"
 import { CopyValue, ListGroup, PrefRow } from "@/components/app/SettingsList"
 import { CONN_STATE, StateText } from "@/components/app/StateBadge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -27,26 +27,15 @@ import { useUIStore } from "@/stores/ui"
 import { serverActions, toastError } from "./actions"
 import { scopeSummary, useLinkedAliases } from "./cliSummary"
 import { CliEnvList, CliScopeList, RecheckButton } from "./CliParts"
-import { DetailPage, DetailTitle, NameRow, NotesRow, PermissionGroup, ProblemRow, RecentActivityGroup, RulesGroup, SummaryRow } from "./DetailParts"
+import { DetailPage, DetailTitle, NotesRow, PermissionGroup, ProblemRow, RecentActivityGroup, RulesGroup, SummaryRow } from "./DetailParts"
+import { ProfileDialog } from "./ProfileDialog"
+import { ResourceName } from "./ResourceName"
+import { cliInputOf, cliValuesOf, renameInputOf } from "./profileForm"
 import { SaveErrorAlert } from "./DraftPreview"
 import { CompileSummary, useInclusionProblems } from "./InspectorParts"
 import { useAutoSave } from "./useAutoSave"
 
-const valuesOf = (a: CliAsset): CliFormValues => ({ name: a.name, production: a.production, summary: a.summary, rules: a.guardrails.rules, notes: a.notes })
-
-export const cliInputOf = (v: CliFormValues, a: Pick<CliAsset, "id" | "cliProvider" | "account">): CliAssetInput => ({
-  id: a.id,
-  type: "cli",
-  cliProvider: a.cliProvider,
-  account: a.account,
-  name: v.name.trim(),
-  production: v.production,
-  summary: v.summary,
-  guardrails: { rules: v.rules },
-  notes: v.notes,
-})
-
-const FIELDS = ["name", "production", "summary", "rules", "notes"] as const
+const FIELDS = ["production"] as const
 
 /** 这项云平台的预览（F-204）：当前草稿的编译结果，默认定位到它的详情文件 */
 function CliPreview({ asset, control, dirty }: { asset: CliAsset; control: Control<CliFormValues>; dirty: boolean }) {
@@ -71,7 +60,7 @@ function CliPreview({ asset, control, dirty }: { asset: CliAsset; control: Contr
 }
 
 /** 标题行 + 状态行：右边「重新检测」和「⋯」（刷新范围、预览 Skill、在文件夹中显示、删除） */
-function CliHeader({ asset, name, production, titleRef }: { asset: CliAsset; name: string; production: boolean; titleRef: React.RefObject<HTMLHeadingElement | null> }) {
+function CliHeader({ asset, name, production, titleRef, onEditProfile }: { asset: CliAsset; name: string; production: boolean; titleRef: React.RefObject<HTMLHeadingElement | null>; onEditProfile: () => void }) {
   const detecting = useCliStore((s) => !!s.byProvider[asset.cliProvider]?.detecting)
   // 状态行只写整体（2026-11-10，和服务器详情一致）：有一个运行环境就绪就是「已就绪」，
   // 单个环境的问题交给「Agent 权限」卡里带修复按钮的问题行；所有环境都用不了才写出第一个问题
@@ -90,12 +79,15 @@ function CliHeader({ asset, name, production, titleRef }: { asset: CliAsset; nam
       </Button>
       <DropdownMenu>
         <Tooltip>
-          <TooltipTrigger render={<DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={copy.common.more} />} />}>
+          <TooltipTrigger render={<DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={copy.common.more} data-detail-more />} />}>
             <EllipsisIcon />
           </TooltipTrigger>
           <TooltipContent>{copy.common.more}</TooltipContent>
         </Tooltip>
         <DropdownMenuContent align="end" className="w-auto min-w-48">
+          <DropdownMenuGroup><DropdownMenuItem onClick={onEditProfile}><PencilIcon />{copy.detail.editProfile}</DropdownMenuItem></DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
           <DropdownMenuItem disabled={detecting} onClick={() => serverActions.recheckCli(asset)}>
             <RefreshCwIcon />
             {copy.cli.refreshScope}
@@ -108,11 +100,12 @@ function CliHeader({ asset, name, production, titleRef }: { asset: CliAsset; nam
             <FolderOpenIcon />
             {copy.detail.revealCompiled}
           </DropdownMenuItem>
+          </DropdownMenuGroup>
           <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" onClick={() => serverActions.requestDelete(asset)}>
+          <DropdownMenuGroup><DropdownMenuItem variant="destructive" onClick={() => serverActions.requestDelete(asset)}>
             <Trash2Icon />
             {copy.cli.delete}
-          </DropdownMenuItem>
+          </DropdownMenuItem></DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>
     </>
@@ -122,6 +115,7 @@ function CliHeader({ asset, name, production, titleRef }: { asset: CliAsset; nam
     <DetailTitle
       mark={<ProviderMark provider={asset.cliProvider} className="size-5" />}
       name={name}
+      nameControl={<ResourceName asset={asset} />}
       alias={asset.cli.binary}
       handle={asset.handle}
       production={production}
@@ -246,7 +240,7 @@ function ReposGroup({ asset, onScope }: { asset: CliAsset; onScope: () => void }
  * 开放范围勾选立即生效
  */
 export function CliDetail({ asset }: { asset: CliAsset }) {
-  const values = useMemo(() => valuesOf(asset), [asset])
+  const values = useMemo(() => cliValuesOf(asset), [asset])
   const form = useForm<CliFormValues>({
     resolver: zodResolver(cliFormSchema),
     values,
@@ -255,6 +249,7 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
   })
   const titleRef = useRef<HTMLHeadingElement>(null)
   const [scopeOpen, setScopeOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
   const detection = useCliStore((s) => s.byProvider[asset.cliProvider])
   const detecting = !!detection?.detecting
   const problems = useInclusionProblems(asset)
@@ -263,8 +258,8 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
   const auto = useAutoSave({
     form,
     fields: [...FIELDS],
-    save: async (v) => {
-      await useAssetStore.getState().save(cliInputOf(v, asset))
+    save: async ({ production }) => {
+      await useAssetStore.getState().update(asset.id, (latest) => ({ ...renameInputOf(latest, latest.name), production }))
     },
   })
   const [name, production] = useWatch({ control: form.control, name: ["name", "production"] })
@@ -273,7 +268,7 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
   return (
     <FormProvider {...form}>
       <DetailPage onBlurCapture={auto.onBlurCapture}>
-        <CliHeader asset={asset} name={name.trim() || asset.name} production={production} titleRef={titleRef} />
+        <CliHeader asset={asset} name={name.trim() || asset.name} production={production} titleRef={titleRef} onEditProfile={() => setProfileOpen(true)} />
         <div className="empty:hidden">
           <CompileSummary asset={asset} dirty={form.formState.isDirty} />
         </div>
@@ -305,14 +300,14 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
           </div>
         </ListGroup>
         <ListGroup id="detail-knowledge" title={copy.detail.groups.knowledge}>
-          <NameRow />
-          <SummaryRow />
-          <NotesRow />
+          <SummaryRow summary={asset.summary} />
+          <NotesRow notes={asset.notes} />
         </ListGroup>
-        <RulesGroup />
+        <RulesGroup rules={asset.guardrails.rules} />
         <RecentActivityGroup assetId={asset.id} />
       </DetailPage>
       <ScopeDialog asset={asset} open={scopeOpen} onOpenChange={setScopeOpen} />
+      {profileOpen && <ProfileDialog asset={asset} onClose={() => setProfileOpen(false)} />}
       <CliPreview asset={asset} control={form.control} dirty={form.formState.isDirty} />
     </FormProvider>
   )

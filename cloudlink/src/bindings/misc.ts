@@ -1,6 +1,7 @@
 // 手写契约（PRD 4.4、6.7、7.8）
 import type { Asset, Mode } from "./asset"
 import type { CompileStatus } from "./compile"
+import type { Delivery, Inclusion } from "./delivery"
 import type { EnvId } from "./env"
 
 /** 活动日志的类型（F-402、6.7）。「Agent 操作」来自护栏记录（F-307），在活动里单独一项 */
@@ -75,8 +76,10 @@ export interface ActivityQuery {
   assetId?: string
 }
 
+export type Theme = "system" | "light" | "dark"
+
 export interface Settings {
-  theme: "system" | "light" | "dark"
+  theme: Theme
   /** v0.1 固定 en */
   outputLanguage: "en"
   environments: { id: EnvId; enabled: boolean }[]
@@ -125,6 +128,17 @@ export interface SaveResult {
   asset: Asset
   /** 这次保存触发的重新编译，每个运行环境一条 */
   statuses: CompileStatus[]
+  inclusions: Inclusion[]
+  deliveries: Delivery[]
+}
+
+/** P8a：资源授权后的真实送达快照，开启选择本身不代表写入成功 */
+export interface DistributeResult {
+  asset: Asset
+  inclusions: Inclusion[]
+  deliveries: Delivery[]
+  statuses: CompileStatus[]
+  affectedAgentKeys: string[]
 }
 
 export interface DeleteResult {

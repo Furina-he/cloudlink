@@ -6,7 +6,7 @@ import { connectionInputOf } from "@/features/servers/serverForm"
 import { connectionSignature } from "@/stores/connection"
 import { handleOf, selectCanDistribute } from "@/stores/assets"
 import { startProbe } from "./handlers-probe"
-import { assetById, compileUnits, db, fail, logActivity, newId, now, recompile, serverById } from "./state"
+import { assetById, compileUnits, db, fail, logActivity, newId, now, recompile, saveSnapshot, serverById, sharedAgentKeys } from "./state"
 
 /** 已保存服务器的连接参数，与前端表单交给 save_asset 的形状一致（签名比对用） */
 export const connInputOf = connectionInputOf
@@ -39,8 +39,8 @@ function buildConnection(input: ConnectionInput, saved: ServerAsset | undefined)
       generatedByCloudLink: keyFiles.some((k) => db.cloudlinkKeys.has(k)),
       passwordSaved: !!saved && db.passwords.has(saved.id),
     },
-    // 写入后用 ssh -G 回读（F-107 AC4）
-    resolved: { hostname: input.host, user: input.user, port: input.port, proxyJump: input.proxyJump, resolvedAt: now() },
+    // 与 Rust build_asset 一致：参数未变时保留已解析的事实，改资料/标题不刷新连接快照。
+    resolved: unchanged ? saved.connection.resolved : { hostname: input.host, user: input.user, port: input.port, proxyJump: input.proxyJump, resolvedAt: now() },
     verified,
   }
 }
@@ -79,7 +79,7 @@ function saveCli(input: CliAssetInput) {
   }
   if (prev) db.assets[db.assets.indexOf(prev)] = asset
   else db.assets.push(asset)
-  return { asset, statuses: recompile() }
+  return saveSnapshot(asset)
 }
 
 function saveAsset(input: AssetInput) {
@@ -110,7 +110,7 @@ function saveServer(input: ServerAssetInput) {
       logActivity({ kind: "ssh-config", messageId: "ssh-config-written", params: { env, count }, ok: true })
     }
   }
-  return { asset, statuses: recompile() }
+  return saveSnapshot(asset)
 }
 
 function deleteAsset(id: string, opts: { removeGeneratedKey: boolean }) {
@@ -176,10 +176,10 @@ function setDistribute(id: string, agentKey: string, on: boolean) {
   if (!db.targets.some((t) => t.agentKey === agentKey)) fail("not-found")
   const can = selectCanDistribute(asset)
   if (on && !can.ok) fail("cannot-distribute", { reason: can.reason })
-  const rest = asset.agent.agents.filter((k) => k !== agentKey)
-  asset.agent.agents = on ? [...rest, agentKey] : rest
-  recompile()
-  return db.inclusions.filter((i) => i.assetId === id)
+  const affectedAgentKeys = sharedAgentKeys(agentKey)
+  const rest = asset.agent.agents.filter((k) => !affectedAgentKeys.includes(k))
+  asset.agent.agents = on ? [...rest, ...affectedAgentKeys] : rest
+  return { ...saveSnapshot(asset), affectedAgentKeys }
 }
 
 function setMode(id: string, mode: Mode) {
@@ -187,7 +187,7 @@ function setMode(id: string, mode: Mode) {
   asset.agent.mode = mode
   asset.updatedAt = now()
   logActivity({ kind: "mode", assetId: id, messageId: "mode-changed", params: { alias: handleOf(asset), mode }, ok: true })
-  return { asset, statuses: recompile() }
+  return saveSnapshot(asset)
 }
 
 /** F-407 AC2：只动处于标准运维的生产资源 */
@@ -212,4 +212,5 @@ export const serverHandlers: Record<string, (a: Args) => unknown> = {
   all_read_only: () => allReadOnly(),
   // 托盘只在桌面版里有；mock 记下文字，e2e 可以检查
   set_tray_copy: (a) => void (db.trayCopy = a.copy as TrayCopy),
+  set_window_theme: () => undefined,
 }

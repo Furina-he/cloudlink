@@ -1,12 +1,10 @@
-import { CopyIcon, FileInputIcon, PlusIcon, ServerIcon } from "lucide-react"
+import { FileInputIcon, PlusIcon, ServerIcon } from "lucide-react"
 import { useEffect, type ReactNode } from "react"
 
 import type { AgentBrand } from "@/bindings"
 import { AgentMark, BrandMark } from "@/components/app/AgentMark"
 import { ViewShell } from "@/components/app/ViewShell"
 import { Button } from "@/components/ui/button"
-import { toast } from "@/components/ui/toast"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useAgentOptions, type AgentOption } from "@/features/agents/agentKeys"
 import { copy } from "@/lib/copy"
 import { useTargetStore } from "@/stores/targets"
@@ -40,7 +38,7 @@ function detectedAgents(agents: AgentOption[]): { key: string; name: string; mar
 }
 
 /**
- * 空状态 = 首次使用引导（PRD 6.9）：品牌方块 → 标题 → 一句话 → 可复制的示例话术 → 添加 / 导入 → 检测到的 Agent。
+ * 空状态 = 首次使用引导（PRD 6.9）：品牌方块 → 标题 → 一句话 → 不含别名的示例 → 添加 / 导入 → 检测到的 Agent。
  * 空状态时顶栏不显示 `+`
  */
 export function FirstLaunch({ focusTitle }: { focusTitle: boolean }) {
@@ -49,11 +47,6 @@ export function FirstLaunch({ focusTitle }: { focusTitle: boolean }) {
   const { known, agents } = useAgentOptions()
   const detected = detectedAgents(agents)
   const example = copy.onboarding.example
-  const copyExample = () =>
-    void navigator.clipboard
-      .writeText(example)
-      .then(() => toast.add({ title: copy.common.copied }))
-      .catch(() => undefined)
 
   return (
     <ViewShell view="servers" title={copy.nav.servers} focusTitle={focusTitle} titleHidden>
@@ -66,15 +59,7 @@ export function FirstLaunch({ focusTitle }: { focusTitle: boolean }) {
           <h2 className="text-lg font-semibold">{copy.onboarding.title}</h2>
           <p className="text-sm text-muted-foreground">{copy.onboarding.lead}</p>
         </div>
-        <div className="flex w-full items-center gap-2 rounded-list border border-line bg-card py-2.5 pr-2 pl-4 text-left text-sm select-text">
-          <span className="min-w-0 flex-1">{example}</span>
-          <Tooltip>
-            <TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label={copy.onboarding.copyExample} onClick={copyExample} />}>
-              <CopyIcon />
-            </TooltipTrigger>
-            <TooltipContent>{copy.onboarding.copyExample}</TooltipContent>
-          </Tooltip>
-        </div>
+        <p className="w-full rounded-list border border-line bg-card px-4 py-2.5 text-left text-sm select-text">{example}</p>
         <div className="flex flex-wrap justify-center gap-2">
           <Button onClick={() => ui().startCreate("ssh")}>
             <PlusIcon data-icon="inline-start" />

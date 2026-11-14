@@ -6,7 +6,7 @@ import { collectConsoleErrors, detailTitle, openServer, ready, row, shot } from 
 const VIEWS = ["资源", "Agent", "动态", "设置"]
 
 test.describe("应用外壳", () => {
-  test("顶栏：四项导航、资源数和动态圆点；右侧搜索、导航位置、+ 和窗口按钮", async ({ page }) => {
+  test("顶栏：四项导航、资源数和动态圆点；不重复应用名、不自绘窗口按钮或拖动区", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
     const nav = page.getByRole("navigation", { name: "主导航" })
@@ -18,7 +18,11 @@ test.describe("应用外壳", () => {
     await expect(page.getByRole("navigation", { name: "当前位置" })).toHaveCount(0)
     await expect(page.getByText("WSL Ubuntu-24.04")).toHaveCount(0)
     const banner = page.getByRole("banner")
-    for (const name of ["搜索资源", "导航移到左侧", "添加", "最小化", "最大化或还原", "关闭"]) await expect(banner.getByRole("button", { name, exact: true })).toBeVisible()
+    for (const name of ["搜索资源", "导航移到左侧", "添加"]) await expect(banner.getByRole("button", { name, exact: true })).toBeVisible()
+    for (const name of ["最小化", "最大化或还原", "关闭"]) await expect(banner.getByRole("button", { name, exact: true })).toHaveCount(0)
+    await expect(banner.getByText("CloudLink", { exact: true })).toHaveCount(0)
+    await expect(page.locator("[data-tauri-drag-region]")).toHaveCount(0)
+    // 浏览器只验证下层应用导航；真正的系统标题栏和窗口操作由隔离桌面验收覆盖。
     await shot(page, "shell-01-header")
     expect(errors).toEqual([])
   })
@@ -28,6 +32,7 @@ test.describe("应用外壳", () => {
     await page.keyboard.press("Control+Shift+S")
     const aside = page.locator("aside")
     await expect(aside.getByRole("navigation", { name: "主导航" })).toBeVisible()
+    await expect(aside.getByText("CloudLink", { exact: true })).toHaveCount(0)
     await expect(aside.getByText(/^护栏运行中/)).toBeVisible()
     await expect(page.getByRole("banner").getByRole("heading", { name: "资源" })).toBeVisible()
     await page.reload()
@@ -205,7 +210,9 @@ test.describe("键盘焦点（P6 无障碍复查）", () => {
     await page.keyboard.press("Enter")
     await expect(detailTitle(page)).toBeFocused()
     await expect(page.getByRole("tab")).toHaveCount(0)
-    // 标题后面是「测试连接」「⋯」，再往下进入 Agent 权限的生产环境开关
+    // 标题中的快捷改名可聚焦；之后才是「测试连接」「⋯」和 Agent 权限设置。
+    await page.keyboard.press("Tab")
+    await expect(page.getByRole("button", { name: "重命名 香港边缘节点" })).toBeFocused()
     await page.keyboard.press("Tab")
     await expect(page.getByRole("button", { name: "测试连接", exact: true })).toBeFocused()
     await page.keyboard.press("Tab")

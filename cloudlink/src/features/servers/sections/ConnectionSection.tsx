@@ -15,13 +15,14 @@ import { sortEnvs } from "../serverForm"
 
 const envList = (ids: string[]) => sortEnvs(ids).map(copy.env.long).join("、")
 
-/** 「导出到 Skill」的两个开关（F-105），默认都关 */
+/** 字段导出（F-105）：连接与监听端口默认关，镜像版本默认开。 */
 export function ExportSwitches({ untitled }: { untitled?: boolean }) {
   return (
     <div className="flex flex-col gap-3">
       {!untitled && <span className="text-sm font-medium">{copy.connection.exportTitle}</span>}
       <ExportSwitch name="export.resolvedConnection" label={copy.connection.exportResolved} hint={copy.connection.exportResolvedHint} />
       <ExportSwitch name="export.listeningPorts" label={copy.connection.exportListening} hint={copy.connection.exportListeningHint} />
+      <ExportSwitch name="export.image" label={copy.services.exportImage} hint={copy.services.exportImageHint} />
     </div>
   )
 }

@@ -140,14 +140,14 @@ export function ListNote({ icon, children }: { icon?: ReactNode; children: React
 }
 
 /** 等宽的值，悬停出现复制按钮（The Copyable Text Rule） */
-export function CopyValue({ value, label }: { value: string; label?: string }) {
+export function CopyValue({ value, label, className }: { value: string; label?: string; className?: string }) {
   const doCopy = () =>
     void navigator.clipboard
       .writeText(value)
       .then(() => toast.add({ title: copy.common.copiedValue(value) }))
       .catch(() => undefined)
   return (
-    <span className="group/copy inline-flex min-w-0 items-center gap-1 font-mono text-xs select-text">
+    <span className={cn("group/copy inline-flex max-w-full min-w-0 items-center gap-1 font-mono text-xs select-text", className)}>
       <span className="min-w-0 truncate">{value}</span>
       <Tooltip>
         <TooltipTrigger

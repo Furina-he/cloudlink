@@ -42,8 +42,10 @@ function DialogContent({
   children,
   showCloseButton = true,
   closeLabel = "Close",
+  variant = "default",
   ...props
 }: DialogPrimitive.Popup.Props & {
+  variant?: "default" | "editor"
   showCloseButton?: boolean
   /** 关闭按钮的屏幕阅读器文字 */
   closeLabel?: string
@@ -55,6 +57,7 @@ function DialogContent({
         data-slot="dialog-content"
         className={cn(
           "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          variant === "editor" && "flex max-h-[min(600px,calc(100svh-2rem))] flex-col gap-0 overflow-clip rounded-dialog bg-card p-0 text-foreground sm:max-w-[600px]",
           className
         )}
         {...props}
@@ -118,12 +121,13 @@ function DialogFooter({
   )
 }
 
-function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
+function DialogTitle({ className, variant = "default", ...props }: DialogPrimitive.Title.Props & { variant?: "default" | "editor" }) {
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
       className={cn(
         "font-heading text-base leading-none font-medium",
+        variant === "editor" && "text-sm leading-tight font-semibold",
         className
       )}
       {...props}

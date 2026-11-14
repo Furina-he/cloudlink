@@ -146,6 +146,7 @@ fn preview_and_publish_are_byte_identical() {
         managed_by: publish::MANAGED_BY.into(),
         env_id: "windows".into(),
         agent_key: "claude-code".into(),
+        agent_keys: Vec::new(),
         content_hash: publish::files_hash(&a.files),
         compiled_at: testkit::NOW.into(),
         template_version: render::TEMPLATE_VERSION,

@@ -120,6 +120,7 @@ fn sample_marker(target: &Target, files: &[CompiledFile]) -> Marker {
         managed_by: MANAGED_BY.into(),
         env_id: target.env_id.as_str().into(),
         agent_key: target.agent_key.clone(),
+        agent_keys: Vec::new(),
         content_hash: publish::files_hash(files),
         compiled_at: crate::testkit::NOW.into(),
         template_version: 1,
@@ -300,7 +301,7 @@ fn failure_of_one_target_does_not_prevent_other_targets_from_syncing() {
             )
         })
         .collect();
-    assert!(results[0].is_err());
+    assert_eq!(results[0].as_ref().unwrap().status, DeliveryStatus::Broken);
     assert_eq!(results[1].as_ref().unwrap().status, DeliveryStatus::Ok);
 }
 
@@ -404,10 +405,19 @@ fn custom_target_checks_future_paths_overlap_and_test_root() {
         fixture.paths.user_home.join(".ssh/not-created"),
         fixture.paths.user_home.clone(),
         PathBuf::from(&fixture.targets[0].path).join("nested/not-created"),
-        PathBuf::from(&fixture.targets[0].path),
     ] {
         assert!(validate_custom_target(&fixture.paths, env, &request(path), &fixture.targets).is_err());
     }
+    // 精确相同的父目录现在是共用组，而不是嵌套冲突。
+    assert!(
+        validate_custom_target(
+            &fixture.paths,
+            env,
+            &request(PathBuf::from(&fixture.targets[0].path)),
+            &fixture.targets
+        )
+        .is_ok()
+    );
     let foreign = tempfile::tempdir().unwrap();
     assert!(validate_custom_target(&fixture.paths, env, &request(foreign.path().join("skills")), &[]).is_err());
     let safe = fixture.paths.user_home.join(".cursor/skills/not-created");
@@ -809,7 +819,7 @@ fn ancestor_aliases_cannot_bypass_future_path_overlap_or_delivery_checks() {
         inspect(&fixture.paths, &fixture.envs[0], &target, Some(&hash))
             .unwrap()
             .status,
-        DeliveryStatus::Conflict
+        DeliveryStatus::Broken
     );
     assert!(!fixture.paths.data_dir.join("new").exists());
     remove_link_dir(&alias);
@@ -833,6 +843,214 @@ fn compiled_source_with_nested_link_is_not_read_or_copied() {
         fs::read_to_string(outside.join("secret.md")).unwrap(),
         "must not be copied"
     );
+    remove_link_dir(&link);
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn p8_parent_links_deliver_into_the_real_directory_without_conflict() {
+    let fixture = Fixture::new();
+    let shared = fixture.paths.user_home.join("shared-skills");
+    fs::create_dir_all(&shared).unwrap();
+    let link = PathBuf::from(&fixture.targets[0].path);
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    link_dir(&link, &shared);
+
+    let result = fixture.sync(0, "one", false);
+    assert_eq!(result.status, DeliveryStatus::Ok);
+    assert_eq!(fs::read(shared.join(SKILL_DIR).join("SKILL.md")).unwrap(), b"one");
+    assert!(remove(&fixture.paths, &fixture.envs[0], &fixture.targets[0]).unwrap());
+    assert!(!shared.join(SKILL_DIR).exists());
+    assert!(fsx::path_is_link(&link));
+    remove_link_dir(&link);
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn p8_parent_link_cannot_escape_isolation_or_point_into_ssh() {
+    for protected in [false, true] {
+        let fixture = Fixture::new();
+        let outside = tempfile::tempdir().unwrap();
+        let destination = if protected {
+            fixture.paths.user_home.join(".ssh")
+        } else {
+            outside.path().to_path_buf()
+        };
+        let sentinel = destination.join("p8-sentinel");
+        fs::write(&sentinel, b"untouched").unwrap();
+        let link = PathBuf::from(&fixture.targets[0].path);
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        link_dir(&link, &destination);
+        let result = fixture.sync(0, "one", false);
+        assert_eq!(result.status, DeliveryStatus::Broken);
+        assert!(result.status_detail.is_some());
+        assert!(!destination.join(SKILL_DIR).exists());
+        assert_eq!(fs::read(&sentinel).unwrap(), b"untouched");
+        assert!(remove(&fixture.paths, &fixture.envs[0], &fixture.targets[0]).is_err());
+        remove_link_dir(&link);
+    }
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn p8_ancestor_link_with_a_missing_suffix_is_resolved_without_creating_it() {
+    let fixture = Fixture::new();
+    let real = fixture.paths.user_home.join("real-parent");
+    fs::create_dir_all(&real).unwrap();
+    let link = fixture.paths.user_home.join("linked-parent");
+    link_dir(&link, &real);
+    let mut target = fixture.targets[0].clone();
+    target.path = link.join("new/skills").to_string_lossy().into_owned();
+    assert_eq!(
+        resolve_target_path(&fixture.paths, &fixture.envs[0], &target).unwrap(),
+        real.join("new/skills")
+    );
+    assert!(!real.join("new").exists());
+    let files = sample_files("one");
+    assert_eq!(
+        sync(
+            &fixture.paths,
+            &fixture.envs[0],
+            &target,
+            &files,
+            &sample_marker(&target, &files),
+            false
+        )
+        .unwrap()
+        .status,
+        DeliveryStatus::Ok
+    );
+    assert_eq!(
+        fs::read(real.join("new/skills/cloudlink-servers/SKILL.md")).unwrap(),
+        b"one"
+    );
+    remove(&fixture.paths, &fixture.envs[0], &target).unwrap();
+    remove_link_dir(&link);
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn p8_parent_retargeting_is_detected_before_the_swap() {
+    let fixture = Fixture::new();
+    let first = fixture.paths.user_home.join("first");
+    let second = fixture.paths.user_home.join("second");
+    fs::create_dir_all(&first).unwrap();
+    fs::create_dir_all(&second).unwrap();
+    let link = PathBuf::from(&fixture.targets[0].path);
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    link_dir(&link, &first);
+    let expected = resolve_target_path(&fixture.paths, &fixture.envs[0], &fixture.targets[0]).unwrap();
+    remove_link_dir(&link);
+    link_dir(&link, &second);
+    assert!(super::paths::recheck_parent(&fixture.paths, &fixture.envs[0], &fixture.targets[0], &expected).is_err());
+    assert!(!first.join(SKILL_DIR).exists());
+    assert!(!second.join(SKILL_DIR).exists());
+    remove_link_dir(&link);
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn p8_dangling_and_cyclic_parent_links_are_path_errors_not_skill_conflicts() {
+    let fixture = Fixture::new();
+    let real = fixture.paths.user_home.join("gone");
+    fs::create_dir_all(&real).unwrap();
+    let link = PathBuf::from(&fixture.targets[0].path);
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    link_dir(&link, &real);
+    fs::remove_dir(&real).unwrap();
+    assert_eq!(fixture.status(0, "one"), DeliveryStatus::Broken);
+    remove_link_dir(&link);
+
+    let a = fixture.paths.user_home.join("cycle-a");
+    let b = fixture.paths.user_home.join("cycle-b");
+    fs::create_dir_all(&b).unwrap();
+    link_dir(&a, &b);
+    fs::remove_dir(&b).unwrap();
+    link_dir(&b, &a);
+    let mut target = fixture.targets[0].clone();
+    target.path = a.to_string_lossy().into_owned();
+    let checked = inspect(&fixture.paths, &fixture.envs[0], &target, None).unwrap();
+    assert_eq!(checked.status, DeliveryStatus::Broken);
+    assert_eq!(checked.status_detail.unwrap().id, "path-loop");
+    remove_link_dir(&a);
+    remove_link_dir(&b);
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn p8_more_than_forty_parent_links_are_rejected() {
+    let fixture = Fixture::new();
+    let real = fixture.paths.user_home.join("chain-end");
+    fs::create_dir_all(&real).unwrap();
+    let mut next = real;
+    let mut links = Vec::new();
+    for i in (0..42).rev() {
+        let link = fixture.paths.user_home.join(format!("chain-{i}"));
+        link_dir(&link, &next);
+        next = link.clone();
+        links.push(link);
+    }
+    let mut target = fixture.targets[0].clone();
+    target.path = next.to_string_lossy().into_owned();
+    let checked = inspect(&fixture.paths, &fixture.envs[0], &target, None).unwrap();
+    assert_eq!(checked.status, DeliveryStatus::Broken);
+    for link in links.into_iter().rev() {
+        remove_link_dir(&link);
+    }
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn p8_allowed_parent_link_does_not_relax_leaf_link_protection() {
+    let fixture = Fixture::new();
+    let shared = fixture.paths.user_home.join("p8-shared");
+    let outside = fixture.paths.user_home.join("p8-leaf-outside");
+    fs::create_dir_all(&shared).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("SKILL.md"), b"outside").unwrap();
+    let link = PathBuf::from(&fixture.targets[0].path);
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    link_dir(&link, &shared);
+    let leaf = shared.join(SKILL_DIR);
+    link_dir(&leaf, &outside);
+    assert_eq!(fixture.status(0, "one"), DeliveryStatus::Conflict);
+    assert_eq!(fixture.sync(0, "one", true).status, DeliveryStatus::Conflict);
+    assert!(remove(&fixture.paths, &fixture.envs[0], &fixture.targets[0]).is_err());
+    assert_eq!(fs::read(outside.join("SKILL.md")).unwrap(), b"outside");
+    remove_link_dir(&leaf);
+    remove_link_dir(&link);
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn p8_simulated_wsl_parent_links_are_resolved_in_the_overridden_distro_root() {
+    let fixture = Fixture::new();
+    let env = &fixture.envs[1];
+    let shared = env.host_in_home(&["shared-skills"]);
+    fs::create_dir_all(&shared).unwrap();
+    let link = env.host_in_home(&[".claude", "skills"]);
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("/home/me/shared-skills", &link).unwrap();
+    #[cfg(windows)]
+    link_dir(&link, &shared);
+    let target = &fixture.targets[1];
+    let files = sample_files("wsl");
+    assert_eq!(
+        sync(
+            &fixture.paths,
+            env,
+            target,
+            &files,
+            &sample_marker(target, &files),
+            false
+        )
+        .unwrap()
+        .status,
+        DeliveryStatus::Ok
+    );
+    assert_eq!(fs::read(shared.join(SKILL_DIR).join("SKILL.md")).unwrap(), b"wsl");
+    remove(&fixture.paths, env, target).unwrap();
     remove_link_dir(&link);
 }
 

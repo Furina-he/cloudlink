@@ -14,9 +14,8 @@ import { ValidationError } from "../ValidationError"
 const toOptions = (values: string[]) => values.map((v) => ({ value: v, label: v }))
 const OPTIONAL = <span className="font-normal text-muted-foreground">{copy.common.optional}</span>
 
-/** 名称（两类资源共用）。onChange 在新建时让别名跟随名称 */
-/** `optional`：添加服务器时名称可以不填，保存时用地址（与 Termius 的标签一致） */
-export function NameField({ onChange, optional = false }: { onChange?: (name: string) => void; optional?: boolean }) {
+/** 名称（两类资源共用）；新建时可留空，提示这份草稿的中性缺省名（P8 D7）。 */
+export function NameField({ optional = false, fallbackName }: { optional?: boolean; fallbackName?: string }) {
   const {
     register,
     formState: { errors },
@@ -29,9 +28,9 @@ export function NameField({ onChange, optional = false }: { onChange?: (name: st
       <Input
         id="server-name"
         aria-required={!optional}
-        placeholder={optional ? copy.create.nameFallback : undefined}
+        placeholder={optional && fallbackName ? copy.create.nameFallback(fallbackName) : undefined}
         aria-invalid={!!errors.name || undefined}
-        {...register("name", { onChange: (e: { target: { value: string } }) => onChange?.(e.target.value) })}
+        {...register("name")}
       />
       <ValidationError error={errors.name} />
     </Field>

@@ -106,6 +106,8 @@ fn targets_deliveries_and_settings() {
         status: crate::model::delivery::DeliveryStatus::Ok,
         status_detail: None,
         checked_at: testkit::NOW.into(),
+        unit_id: None,
+        shared_agent_keys: None,
     };
     db.upsert_delivery(&d).unwrap();
     assert_eq!(db.list_targets().unwrap(), vec![t.clone()]);
