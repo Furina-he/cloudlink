@@ -1,8 +1,21 @@
-# CloudLink 应用源码
+# React + TypeScript + Vite + shadcn/ui
 
-本目录包含 React 前端、Tauri／Rust 后端、护栏程序和自动化测试。
+This is a template for a new Vite project with React, TypeScript, and shadcn/ui.
 
-- [产品介绍、安装与使用](../README.md)
-- [开发环境、运行与检查命令](../docs/development.md)
-- [发布流程](../docs/releases/README.md)
-- [第三方资源声明](THIRD_PARTY_NOTICES.md)
+## Adding components
+
+To add components to your app, run the following command:
+
+```bash
+npx shadcn@latest add button
+```
+
+This will place the ui components in the `src/components` directory.
+
+## Using components
+
+To use the components in your app, import them as follows:
+
+```tsx
+import { Button } from "@/components/ui/button"
+```
