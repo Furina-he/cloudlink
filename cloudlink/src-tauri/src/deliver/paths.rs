@@ -88,9 +88,11 @@ fn host_path(paths: &Paths, env_id: &EnvId, native: &str) -> Result<PathBuf> {
         _ => return Err(AppError::ipc(IpcErrorId::NotFound)),
     };
     if paths.isolated
-        && ![&paths.data_dir, &paths.user_home, &paths.wsl_root]
-            .iter()
-            .any(|root| host.starts_with(root))
+        && ![&paths.data_dir, &paths.user_home, &paths.wsl_root].iter().any(|root| {
+            host.starts_with(root)
+                || (crate::paths::validate_directory(root).is_ok()
+                    && canonical_future(root).is_ok_and(|c| comparison(&host).starts_with(comparison(&c))))
+        })
     {
         return Err(path_error("path-outside-isolation"));
     }
@@ -118,7 +120,7 @@ pub(super) fn reject_link_ancestors(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn canonical_future(path: &Path) -> io::Result<PathBuf> {
+pub(crate) fn canonical_future(path: &Path) -> io::Result<PathBuf> {
     let mut current = path;
     let mut suffix = Vec::new();
     loop {

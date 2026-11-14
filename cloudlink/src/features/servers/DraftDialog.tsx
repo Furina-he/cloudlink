@@ -26,6 +26,11 @@ export function DraftDialog({
   saveEnabled?: boolean
 }) {
   const [confirm, setConfirm] = useState(false)
+  const confirmRef = useRef(false)
+  const setConfirming = (next: boolean) => {
+    confirmRef.current = next
+    setConfirm(next)
+  }
   const keepRef = useRef<HTMLButtonElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   // 直接从详情分组打开时回到原按钮；菜单项会卸载，沿用更多按钮作为兜底。
@@ -33,18 +38,18 @@ export function DraftDialog({
   const previousFocus = useRef<HTMLElement | null>(null)
   const requestClose = () => {
     if (busy) return
-    if (confirm) return setConfirm(false)
+    if (confirmRef.current) return setConfirming(false)
     if (!dirty) return onClose()
     previousFocus.current = document.activeElement as HTMLElement | null
-    setConfirm(true)
+    setConfirming(true)
   }
   useLayoutEffect(() => {
     // inert 已随本次提交解除；在焦点仍留在对话框内时恢复，避免卸载底栏按钮触发原语的下一帧兜底。
     if (confirm) keepRef.current?.focus({ preventScroll: true })
     else previousFocus.current?.focus({ preventScroll: true })
   }, [confirm])
-  const keepEditing = () => setConfirm(false)
-  const submit = () => { if (!confirm && !busy && dirty && saveEnabled && !isAlertOpen()) onSave() }
+  const keepEditing = () => setConfirming(false)
+  const submit = () => { if (!confirm && !confirmRef.current && !busy && dirty && saveEnabled && !isAlertOpen()) onSave() }
   useHotkeys(HOTKEYS.save, submit, HOTKEY_OPTIONS)
 
   return (

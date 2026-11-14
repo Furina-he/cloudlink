@@ -59,7 +59,16 @@ test.describe("P8 当前详情上的编辑", () => {
         // Base UI 在展开动画结束后把测量值交还给 auto。
         const fullHeight = getComputedStyle(panel).getPropertyValue("--collapsible-panel-height").trim()
         const expanded = fullHeight === "auto" || Math.abs(panel.getBoundingClientRect().height - Number.parseFloat(fullHeight)) < 1
-        return expanded && Math.abs(row.getBoundingClientRect().top - viewport.getBoundingClientRect().top) < 1
+        const rowRect = row.getBoundingClientRect()
+        const vpRect = viewport.getBoundingClientRect()
+        // scrollIntoView({ block: "nearest" })：面板高于视口时对齐上边缘，矮于视口时对齐下边缘或完整可见。
+        const aligned =
+          rowRect.height >= vpRect.height
+            ? Math.abs(rowRect.top - vpRect.top) < 2
+            : rowRect.top >= vpRect.top - 2 && rowRect.bottom <= vpRect.bottom + 2
+        const prev = Number(viewport.dataset.p8LastScrollTop ?? "-1")
+        viewport.dataset.p8LastScrollTop = String(viewport.scrollTop)
+        return expanded && aligned && viewport.scrollTop > 0 && Math.abs(viewport.scrollTop - prev) < 0.5
       })).toBe(true)
       const geometry = await dialog.evaluate((d) => {
         const root = d.querySelector<HTMLElement>("[data-slot=scroll-area]")!
@@ -111,17 +120,23 @@ test.describe("P8 当前详情上的编辑", () => {
     await observeSaves(page)
     const dialog = await edit(page)
     await dialog.getByLabel(/^名称/).fill("保留这份草稿")
-    const race = page.evaluate(() => new Promise<void>((resolve) => {
-      const observer = new MutationObserver(() => {
-        if (!document.querySelector("[data-editor-footer] [role=alert]")) return
-        observer.disconnect()
+    await expect(dialog.getByRole("button", { name: "保存修改" })).toBeEnabled()
+    await page.evaluate(() => {
+      const w = window as Window & { __p8ConfirmCtrlS?: boolean }
+      w.__p8ConfirmCtrlS = false
+      const fire = () => {
+        if (!document.querySelector("[data-editor-footer] [role=alert]")) return false
         document.dispatchEvent(new KeyboardEvent("keydown", { key: "s", code: "KeyS", ctrlKey: true, bubbles: true, cancelable: true }))
-        resolve()
+        w.__p8ConfirmCtrlS = true
+        return true
+      }
+      const observer = new MutationObserver(() => {
+        if (fire()) observer.disconnect()
       })
       observer.observe(document.documentElement, { childList: true, subtree: true })
-    }))
+    })
     await page.keyboard.press("Escape")
-    await race
+    await expect.poll(() => page.evaluate(() => (window as Window & { __p8ConfirmCtrlS?: boolean }).__p8ConfirmCtrlS)).toBe(true)
     await expect(dialog.getByRole("button", { name: "继续编辑" })).toBeVisible()
     expect(await saves(page)).toEqual([])
     await dialog.getByRole("button", { name: "放弃修改" }).click()

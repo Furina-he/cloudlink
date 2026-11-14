@@ -4,7 +4,7 @@ pub mod agents;
 pub mod backup;
 pub(crate) mod groups;
 mod inclusion;
-mod paths;
+pub(crate) mod paths;
 
 pub use inclusion::compute_inclusions;
 pub use paths::{resolve_target_path, validate_custom_target};

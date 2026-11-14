@@ -157,7 +157,11 @@ fn copies_windows_and_simulated_wsl_without_touching_neighbor_skills_or_ssh() {
                 .all(|entry| { !entry.unwrap().file_name().to_string_lossy().contains("cloudlink-") })
         );
     }
-    assert!(fixture.destination(1).starts_with(&fixture.paths.wsl_root));
+    assert!(
+        fixture
+            .destination(1)
+            .starts_with(paths::canonical_future(&fixture.paths.wsl_root).unwrap())
+    );
 }
 
 #[test]
@@ -423,7 +427,7 @@ fn custom_target_checks_future_paths_overlap_and_test_root() {
     let safe = fixture.paths.user_home.join(".cursor/skills/not-created");
     assert_eq!(
         validate_custom_target(&fixture.paths, env, &request(safe.clone()), &fixture.targets).unwrap(),
-        safe
+        paths::canonical_future(&safe).unwrap()
     );
     assert!(!safe.exists(), "validation is read-only");
 }
@@ -903,7 +907,7 @@ fn p8_ancestor_link_with_a_missing_suffix_is_resolved_without_creating_it() {
     target.path = link.join("new/skills").to_string_lossy().into_owned();
     assert_eq!(
         resolve_target_path(&fixture.paths, &fixture.envs[0], &target).unwrap(),
-        real.join("new/skills")
+        paths::canonical_future(&real.join("new/skills")).unwrap()
     );
     assert!(!real.join("new").exists());
     let files = sample_files("one");

@@ -267,7 +267,8 @@ impl Fixture {
     }
 
     fn replace_owned_file(&self, directory: &Path, target: &Target, name: &str, content: &[u8]) {
-        assert!(directory.starts_with(self._temp.path()));
+        let temp_root = crate::deliver::paths::canonical_future(self._temp.path()).unwrap();
+        assert!(directory.starts_with(&temp_root));
         let marker = publish::read_marker(directory).expect("fixture must own this tree before simulating an edit");
         assert_eq!(marker.env_id, target.env_id.as_str());
         assert_eq!(marker.agent_key, target.agent_key);
