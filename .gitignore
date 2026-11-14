@@ -6,9 +6,11 @@ dist/
 target/
 cloudlink/src-tauri/binaries/
 
-# Environment files (keep .env.mock, which only contains VITE_MOCK=1)
-.env.local
-.env.*.local
+# Environment files (keep mock mode and example templates)
+.env
+.env.*
+!.env.mock
+!.env.example
 
 # Test & tooling output
 test-results/
@@ -20,9 +22,26 @@ coverage/
 # Updater signing private keys (tauri signer generate) never enter the repository
 *.key
 
-# Local agent / editor settings
-.claude/settings.local.json
-.impeccable/config.local.json
+# Local agent tooling (installed skills, MCP and settings)
+.claude/
+.agents/
+.impeccable/
+.mcp.json
+skills-lock.json
+
+# Local product / design working documents (not part of the public source)
+/AGENTS.md
+/CLAUDE.md
+/PRODUCT.md
+/DESIGN.md
+/docs/PRD.md
+/docs/PRD-review.md
+/docs/EXECUTION-PLAN.md
+/docs/CC-SWITCH-EXPERIENCE.md
+/docs/P8-DESIGN.md
+/docs/prototype/
+
+# Local editor settings
 .vscode/*
 !.vscode/extensions.json
 .idea/
