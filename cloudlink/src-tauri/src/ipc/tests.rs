@@ -267,8 +267,11 @@ impl Fixture {
     }
 
     fn replace_owned_file(&self, directory: &Path, target: &Target, name: &str, content: &[u8]) {
+        // 目的地经过 canonicalize 后会展开 8.3 短名（runneradmin → RUNNER~1），编译源没有；
+        // 两侧都按同一形式比较，仍然只允许改动隔离临时根里的文件。
         let temp_root = crate::deliver::paths::canonical_future(self._temp.path()).unwrap();
-        assert!(directory.starts_with(&temp_root));
+        let resolved = crate::deliver::paths::canonical_future(directory).unwrap();
+        assert!(resolved.starts_with(&temp_root), "fixture edit must stay inside the isolated temp root");
         let marker = publish::read_marker(directory).expect("fixture must own this tree before simulating an edit");
         assert_eq!(marker.env_id, target.env_id.as_str());
         assert_eq!(marker.agent_key, target.agent_key);

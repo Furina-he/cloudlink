@@ -51,7 +51,9 @@ test.describe("P8 当前详情上的编辑", () => {
       await expect(dialog.getByRole("button", { name: "保存修改" })).toBeDisabled()
       const fold = dialog.getByRole("button", { name: /^服务与目录/ })
       await fold.click()
-      // 等面板达到实际高度、正文完成展开后的自动定位，再模拟用户滚到底；不依赖固定 sleep。
+      // 等面板达到实际高度、展开引发的自动定位也停稳，再模拟用户滚到底。
+      // 不绑定 scrollIntoView({ block: "nearest" }) 的某种对齐语义：面板高度和视口相当时，
+      // 对齐到上缘或下缘都合法；绑定对齐会在慢机器上跟随动画时序抖成假失败。
       await expect.poll(() => fold.evaluate((button) => {
         const row = button.closest<HTMLElement>("[data-slot=collapsible]")!
         const panel = row.querySelector<HTMLElement>("[data-slot=collapsible-content]")!
@@ -59,17 +61,13 @@ test.describe("P8 当前详情上的编辑", () => {
         // Base UI 在展开动画结束后把测量值交还给 auto。
         const fullHeight = getComputedStyle(panel).getPropertyValue("--collapsible-panel-height").trim()
         const expanded = fullHeight === "auto" || Math.abs(panel.getBoundingClientRect().height - Number.parseFloat(fullHeight)) < 1
-        const rowRect = row.getBoundingClientRect()
-        const vpRect = viewport.getBoundingClientRect()
-        // scrollIntoView({ block: "nearest" })：面板高于视口时对齐上边缘，矮于视口时对齐下边缘或完整可见。
-        const aligned =
-          rowRect.height >= vpRect.height
-            ? Math.abs(rowRect.top - vpRect.top) < 2
-            : rowRect.top >= vpRect.top - 2 && rowRect.bottom <= vpRect.bottom + 2
-        const prev = Number(viewport.dataset.p8LastScrollTop ?? "-1")
-        viewport.dataset.p8LastScrollTop = String(viewport.scrollTop)
-        return expanded && aligned && viewport.scrollTop > 0 && Math.abs(viewport.scrollTop - prev) < 0.5
-      })).toBe(true)
+        // 连续三次轮询滚动位置一致（约 200ms 未再移动）才算停稳；之后再手动滚到底才不会被自动定位抢走。
+        const top = String(viewport.scrollTop)
+        const stable = viewport.dataset.p8ScrollTop === top ? Number(viewport.dataset.p8ScrollStable ?? "0") + 1 : 0
+        viewport.dataset.p8ScrollTop = top
+        viewport.dataset.p8ScrollStable = String(stable)
+        return expanded && stable >= 2
+      }), { timeout: 10_000 }).toBe(true)
       const geometry = await dialog.evaluate((d) => {
         const root = d.querySelector<HTMLElement>("[data-slot=scroll-area]")!
         const viewport = d.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]")!
