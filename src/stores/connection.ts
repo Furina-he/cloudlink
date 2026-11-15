@@ -28,6 +28,7 @@ export interface ConnectionTest {
   error?: SshError
   /** host-key 时等待核对（new）或已阻断（changed）；信任之后为 trusted，沿用 known_hosts 时为 adopted */
   hostKey?: HostKeyInfo
+  diagnostic?: ConnectionTestedEvent["diagnostic"]
 }
 
 interface ConnectionState {
@@ -89,6 +90,7 @@ const apply = (
   remoteOs: e.remoteOs,
   error: e.error,
   hostKey: e.hostKey,
+  diagnostic: e.diagnostic,
 })
 
 export const useConnectionStore = create<ConnectionState>()((

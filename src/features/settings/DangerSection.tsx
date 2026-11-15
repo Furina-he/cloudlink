@@ -21,6 +21,7 @@ import { copy, ipcErrorText } from "@/lib/copy"
 import { ipc, toIpcError } from "@/lib/ipc"
 import { useActivityStore } from "@/stores/activity"
 import { useDeliveryStore } from "@/stores/deliveries"
+import { useExecutionStore } from "@/stores/execution"
 import { loadAll } from "@/stores/load"
 import { useOperationStore } from "@/stores/operations"
 import { useTargetStore } from "@/stores/targets"
@@ -113,6 +114,7 @@ export function useDangerActions() {
   const resetData = () =>
     attempt(async () => {
       await ipc.resetData()
+      useExecutionStore.getState().reset()
       useUIStore.getState().selectAsset(null, { force: true })
       useOperationStore.setState({ recentByAsset: {} })
       setTheme("system")

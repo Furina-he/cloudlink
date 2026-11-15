@@ -78,6 +78,22 @@ pub enum GuardReasonId {
     CliAccount,
     CliScope,
     Unparsed,
+    ExecutionChannel,
+    #[serde(rename = "runtime-protected", alias = "runtime-protection")]
+    RuntimeProtection,
+    CliIdentity,
+    GithubRepoDelete,
+    #[serde(rename = "github-default-force", alias = "github-default-branch")]
+    GithubDefaultBranch,
+    GithubDangerous,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "guard.ts")]
+pub enum OperationSource {
+    Hook,
+    Runner,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -95,6 +111,27 @@ pub struct Operation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub reason_id: Option<GuardReasonId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<OperationSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub checked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub execution_state: Option<super::execution::ExecutionState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub epoch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub duration_ms: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

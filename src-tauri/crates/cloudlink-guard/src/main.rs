@@ -7,6 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
+mod runner;
+
 const MAX_INPUT: u64 = 131_072;
 const MAX_POLICY: u64 = 4 * 1024 * 1024;
 
@@ -146,6 +148,7 @@ fn record(root: &Path, env_id: &str, input: &Value, command: &str, decisions: &[
     for (index, decision) in decisions.iter().enumerate() {
         let mut item = json!({
             "id": format!("op_{}_{:x}_{index}", now.as_nanos(), std::process::id()),
+            "source": "hook", "checked": true, "epoch": input["_cloudlinkEpoch"],
             "assetId": decision.asset_id,
             "envId": env_id,
             "at": at,
@@ -183,6 +186,13 @@ fn self_test(policy: &Value) -> bool {
 }
 
 fn run() -> i32 {
+    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    if arguments
+        .first()
+        .is_some_and(|arg| ["exec", "wait", "put", "get", "discover", "status"].contains(&arg.as_str()))
+    {
+        return runner::run(&arguments, root_dir().as_deref());
+    }
     let mut env_id = None;
     let mut check = false;
     let mut args = std::env::args().skip(1);
@@ -228,11 +238,75 @@ fn run() -> i32 {
     else {
         return 0;
     };
-    let decisions = guard_rules::evaluate(&policy, &env_id, command);
-    if decisions.is_empty() {
+    let installed = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.to_str().map(String::from));
+    if installed
+        .as_deref()
+        .is_some_and(|installed| guard_rules::managed_runner_invocation(command, installed))
+    {
         return 0;
     }
-    record(&root, &env_id, &input, command, &decisions);
+    let mut decisions = guard_rules::evaluate(&policy, &env_id, command);
+    let protected = guard_rules::runtime_modification(&policy, command);
+    if decisions.is_empty() && !protected {
+        return 0;
+    }
+    let snapshot = guard_rules::runtime::snapshot(&root);
+    if snapshot.as_ref().is_ok_and(|snapshot| snapshot["state"] == "stopped") {
+        return 0;
+    }
+    if snapshot.as_ref().is_ok_and(|snapshot| snapshot["state"] == "active") {
+        if protected {
+            decisions.push(guard_rules::Decision {
+                asset_id: "cloudlink-runtime".into(),
+                handle: "CloudLink".into(),
+                allowed: false,
+                reason_id: Some("runtime-protected"),
+            });
+        }
+        for decision in &mut decisions {
+            if policy["resources"].as_array().is_some_and(|resources| {
+                resources
+                    .iter()
+                    .any(|resource| resource["id"] == decision.asset_id && resource["production"] == true)
+            }) && !matches!(
+                decision.reason_id,
+                Some(
+                    "credential-read"
+                        | "cli-env-export"
+                        | "github-repo-delete"
+                        | "github-default-force"
+                        | "runtime-protected"
+                )
+            ) {
+                decision.allowed = false;
+                decision.reason_id = Some("execution-channel");
+            }
+        }
+    } else {
+        if decisions.is_empty() {
+            decisions.push(guard_rules::Decision {
+                asset_id: "cloudlink-runtime".into(),
+                handle: "CloudLink".into(),
+                allowed: false,
+                reason_id: Some("runtime-invalid"),
+            });
+        }
+        for decision in &mut decisions {
+            decision.allowed = false;
+            decision.reason_id = Some(if snapshot.is_ok() {
+                "runtime-not-ready"
+            } else {
+                "runtime-invalid"
+            });
+        }
+    }
+    let mut recorded = input.clone();
+    if let Ok(snapshot) = &snapshot {
+        recorded["_cloudlinkEpoch"] = snapshot["epoch"].clone();
+    }
+    record(&root, &env_id, &recorded, command, &decisions);
     if let Some(deny) = guard_rules::deny_output(&decisions)
         && let Ok(mut output) = serde_json::to_vec(&deny)
     {

@@ -135,7 +135,7 @@ const SCREENS: { name: string; query?: string; open: (page: Page) => Promise<voi
     open: async (page) => {
       await page.keyboard.press("Control+2")
       await page.getByRole("button", { name: /^护栏规则/ }).click()
-      await expect(page.getByRole("heading", { name: "标准运维时拦下" })).toBeVisible()
+      await expect(page.getByRole("heading", { name: "标准运维的高风险操作" })).toBeVisible()
     },
   },
   {

@@ -24,6 +24,7 @@ import type { ServerFormValues } from "@/lib/schemas"
 import { cn } from "@/lib/utils"
 import type { ConnectionTest } from "@/stores/connection"
 import { IncludeDetails } from "./IncludeParts"
+import { ConnectionDiagnostic } from "./ConnectionDiagnostic"
 import { useKeyCheck } from "./keyCheck"
 
 export type ConnectStepId = "key" | "reach" | "hostKey" | "login" | "include" | "convert" | "sync"
@@ -309,6 +310,7 @@ function StepError({ test, fix }: { test: ConnectionTest; fix?: ReactNode }) {
           <p className="text-xs text-muted-foreground">{copy.sshError[e.id].hint(params)}</p>
         </>
       )}
+      <ConnectionDiagnostic diagnostic={test.diagnostic} />
       {fix && <div className="flex flex-wrap gap-2 pt-0.5">{fix}</div>}
     </div>
   )

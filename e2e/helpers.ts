@@ -16,6 +16,7 @@ export function collectConsoleErrors(page: Page) {
 
 /** 打开应用并等夹具加载完：资源行出现 */
 export async function ready(page: Page, query = "") {
+  await page.addInitScript(() => performance.setResourceTimingBufferSize(4096))
   await page.goto(`/${query}`)
   await expect(page.getByRole("heading", { level: 1, name: "资源" })).toBeAttached()
   await expect(row(page, "hk-edge")).toBeVisible()

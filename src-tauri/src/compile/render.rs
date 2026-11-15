@@ -9,8 +9,10 @@ use serde::Serialize;
 
 use crate::model::asset::{Asset, CliAsset, CliProvider, CliScopeKind, RepoVisibility, ServerAsset};
 use crate::model::compile::{CompiledFile, SkillConfig};
+use crate::model::env::EnvId;
+use crate::model::github::GithubScopeMode;
 
-pub const TEMPLATE_VERSION: u32 = 1;
+pub const TEMPLATE_VERSION: u32 = 2;
 pub const DESCRIPTION_LIMIT: usize = 1024;
 pub const HEALTH_CHECK: &str = include_str!("templates/health-check.md");
 const TOC_THRESHOLD: usize = 100;
@@ -97,6 +99,44 @@ fn plain_probe(s: &str) -> String {
         .to_string()
 }
 
+/// 旧地址别名只在私有路由中保留；不改数据库、显示名称或用户 SSH 配置（8.7.6）。
+pub fn server_handle(server: &ServerAsset) -> String {
+    let alias = &server.connection.ssh_alias;
+    let private_alias = !server.export.resolved_connection
+        && [
+            server.connection.host.as_deref(),
+            server.connection.resolved.as_ref().map(|r| r.hostname.as_str()),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|host| {
+            !host.is_empty()
+                && !server
+                    .served_hostnames
+                    .iter()
+                    .any(|site| site.eq_ignore_ascii_case(host))
+                && [
+                    host.to_ascii_lowercase(),
+                    host.replace(['.', ':'], "-"),
+                    host.replace(['.', ':'], "_"),
+                ]
+                .iter()
+                .any(|value| alias.to_ascii_lowercase().contains(&value.to_ascii_lowercase()))
+        });
+    if private_alias {
+        format!("server-{}", server.id.to_ascii_lowercase().replace('_', "-"))
+    } else {
+        alias.clone()
+    }
+}
+
+fn public_handle(asset: &Asset) -> String {
+    asset
+        .as_server()
+        .map(server_handle)
+        .unwrap_or_else(|| asset.handle().to_string())
+}
+
 /// 详情文件名：别名或标识转小写，`[a-z0-9-]` 以外的字符换成连字符；重名时按创建时间排后的加 `-2`（5.3）
 pub fn detail_names(assets: &[&Asset]) -> BTreeMap<String, String> {
     let mut sorted: Vec<&&Asset> = assets.iter().collect();
@@ -104,8 +144,7 @@ pub fn detail_names(assets: &[&Asset]) -> BTreeMap<String, String> {
     let mut used = BTreeSet::from(["health-check".to_string()]);
     let mut out = BTreeMap::new();
     for a in sorted {
-        let base: String = a
-            .handle()
+        let base: String = public_handle(a)
             .to_lowercase()
             .chars()
             .map(|c| {
@@ -208,7 +247,7 @@ pub fn description(assets: &[&Asset]) -> Description {
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
             .join("; ");
-        format!("{} ({inner})", a.handle())
+        format!("{} ({inner})", public_handle(a))
     };
     let len = |s: &str| s.chars().count();
     let full = wrap(
@@ -262,6 +301,9 @@ struct Row {
 }
 
 pub struct RenderInput<'a> {
+    pub env_id: &'a EnvId,
+    /// 已解析为该运行环境写法的受管 console sidecar 绝对路径。
+    pub runner: &'a str,
     pub assets: &'a [&'a Asset],
     /// 全部资源：云平台范围里的「关联服务器」要按 id 找别名
     pub all_assets: &'a [Asset],
@@ -283,12 +325,50 @@ pub struct Rendered {
 /// 内置红线（5.5），任何档位都注入、不可删除
 pub const BUILTIN_RULES: [&str; 4] = [
     "Never read or print credential files (`.env`, `*.pem`, `*.key`, `id_*`, `/etc/shadow`, `~/.ssh/`) and never use `docker inspect` to view environment variables.",
-    "Never ask for or record passwords, private keys or IP addresses; connect only through the SSH alias.",
+    "Never ask for or record passwords, private keys or IP addresses; use the Connect entry in the resource's details file.",
     "If a host does not match its details file, report the difference to the user instead of \"fixing\" the server to match the document.",
     "If CloudLink's guard blocks a command, report it to the user; never try to work around the block with scripts, encoding or other tools.",
 ];
 
+/// Windows Agent 可用 Git Bash 或 PowerShell；分别引用，不截断路径、不拼远端 shell。
+struct ExecutionEntry<'a> {
+    env_id: &'a EnvId,
+    runner: &'a str,
+}
+
+impl ExecutionEntry<'_> {
+    fn call(&self, op: &str, asset_id: Option<&str>, tail: &str, powershell: bool) -> String {
+        let quote = |s: &str| {
+            if powershell {
+                format!("'{}'", s.replace('\'', "''"))
+            } else {
+                format!("'{}'", s.replace('\'', "'\\''"))
+            }
+        };
+        let mut command = format!("{}{} {op}", if powershell { "& " } else { "" }, quote(self.runner));
+        if op != "status" {
+            command.push_str(&format!(" --env {}", quote(self.env_id.as_str())));
+        }
+        if let Some(id) = asset_id {
+            command.push_str(&format!(" --asset {}", quote(id)));
+        }
+        if !tail.is_empty() {
+            command.push(' ');
+            command.push_str(tail);
+        }
+        command
+    }
+
+    fn powershell(&self, op: &str, id: Option<&str>, tail: &str) -> Option<String> {
+        (self.env_id == &EnvId::windows()).then(|| self.call(op, id, tail, true))
+    }
+}
+
 pub fn render_skill(input: &RenderInput) -> Rendered {
+    let entry = ExecutionEntry {
+        env_id: input.env_id,
+        runner: input.runner,
+    };
     let names = detail_names(input.assets);
     let detail_paths: BTreeMap<String, String> = names
         .iter()
@@ -304,7 +384,7 @@ pub fn render_skill(input: &RenderInput) -> Rendered {
         };
     }
     let row = |a: &Asset| Row {
-        handle: a.handle().to_string(),
+        handle: public_handle(a),
         binary: a
             .as_cli()
             .map(|c| c.cli.binary.as_str().to_string())
@@ -348,7 +428,12 @@ pub fn render_skill(input: &RenderInput) -> Rendered {
             "relationships": super::relations::lines(input.assets, input.config),
             "rules": rules,
             "inbox": input.inbox,
-            "example_name": example_name,}),
+            "example_name": example_name,
+            "has_execution": input.assets.iter().any(|a| a.production() || a.as_server().is_some_and(|s| server_handle(s) != s.connection.ssh_alias) || a.as_cli().is_some_and(|c| c.cli_provider == CliProvider::Github)),
+            "wait": entry.call("wait", None, "'<requestId.ownerToken>'", false),
+            "wait_ps": entry.powershell("wait", None, "'<requestId.ownerToken>'"),
+            "status": entry.call("status", None, "", false),
+            "status_ps": entry.powershell("status", None, ""),}),
     );
     let body_lines = skill
         .splitn(3, "---\n")
@@ -362,8 +447,8 @@ pub fn render_skill(input: &RenderInput) -> Rendered {
     }];
     for a in input.assets {
         let content = match a {
-            Asset::Vps(s) => render_server(s, input.snapshot),
-            Asset::Cli(c) => render_cli(c, input.all_assets),
+            Asset::Vps(s) => render_server(s, input.snapshot, &entry),
+            Asset::Cli(c) => render_cli(c, input.all_assets, &entry),
         };
         files.push(CompiledFile {
             path: detail_paths[a.id()].clone(),
@@ -412,9 +497,10 @@ struct ServiceRow {
     critical: &'static str,
 }
 
-pub fn render_server(a: &ServerAsset, snapshot_enabled: Option<&str>) -> String {
+fn render_server(a: &ServerAsset, snapshot_enabled: Option<&str>, entry: &ExecutionEntry) -> String {
     let f = &a.facts;
-    let alias = &a.connection.ssh_alias;
+    let alias = server_handle(a);
+    let use_entry = a.production || alias != a.connection.ssh_alias;
     let mut system = Vec::new();
     if let Some(os) = f.os.as_deref().map(plain_probe).filter(|s| !s.is_empty()) {
         system.push(os);
@@ -508,6 +594,12 @@ pub fn render_server(a: &ServerAsset, snapshot_enabled: Option<&str>) -> String 
         "server",
         serde_json::json!({
             "alias": alias,
+            "execution": use_entry.then(|| entry.call("exec", Some(&a.id), "-- '<command>'", false)),
+            "execution_ps": use_entry.then(|| entry.powershell("exec", Some(&a.id), "-- '<command>'")).flatten(),
+            "put": use_entry.then(|| entry.call("put", Some(&a.id), "-- '<localFile>' '<remoteFile>'", false)),
+            "get": use_entry.then(|| entry.call("get", Some(&a.id), "-- '<remoteFile>' '<localFile>'", false)),
+            "put_ps": use_entry.then(|| entry.powershell("put", Some(&a.id), "-- '<localFile>' '<remoteFile>'")).flatten(),
+            "get_ps": use_entry.then(|| entry.powershell("get", Some(&a.id), "-- '<remoteFile>' '<localFile>'")).flatten(),
             "name": one_line(&a.name),
             "env_title": if a.production { title_case("production") } else { String::new() },
             "mode": a.agent.mode.as_str(),
@@ -550,11 +642,8 @@ fn account_flag(p: CliProvider, account: &str) -> String {
             "Target this profile on every command: append {}.",
             code(&format!("--profile {account}"))
         ),
-        // gh 没有按命令指定账号的参数，总是以活动账号执行
-        CliProvider::Github => format!(
-            "Commands run as the active `gh` account. If `gh auth status` shows an active account other than {}, stop and tell the user; never switch accounts.",
-            code(account)
-        ),
+        // GitHub 的 owner 与有效登录身份由分环境快照独立输出。
+        CliProvider::Github => "The repository owner is not the active `gh` login; never switch accounts to expand access. The `gh` identity does not identify SSH Git or custom Git credential helpers.".into(),
     }
 }
 
@@ -572,7 +661,9 @@ struct RepoRow {
     visibility: &'static str,
 }
 
-pub fn render_cli(a: &CliAsset, all: &[Asset]) -> String {
+fn render_cli(a: &CliAsset, all: &[Asset], entry: &ExecutionEntry) -> String {
+    let github = a.github.as_ref();
+    let github_snapshot = github.and_then(|config| config.env_states.get(entry.env_id));
     let account = a
         .account
         .clone()
@@ -589,7 +680,7 @@ pub fn render_cli(a: &CliAsset, all: &[Asset]) -> String {
                 .linked_asset_id
                 .as_deref()
                 .and_then(|id| all.iter().find(|x| x.id() == id && x.as_server().is_some()))
-                .map(|x| code(x.handle()))
+                .map(|x| code(&public_handle(x)))
                 .unwrap_or_else(|| "-".into()),
         })
         .collect();
@@ -612,6 +703,18 @@ pub fn render_cli(a: &CliAsset, all: &[Asset]) -> String {
             "env_title": if a.production { title_case("production") } else { String::new() },
             "mode": a.agent.mode.as_str(),
             "binary": a.cli.binary.as_str(),
+            "execution": a.production.then(|| entry.call("exec", Some(&a.id), "-- <command arguments>", false)),
+            "execution_ps": a.production.then(|| entry.powershell("exec", Some(&a.id), "-- <command arguments>")).flatten(),
+            "discover": entry.call("discover", Some(&a.id), "", false),
+            "discover_ps": entry.powershell("discover", Some(&a.id), ""),
+            "git": a.production.then(|| entry.call("exec", Some(&a.id), "--tool git -- <git arguments>", false)),
+            "git_ps": a.production.then(|| entry.powershell("exec", Some(&a.id), "--tool git -- <git arguments>")).flatten(),
+            "github_owner": github.and_then(|config| config.owner.as_ref()).map(|owner| code(&owner.login)),
+            "github_identity": github_snapshot.and_then(|snapshot| snapshot.identity.as_ref()).map(|identity| code(&identity.login)),
+            "github_host": code(github.map(|config| config.host.as_str()).unwrap_or("github.com")),
+            "github_auto": github.is_some_and(|config| config.mode == GithubScopeMode::Auto && !config.migration_pending),
+            "github_status": github_snapshot.map(|snapshot| serde_json::to_value(snapshot.status).expect("snapshot status")),
+            "github_excluded": github.map(|config| config.excluded_repo_ids.iter().map(|id| code(id)).collect::<Vec<_>>()).unwrap_or_default(),
             "account": account.as_deref().map(code),
             "account_flag": account.as_deref().map(|x| account_flag(a.cli_provider, x)),
             "role": one_line(&a.summary),

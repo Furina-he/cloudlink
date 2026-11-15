@@ -124,6 +124,39 @@ fn parse_operation(raw: &[u8], assets: &[Asset], envs: &[EnvId], now: i64) -> Op
     {
         return None;
     }
+    if op.source == Some(crate::model::guard::OperationSource::Runner) {
+        if op.checked != Some(true)
+            || op
+                .request_id
+                .as_ref()
+                .is_none_or(|id| op.id != format!("exec_{id}") || id.len() > 128)
+            || op
+                .epoch
+                .as_ref()
+                .is_none_or(|epoch| epoch.is_empty() || epoch.len() > 128 || epoch.chars().any(char::is_control))
+            || !matches!(
+                op.execution_state,
+                Some(
+                    crate::model::execution::ExecutionState::Succeeded
+                        | crate::model::execution::ExecutionState::Failed
+                        | crate::model::execution::ExecutionState::Unknown
+                )
+            )
+            || op.execution_state == Some(crate::model::execution::ExecutionState::Succeeded) && op.exit_code != Some(0)
+            || op.duration_ms.is_some_and(|ms| ms > 3_630_000)
+        {
+            return None;
+        }
+    } else {
+        // Legacy records only prove the hook's permission decision, never execution success.
+        op.source = Some(crate::model::guard::OperationSource::Hook);
+        op.checked = Some(true);
+        op.execution_state = None;
+        op.request_id = None;
+        op.epoch = None;
+        op.exit_code = None;
+        op.duration_ms = None;
+    }
     op.command = clean_visible(&guard_rules::redact(&op.command), true);
     op.cwd = clean_visible(&guard_rules::redact(&op.cwd), false);
     op.session_id = clean_visible(&guard_rules::redact(&op.session_id), false);

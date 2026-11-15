@@ -3,6 +3,7 @@ import { useAssetStore } from "./assets"
 import { useDeliveryStore } from "./deliveries"
 import { useGuardStore } from "./guard"
 import { useNotesStore } from "./notes"
+import { useExecutionStore } from "./execution"
 import { useSettingsStore } from "./settings"
 import { useSkillStore } from "./skills"
 import { useTargetStore } from "./targets"
@@ -20,6 +21,7 @@ export function loadAll() {
   void useDeliveryStore.getState().load()
   void useGuardStore.getState().load()
   void useNotesStore.getState().load()
+  void useExecutionStore.getState().load()
   void useSettingsStore.getState().load()
   // 检查更新失败不打扰用户（F-406），不计入下面的加载错误
   void useUpdateStore.getState().load()
@@ -34,6 +36,7 @@ export function useLoadError() {
     useDeliveryStore((s) => s.error),
     useGuardStore((s) => s.error),
     useNotesStore((s) => s.error),
+    useExecutionStore((s) => s.error),
     useSettingsStore((s) => s.error),
   ]
   return errors.find(Boolean) ?? null

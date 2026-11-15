@@ -1,4 +1,6 @@
 export type * from "./env"
+export type * from "./execution"
+export type * from "./github"
 export type * from "./asset"
 export type * from "./connection"
 export type * from "./delivery"

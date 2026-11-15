@@ -2,9 +2,16 @@
 //! contacts a host, or approves an operation in the caller's permission system.
 
 mod cli;
+mod execution;
+pub mod github;
+pub mod protocol;
 mod redact;
+pub mod routes;
+pub mod runtime;
 mod shell;
 mod ssh;
+
+pub use execution::{evaluate_execution, managed_runner_invocation, runtime_modification};
 
 use serde_json::{Value, json};
 
@@ -53,7 +60,7 @@ pub fn policy_valid(policy: &Value) -> bool {
                             && (resource["kind"] != "cli"
                                 || matches!(
                                     resource.get("provider").and_then(Value::as_str),
-                                    Some("cloudflare" | "vercel" | "oracle")
+                                    Some("cloudflare" | "vercel" | "oracle" | "github")
                                 ))
                             && resource.get("scope").is_none_or(|v| {
                                 v.as_array().is_some_and(|a| {
@@ -183,6 +190,33 @@ fn inspect(resources: &[Value], env_id: &str, text: &str, outer_unsafe: bool, de
                     push(out, resource, reason);
                 }
             }
+        } else if binary == "gh"
+            || binary == "git"
+                && words.iter().any(|word| {
+                    word == "--force"
+                        || word == "--force-with-lease"
+                        || word.starts_with("--force-with-lease=")
+                        || word == "-f"
+                        || word.starts_with('+')
+                })
+        {
+            if cli::no_contact(words) {
+                continue;
+            }
+            for resource in resources
+                .iter()
+                .filter(|r| r["kind"] == "cli" && r["provider"] == "github" && applies(r, env_id))
+            {
+                let mut scoped = resource.clone();
+                scoped["envId"] = Value::String(env_id.into());
+                let reason = github::judge(&scoped, &words[1..], (binary == "git").then_some("git"));
+                let reason = if reason.is_none() && unsafe_shell {
+                    Some("unparsed")
+                } else {
+                    reason
+                };
+                push(out, resource, reason);
+            }
         } else if let Some(provider) = cli::provider(binary) {
             if cli::no_contact(words) {
                 continue;
@@ -238,6 +272,19 @@ pub fn deny_output(decisions: &[Decision]) -> Option<Value> {
             "This resource is in read-only mode; this command is not an inspection command. Ask the user to switch it to Standard mode in CloudLink if the change is intended."
         }
         "credential-read" | "cli-env-export" => "Reading or exporting credentials is forbidden in every mode.",
+        "runtime-protected" => {
+            "Changing CloudLink's running checks or stopping its process is forbidden while CloudLink is running."
+        }
+        "execution-channel" => {
+            "This production resource uses CloudLink's execution channel while CloudLink is running. Use the quoted runner and stable asset ID from the resource's Skill details."
+        }
+        "runtime-invalid" | "runtime-not-ready" => {
+            "CloudLink's running state could not be verified. Do not treat an unavailable coordinator as an exit; retry after checking CloudLink's status."
+        }
+        "github-repo-delete" => "Deleting a managed GitHub repository is forbidden in every mode.",
+        "github-default-force" => {
+            "Force-pushing the default branch, or without an explicit branch, is forbidden in every mode."
+        }
         "cli-account" => {
             "The command does not explicitly match a configured cloud account. Use the account selector from the resource's CloudLink details."
         }

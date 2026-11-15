@@ -118,6 +118,7 @@ impl Backend {
                 self.keep_startup_environments(environments);
             }
         }
+        self.activate_execution()?;
         self.retry_credential_cleanup();
         if self.refresh_feedback().is_err() {
             log::warn!("CloudLink feedback import remains pending");

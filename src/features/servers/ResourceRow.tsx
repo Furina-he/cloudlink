@@ -11,8 +11,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useAgentOptions } from "@/features/agents/agentKeys"
 import { copy } from "@/lib/copy"
 import { cn } from "@/lib/utils"
-import { connState, handleOf, isProdWritable, selectCanDistribute, selectCliAccount, selectCliProblem, type ConnState } from "@/stores/assets"
+import { connState, handleOf, isProdWritable, selectCanDistribute, selectCliAccount, selectCliProblem, useAssetStore, type ConnState } from "@/stores/assets"
 import { useCliStore } from "@/stores/cli"
+import { useGithubStore } from "@/stores/github"
 import { useConnectionStore } from "@/stores/connection"
 import { useTargetStore } from "@/stores/targets"
 import { isProbing, useProbeStore } from "@/stores/probe"
@@ -163,6 +164,7 @@ function RowShell({
   fix,
   stateWords,
   actions,
+  subtitle,
 }: {
   asset: Asset
   fresh: boolean
@@ -173,6 +175,7 @@ function RowShell({
   fix?: ReactNode
   stateWords: string
   actions: RowAction[]
+  subtitle?: string
 }) {
   const { agents } = useAgentOptions()
   const prod = asset.production
@@ -216,6 +219,7 @@ function RowShell({
                 </>
               )}
               <ModeMenu asset={asset} />
+              {subtitle && <><span aria-hidden className="text-faint">·</span><span className="truncate font-mono text-xs text-muted-foreground">{subtitle}</span></>}
             </div>
           </div>
           <div className="relative z-10 flex shrink-0 items-center gap-3">
@@ -312,7 +316,14 @@ export function ServerRow({ asset, fresh }: { asset: ServerAsset; fresh: boolean
 
 /** 云平台行：不写账号和范围摘要（在详情里）；某个运行环境未就绪时写「WSL 未登录」并给「去登录」 */
 export function CliRow({ asset, fresh }: { asset: CliAsset; fresh: boolean }) {
-  const detecting = useCliStore((s) => !!s.byProvider[asset.cliProvider]?.detecting)
+  const cliDetecting = useCliStore((s) => !!s.byProvider[asset.cliProvider]?.detecting)
+  const githubDetecting = useGithubStore((s) => !!s.byKey[asset.id]?.loading)
+  const multipleGithub = useAssetStore((s) => s.ids.filter((id) => s.byId[id]?.type === "cli" && (s.byId[id] as CliAsset).cliProvider === "github").length > 1)
+  const detecting = asset.cliProvider === "github" ? githubDetecting : cliDetecting
+  const recheck = () => {
+    if (asset.cliProvider === "github") void useGithubStore.getState().load({ assetId: asset.id, force: true })
+    else serverActions.recheckCli(asset)
+  }
   const problem = selectCliProblem(asset)
   const account = selectCliAccount(asset)
   const none = Object.keys(asset.cli.envStates).length === 0
@@ -324,6 +335,7 @@ export function CliRow({ asset, fresh }: { asset: CliAsset; fresh: boolean }) {
       asset={asset}
       fresh={fresh}
       mark={<ProviderMark provider={asset.cliProvider} className="size-4.5" />}
+      subtitle={asset.cliProvider === "github" && multipleGithub ? asset.github?.owner?.login ?? copy.github.ownerMissing : undefined}
       dot={detecting ? <Spinner className="size-3.5" aria-hidden /> : <Dot state={state} label={word} />}
       problem={detecting ? copy.cli.checking : state !== "connected" ? word : undefined}
       stateWords={`${word}，${copy.mode[asset.agent.mode]}`}
@@ -331,12 +343,12 @@ export function CliRow({ asset, fresh }: { asset: CliAsset; fresh: boolean }) {
         detecting ? undefined : problem ? (
           <FixButton onClick={() => serverActions.openCliTerminal(asset, problem.envId)}>{copy.cli.fix[problem.status]}</FixButton>
         ) : none ? (
-          <FixButton onClick={() => serverActions.recheckCli(asset)}>{copy.cli.recheck}</FixButton>
+          <FixButton onClick={recheck}>{copy.cli.recheck}</FixButton>
         ) : undefined
       }
       actions={[
         { key: "edit", icon: PencilIcon, label: copy.servers.edit, onClick: () => openDetail(asset) },
-        { key: "recheck", icon: RefreshCwIcon, label: copy.cli.recheck, onClick: () => serverActions.recheckCli(asset), separated: true },
+        { key: "recheck", icon: RefreshCwIcon, label: copy.cli.recheck, onClick: recheck, separated: true },
         { key: "delete", icon: Trash2Icon, label: copy.cli.delete, onClick: () => serverActions.requestDelete(asset), destructive: true, separated: true },
       ]}
     />

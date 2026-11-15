@@ -70,11 +70,11 @@ export const useSkillStore = create<SkillState>()((set, get) => ({
 // ---------- selectors ----------
 
 /**
- * 同一条问题在每一份总 Skill 里各出现一次，去重用的键。服务器的问题按详情文件和行号区分；
- * SKILL.md 里的全局问题（关系、约定）行号随总览表的行数变化，只按规则区分
+ * 同一条问题在每份总 Skill 各出现一次。环境专用引用会改变行号，按资源、文件与原因参数去重；
+ * 实际 Lint 保留各自定位行号，摘要不能重复计数或合并不同原因
  */
 export const lintKey = (l: LintItem) =>
-  l.assetId ? `${l.id}:${l.assetId}:${l.file ?? ""}:${l.line ?? ""}` : `${l.id}:${String(l.params?.rule ?? "")}`
+  l.assetId ? `${l.id}:${l.assetId}:${l.file ?? ""}:${JSON.stringify(Object.entries(l.params ?? {}).sort(([a], [b]) => a.localeCompare(b)))}` : `${l.id}:${String(l.params?.rule ?? "")}`
 
 const uniqueCount = (items: LintItem[], level: LintItem["level"]) => new Set(items.filter((l) => l.level === level).map(lintKey)).size
 

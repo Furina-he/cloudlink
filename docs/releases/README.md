@@ -28,13 +28,22 @@
 
 ## 本地更新验收
 
-发布前需要验证更新流程时，依次运行 `pnpm build:update-test` 和 `pnpm e2e:update`。构建与其他 Rust、Vitest、Playwright 全套检查串行执行。
+P8 分支的更新验收分为准备、构建、运行三个显式步骤。没有参数时不会自动构建或安装；构建与运行安装器须分别获得授权，并与其他 Rust、Vitest、Playwright 全套检查串行执行。
 
-测试安装包使用独立的 `CloudLink Update Test` 产品名、应用标识与发布者，数据目录编译固定在源码仓库根目录 `test-results/update/` 下；它不会卸载或覆盖本机已安装的正式 CloudLink。脚本会核对安装包身份，并在结束后卸载测试版，比较正式安装、Skills、SSH 配置和注册表的前后快照。
+```bash
+node scripts/build-update-test.mjs --prepare
+# 按输出路径准备夹具自己的 Rust 工具链与离线依赖缓存，然后分别执行：
+node scripts/build-update-test.mjs --build --root "<本次夹具目录>" --rust-bin "<夹具内的 Rust bin>"
+node scripts/check-update.mjs --run --root "<本次夹具目录>"
+```
 
-移动源码目录后必须重新构建测试安装包，不能仅搬用旧包：安装程序重启应用时使用编译进包内的绝对隔离路径。Playwright 的自动清理目录为 `test-results/playwright/`，不会清理同级的更新夹具目录。
+每次准备都在源码根 `test-results/p8/update-<runId>/` 新建目录，生成本次独立的测试产品名、应用标识和一次性签名身份。应用、安装器与重启进程只使用该夹具内的 HOME、AppData、临时目录和数据根；不读取真实账户、Skills、SSH 配置或 OS 凭据库，不注册正式产品的快捷方式或系统集成。构建使用已核对哈希的源码快照，不改原源码的版本、sidecar 或配置。
 
-测试用的 0.1.0 和 0.1.1 都由当前源码构建，只验证安装、后台下载、签名拒绝、更新重启和数据保留机制；旧数据库迁移由数据库回归另外覆盖。测试密钥签名的安装包绝不能发布；正式安装包仍由 GitHub Actions 构建和签名。
+所有文件替换仍须检查本次所有权、哈希和重解析点。验收只回收本次明确启动的进程与容器，保留夹具和证据；它不是正式安装包的系统集成／卸载验收。
+
+移动源码目录后必须重新准备和构建，不能搬用旧包或修改旧夹具标记继续运行：配置、安装器和 `CLOUDLINK_TEST_BUILD_HOME` 都绑定绝对隔离路径。Playwright 只清理 `test-results/playwright/`，不清理同级 `p8/` 下的更新夹具。
+
+测试用的 0.1.0 和 0.1.1 都由当前源码构建，只验证更新、签名拒绝、重启、数据保留和执行请求交接机制；旧数据库迁移与上一协议版本兼容需要另外覆盖。测试签名材料和安装包绝不能发布；正式安装包仍由 GitHub Actions 构建和签名。
 
 ## 试运行
 

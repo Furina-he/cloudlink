@@ -252,6 +252,8 @@ pub enum IpcErrorId {
     UpdateDownloadFailed,
     UpdateSignatureInvalid,
     UpdateInstallFailed,
+    ExecutionUnavailable,
+    ExecutionStale,
     Internal,
 }
 

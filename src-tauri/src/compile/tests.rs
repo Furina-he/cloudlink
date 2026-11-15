@@ -19,6 +19,7 @@ fn compile_with(assets: &[Asset], config: &SkillConfig) -> CompilePreview {
         all_assets: assets,
         config,
         inbox: "C:/Users/me/.cloudlink/inbox",
+        runner: "C:/Users/me/.cloudlink/bin/cloudlink-guard.exe",
         body_line_limit: 100,
         write_snapshot_time: true,
         now_secs: now(),
@@ -44,11 +45,30 @@ fn golden_dir(name: &str) -> PathBuf {
 fn assert_golden(name: &str, p: &CompilePreview) {
     let dir = golden_dir(name);
     if std::env::var_os("CLOUDLINK_UPDATE_GOLDEN").is_some() {
-        let _ = std::fs::remove_dir_all(&dir);
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
+        let ownership = guard_rules::runtime::read_owned_json(
+            &root.join(".cloudlink.json"),
+            "compiler-goldens",
+            guard_rules::runtime::MAX_RUNTIME,
+        )
+        .unwrap();
+        assert_eq!(ownership["managedBy"], "cloudlink");
+        crate::paths::validate_directory_tree(&dir).unwrap();
+        // Snapshot updates only replace generated Markdown, never remove the tree or unknown siblings.
         for f in &p.files {
+            assert!(
+                Path::new(&f.path)
+                    .components()
+                    .all(|part| matches!(part, std::path::Component::Normal(_)))
+            );
+            assert!(f.path.ends_with(".md"));
             let path = dir.join(&f.path);
+            crate::paths::validate_file(&path).unwrap();
+            if path.exists() {
+                let _before = std::fs::read(&path).unwrap();
+            }
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, &f.content).unwrap();
+            crate::fsx::write_atomic(&path, f.content.as_bytes()).unwrap();
         }
     }
     let on_disk = publish::dir_hash(&dir).unwrap().expect("golden dir");
@@ -260,6 +280,8 @@ fn modified_health_check_is_scanned_for_disabled_fields_and_secrets() {
     let listed: Vec<&Asset> = assets.iter().collect();
     let config = SkillConfig::default();
     let mut rendered = render::render_skill(&render::RenderInput {
+        env_id: &EnvId::windows(),
+        runner: "C:/Users/me/.cloudlink/bin/cloudlink-guard.exe",
         assets: &listed,
         all_assets: &assets,
         config: &config,

@@ -1,8 +1,10 @@
-// Mock 后端（PRD 7.8）：在普通浏览器里模拟全部 IPC 命令与 10 个事件
+// Mock 后端（PRD 7.8）：在普通浏览器里模拟全部 IPC 命令与后端事件
 import { mockIPC } from "@tauri-apps/api/mocks"
 
 import { agentHandlers } from "./handlers-agents"
 import { cliHandlers } from "./handlers-cli"
+import { githubHandlers } from "./handlers-github"
+import { executionHandlers } from "./handlers-execution"
 import { connectionHandlers } from "./handlers-connection"
 import { miscHandlers } from "./handlers-misc"
 import { probeHandlers } from "./handlers-probe"
@@ -26,6 +28,8 @@ const handlers: Record<string, (args: Args) => unknown> = {
   },
   ...serverHandlers,
   ...cliHandlers,
+  ...githubHandlers,
+  ...executionHandlers,
   ...connectionHandlers,
   ...probeHandlers,
   ...agentHandlers,

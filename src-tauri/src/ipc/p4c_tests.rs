@@ -530,16 +530,30 @@ fn reopening_interrupted_reset_does_not_recreate_policy_or_skills() {
     let fixture = Fixture::new();
     fixture.seed();
     fixture.backend.database().unwrap().begin_reset().unwrap();
-    fs::remove_file(fixture.paths.data_dir.join("guard/policy.json")).unwrap();
+    let policy = fixture.paths.data_dir.join("guard/policy.json");
+    let receipt = guard_rules::runtime::read_owned_json(
+        &fixture.paths.data_dir.join("guard/.cloudlink.json"),
+        "guard",
+        guard_rules::runtime::MAX_RUNTIME,
+    )
+    .unwrap();
+    assert_eq!(receipt["policyOwned"], true);
+    assert!(guard_rules::runtime::safe_path(&policy));
+    let _before = fs::read(&policy).unwrap();
+    fs::remove_file(&policy).unwrap();
+    let Fixture {
+        backend, paths, _temp, ..
+    } = fixture;
+    drop(backend); // Reopen simulates a terminated instance, not a second live owner.
     let reopened = Backend::with_services(
-        fixture.paths.clone(),
+        paths.clone(),
         Arc::new(FakeSystem::default()),
         Arc::new(MemoryCredentialStore::default()),
         cli::Service::new(Arc::new(cli::EmptyRunner)),
         Arc::new(Events::default()),
     )
     .unwrap();
-    assert!(!fixture.paths.data_dir.join("guard/policy.json").exists());
+    assert!(!paths.data_dir.join("guard/policy.json").exists());
     assert!(
         reopened
             .detect_environments()

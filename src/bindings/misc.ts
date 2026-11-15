@@ -117,6 +117,7 @@ export interface TrayCopy {
   quit: string
   notifyTitle: string
   notifyAllReadOnly: string
+  notifyExecution?: string
 }
 
 /** tray://confirm-mode：托盘里把生产资源切到标准运维，主窗口弹出确认（F-407 AC1） */
@@ -184,6 +185,8 @@ export type IpcErrorId =
   /** 安装包没有通过内置公钥的签名校验，已丢弃（F-406 AC3） */
   | "update-signature-invalid"
   | "update-install-failed"
+  | "execution-unavailable"
+  | "execution-stale"
   | "internal"
 
 /** IPC 失败时 invoke 抛出的对象。文案由 copy.ts 按 id 映射 */

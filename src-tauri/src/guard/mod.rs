@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::env::EnvContext;
 use crate::error::Result;
@@ -16,7 +16,7 @@ mod owned;
 mod policy;
 mod settings;
 
-pub use policy::{policy_current, project_policy, write_policy};
+pub use policy::{policy_current, project_policy, project_runtime_policy, write_policy};
 pub use settings::{hook_command, install, planned, preflight_remove, remove, status};
 
 pub fn executable_path(paths: &Paths) -> PathBuf {
@@ -75,36 +75,100 @@ pub fn sync_binary(paths: &Paths, source: &Path) -> Result<bool> {
     }
     let hash = owned::hash(&source_bytes);
     if before.as_deref() == Some(source_bytes.as_slice()) {
-        if marker["hash"] != hash || marker.get("pendingHash").is_some() {
-            owned::replace(
-                &marker_path,
-                Some(&marker_bytes),
-                &binary_marker(&hash)?,
-                owned::MAX_SETTINGS,
-            )?;
-        }
+        let mut after = marker;
+        after["hash"] = hash.into();
+        after.as_object_mut().ok_or_else(owned::invalid)?.remove("pendingHash");
+        owned::replace(
+            &marker_path,
+            Some(&marker_bytes),
+            &serde_json::to_vec(&after)?,
+            owned::MAX_SETTINGS,
+        )?;
+        cleanup_retired(&directory)?;
         return Ok(false);
     }
-    // Journal the intended hash before replacing the executable. Both the old
-    // and pending contents remain recognizable after a crash between writes.
+    // Windows can rename a running image, but cannot replace it in place. Keep a
+    // receipt for the retired image before renaming, then atomically install the new one.
     let mut pending = marker;
     pending["pendingHash"] = hash.clone().into();
+    let retired = before.as_ref().map(|bytes| {
+        let name = format!(".cloudlink-guard-old-{}.exe", crate::new_id("bin"));
+        pending["retiredFiles"][&name] = owned::hash(bytes).into();
+        directory.join(name)
+    });
     let pending_bytes = serde_json::to_vec(&pending)?;
     owned::replace(&marker_path, Some(&marker_bytes), &pending_bytes, owned::MAX_SETTINGS)?;
-    owned::replace(&destination, before.as_deref(), &source_bytes, owned::MAX_BINARY)?;
+    if let Some(retired) = &retired {
+        owned::check(retired)?;
+        if owned::read(retired, owned::MAX_BINARY)?.is_some()
+            || owned::read(&destination, owned::MAX_BINARY)?.as_deref() != before.as_deref()
+        {
+            return Err(owned::invalid());
+        }
+        std::fs::rename(&destination, retired)?;
+    }
+    if let Err(error) = owned::replace(&destination, None, &source_bytes, owned::MAX_BINARY) {
+        if let Some(retired) = &retired {
+            owned::check(&destination)?;
+            if owned::read(&destination, owned::MAX_BINARY)?.is_none()
+                && owned::read(retired, owned::MAX_BINARY)?.as_deref() == before.as_deref()
+            {
+                let _ = std::fs::rename(retired, &destination);
+            }
+        }
+        return Err(error);
+    }
+    pending["hash"] = hash.into();
+    pending
+        .as_object_mut()
+        .ok_or_else(owned::invalid)?
+        .remove("pendingHash");
     owned::replace(
         &marker_path,
         Some(&pending_bytes),
-        &binary_marker(&hash)?,
+        &serde_json::to_vec(&pending)?,
         owned::MAX_SETTINGS,
     )?;
+    cleanup_retired(&directory)?;
     Ok(true)
 }
 
-fn binary_marker(hash: &str) -> Result<Vec<u8>> {
-    Ok(serde_json::to_vec(&json!({
-        "managedBy": "cloudlink", "kind": "guard-bin", "version": 1, "hash": hash
-    }))?)
+fn cleanup_retired(directory: &Path) -> Result<()> {
+    let path = directory.join(".cloudlink.json");
+    let before = owned::read(&path, owned::MAX_SETTINGS)?.ok_or_else(owned::invalid)?;
+    let mut marker: Value = serde_json::from_slice(&before)?;
+    if marker["managedBy"] != "cloudlink" || marker["kind"] != "guard-bin" {
+        return Err(owned::invalid());
+    }
+    let retired = marker
+        .get("retiredFiles")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for (name, hash) in retired {
+        if !name.starts_with(".cloudlink-guard-old-bin_") || !name.ends_with(".exe") || name.contains(['/', '\\']) {
+            return Err(owned::invalid());
+        }
+        let retired_path = directory.join(&name);
+        if let Some(bytes) = owned::read(&retired_path, owned::MAX_BINARY)? {
+            if hash != owned::hash(&bytes) {
+                return Err(owned::invalid());
+            }
+            // An occupied image survives until the next startup; unknown files are never removed.
+            if owned::remove_file(&retired_path, &bytes).is_err() {
+                continue;
+            }
+        }
+        marker["retiredFiles"]
+            .as_object_mut()
+            .ok_or_else(owned::invalid)?
+            .remove(&name);
+    }
+    let after = serde_json::to_vec(&marker)?;
+    if before != after {
+        owned::replace(&path, Some(&before), &after, owned::MAX_SETTINGS)?;
+    }
+    Ok(())
 }
 
 fn matches_binary_hash(marker: &Value, hash: &str) -> bool {
@@ -171,6 +235,23 @@ pub fn preflight_reset(paths: &Paths, envs: &[EnvContext]) -> Result<()> {
     }
     let bin = paths.data_dir.join("bin");
     let bin_marker = owned::marker(&bin, "guard-bin")?;
+    if let Some(marker) = &bin_marker {
+        for (name, hash) in marker
+            .get("retiredFiles")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
+            if !name.starts_with(".cloudlink-guard-old-bin_") || !name.ends_with(".exe") || name.contains(['/', '\\']) {
+                return Err(owned::invalid());
+            }
+            if let Some(bytes) = owned::read(&bin.join(name), owned::MAX_BINARY)?
+                && hash != &owned::hash(&bytes)
+            {
+                return Err(owned::invalid());
+            }
+        }
+    }
     if owned::read(&executable_path(paths), owned::MAX_BINARY)?.is_some()
         && (bin_marker.is_none() || !binary_owned(paths))
     {
@@ -198,6 +279,7 @@ pub fn reset_managed_files(paths: &Paths, envs: &[EnvContext]) -> Result<()> {
     }
     let bin = paths.data_dir.join("bin");
     if owned::marker(&bin, "guard-bin")?.is_some() {
+        cleanup_retired(&bin)?;
         let executable = executable_path(paths);
         if let Some(bytes) = owned::read(&executable, owned::MAX_BINARY)? {
             owned::remove_file(&executable, &bytes)?;

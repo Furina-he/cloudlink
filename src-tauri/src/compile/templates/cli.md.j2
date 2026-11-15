@@ -3,8 +3,25 @@
 > {% if env_title %}{{ env_title }} | {% endif %}Mode: {{ mode }}
 
 ## Connect
+{% if execution %}
+Use separate CLI arguments after `--`, without the provider binary or a shell wrapper. Never print or export credentials:
+
+    {{ execution }}
+{% if execution_ps %}
+
+PowerShell:
+
+    {{ execution_ps }}
+{% endif %}
+{% else %}
 - Run `{{ binary }} <command>` in the local shell; it is already logged in. Never print or export its credentials.
-{% if account %}
+{% endif %}
+{% if github %}
+- Host: {{ github_host }}
+- Owner: {{ github_owner or "not verified; preserve the historical selection" }}
+- Effective `gh` login in this environment: {{ github_identity or "not verified" }}
+- Snapshot: {{ github_status or "not verified" }}. The owner is not the login identity; never switch accounts to expand access. A `gh` login does not identify SSH Git or custom Git credential helpers.
+{% elif account %}
 - Account: {{ account }}
 - {{ account_flag }}
 {% endif %}
@@ -21,13 +38,42 @@
 
 {% if github %}
 ## Repositories
-Only operate on these repositories; ask the user before touching any other repository on the account.
+{% if github_auto %}
+Auto scope follows the verified owner: current and future repositories this environment's login can access, including private repositories, except the excluded stable IDs below. Repository renames do not remove an exclusion; a repository transferred out of the owner is no longer in scope. This table is a known snapshot, not an exhaustive future list.
+{% if github_excluded %}
+Excluded stable repository IDs: {{ github_excluded | join(", ") }}.
+{% endif %}
+{% else %}
+Manual scope: only the selected stable repository IDs represented below. Historical selections never expand automatically; an unverified owner must be confirmed in CloudLink, not inferred from names.
+{% endif %}
+Partial, offline or denied refreshes preserve known history and cannot enlarge authorization. Refresh through this read-only metadata entry before relying on a new repository, changed identity or deployment relation; failure is not permission to switch accounts or broaden scope:
+
+    {{ discover }}
+{% if discover_ps %}
+
+PowerShell:
+
+    {{ discover_ps }}
+{% endif %}
 
 | Repository | Default branch | Visibility |
 | --- | --- | --- |
 {% for r in repos %}
 | {{ r.name }} | {{ r.branch }} | {{ r.visibility }} |
 {% endfor %}
+
+Deleting repositories, exporting credentials, or force-pushing the default/unspecified branch cannot be approved. Ordinary commits/pushes are not blanket-protected by CloudLink. Deployment relations are collected evidence, not additional authorization.
+{% if git %}
+For the specifically checked high-risk Git operations, use `--tool git` and explicit Git arguments/branch; the runner verifies the actual push remote and repository. This is not an arbitrary local-program runner:
+
+    {{ git }}
+{% if git_ps %}
+
+PowerShell:
+
+    {{ git_ps }}
+{% endif %}
+{% endif %}
 {% else %}
 ## Scope
 Only operate on these resources; ask the user before touching anything else in the account.

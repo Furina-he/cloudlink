@@ -5,6 +5,7 @@ const fake = vi.hoisted(() => ({
   connection: vi.fn(),
   guard: vi.fn(),
   update: vi.fn(),
+  execution: vi.fn(), runtime: vi.fn(), focus: vi.fn(), view: vi.fn(),
 }))
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: fake.listen }))
@@ -37,6 +38,10 @@ vi.mock("@/stores/skills", () => ({
 vi.mock("@/stores/update", () => ({
   useUpdateStore: { getState: () => ({ _onChanged: fake.update }) },
 }))
+vi.mock("@/stores/execution", () => ({
+  useExecutionStore: { getState: () => ({ _onChanged: fake.execution, _onRuntime: fake.runtime, focus: fake.focus }) },
+}))
+vi.mock("@/stores/ui", () => ({ useUIStore: { getState: () => ({ setView: fake.view }) } }))
 
 import { subscribeBackendEvents } from "./events"
 
@@ -56,29 +61,29 @@ describe("后端事件订阅", () => {
   it("部分订阅失败时，等待仍在注册的监听并清理全部已成功订阅", async () => {
     const late = deferred<() => void>()
     const error = { id: "internal", params: { detail: "listener unavailable" } }
-    const offs = Array.from({ length: 11 }, () => vi.fn())
-    let index = 0
+    const offs: ReturnType<typeof vi.fn>[] = []
+    const lateOff = vi.fn()
     fake.listen.mockImplementation((event: string) => {
       if (event === "guard://changed") return Promise.reject(error)
-      if (event === "activity://new") return late.promise
-      return Promise.resolve(offs[index++])
+      const off = event === "activity://new" ? lateOff : vi.fn()
+      offs.push(off)
+      return event === "activity://new" ? late.promise : Promise.resolve(off)
     })
     const result = subscribeBackendEvents().catch((failure: unknown) => failure)
     await Promise.resolve()
     expect(offs.every((off) => off.mock.calls.length === 0)).toBe(true)
-    late.resolve(offs[10])
+    late.resolve(lateOff)
     await expect(result).resolves.toBe(error)
     for (const off of offs) expect(off).toHaveBeenCalledTimes(1)
   })
 
   it("失败后可重新订阅，事件仍传给 store，关闭时释放这一轮所有监听", async () => {
-    const failedOffs = Array.from({ length: 11 }, () => vi.fn())
-    let index = 0
-    fake.listen.mockImplementation((event: string) =>
-      event === "guard://changed"
-        ? Promise.reject(new Error("registration failed"))
-        : Promise.resolve(failedOffs[index++])
-    )
+    const failedOffs: ReturnType<typeof vi.fn>[] = []
+    fake.listen.mockImplementation((event: string) => {
+      if (event === "guard://changed") return Promise.reject(new Error("registration failed"))
+      const off = vi.fn(); failedOffs.push(off)
+      return Promise.resolve(off)
+    })
     await expect(subscribeBackendEvents()).rejects.toThrow(
       "registration failed"
     )
@@ -103,7 +108,16 @@ describe("后端事件订阅", () => {
     expect(fake.connection).toHaveBeenCalledExactlyOnceWith(connection)
     expect(fake.guard).toHaveBeenCalledExactlyOnceWith(statuses)
     expect(fake.update).toHaveBeenCalledExactlyOnceWith(status)
-    expect(activeOffs).toHaveLength(12)
+    const execution = { epoch: "fixture", revision: 1, requests: [] }
+    const runtime = { epoch: "fixture", revision: 1, state: "active", checkedAt: "2026-11-15T00:00:00Z" }
+    handlers.get("execution://changed")!({ payload: execution })
+    handlers.get("runtime://changed")!({ payload: { status: runtime } })
+    handlers.get("execution://focus")!({ payload: { requestId: "req_fixture" } })
+    expect(fake.execution).toHaveBeenCalledExactlyOnceWith(execution)
+    expect(fake.runtime).toHaveBeenCalledExactlyOnceWith(runtime)
+    expect(fake.focus).toHaveBeenCalledExactlyOnceWith("req_fixture")
+    expect(fake.view).toHaveBeenCalledExactlyOnceWith("activity")
+    expect(activeOffs).toHaveLength(15)
     unsubscribe()
     for (const off of [...failedOffs, ...activeOffs])
       expect(off).toHaveBeenCalledTimes(1)

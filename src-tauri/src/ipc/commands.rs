@@ -15,6 +15,8 @@ use crate::model::compile::{CompilePreview, CompileStatus, PreviewRequest, Relat
 use crate::model::connection::{ConnectionTestRequest, KeyCheck, KeyCheckRequest};
 use crate::model::delivery::{AddCustomTargetRequest, Delivery, Inclusion, Target};
 use crate::model::env::{EnvId, Environment, SshConfigStatus, SshHostList};
+use crate::model::execution::{CancelExecutionRequest, ExecutionRequest, RespondExecutionRequest, RuntimeStatus};
+use crate::model::github::{GithubScopeRequest, GithubScopeResult, GithubScopeSaveRequest};
 use crate::model::guard::{GuardRules, GuardStatus, Operation, OperationQuery};
 use crate::model::misc::{ActivityItem, ActivityQuery, DeleteResult, SaveResult, Settings, UpdateStatus};
 use crate::model::notes::AgentNote;
@@ -219,6 +221,50 @@ pub async fn set_cli_scope(
     selected_ids: Vec<String>,
 ) -> Result<SaveResult> {
     blocking(state, move |backend| backend.set_cli_scope(&asset_id, &selected_ids)).await
+}
+
+#[tauri::command]
+pub async fn get_github_scope(state: State<'_, Arc<Backend>>, req: GithubScopeRequest) -> Result<GithubScopeResult> {
+    blocking(state, move |backend| backend.get_github_scope(req)).await
+}
+
+#[tauri::command]
+pub async fn save_github_scope(state: State<'_, Arc<Backend>>, req: GithubScopeSaveRequest) -> Result<SaveResult> {
+    blocking(state, move |backend| backend.save_github_scope(req)).await
+}
+
+#[tauri::command]
+pub async fn get_runtime_status(state: State<'_, Arc<Backend>>) -> Result<RuntimeStatus> {
+    early(state, |backend| backend.get_runtime_status()).await
+}
+
+#[tauri::command]
+pub async fn list_execution_requests(state: State<'_, Arc<Backend>>) -> Result<Vec<ExecutionRequest>> {
+    blocking(state, |backend| backend.list_execution_requests()).await
+}
+
+#[tauri::command]
+pub async fn respond_execution(
+    window: tauri::WebviewWindow,
+    state: State<'_, Arc<Backend>>,
+    req: RespondExecutionRequest,
+) -> Result<ExecutionRequest> {
+    if window.label() != "main" {
+        return Err(AppError::ipc(crate::model::misc::IpcErrorId::ExecutionUnavailable));
+    }
+    blocking(state, move |backend| backend.respond_execution(req)).await
+}
+
+#[tauri::command]
+pub async fn cancel_execution(
+    window: tauri::WebviewWindow,
+    state: State<'_, Arc<Backend>>,
+    req: CancelExecutionRequest,
+) -> Result<ExecutionRequest> {
+    if window.label() != "main" {
+        return Err(AppError::ipc(crate::model::misc::IpcErrorId::ExecutionUnavailable));
+    }
+    blocking(state, move |backend| backend.cancel_execution(req)).await
 }
 
 #[tauri::command]

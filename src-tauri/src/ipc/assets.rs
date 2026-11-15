@@ -175,7 +175,23 @@ impl Backend {
                     tags: input.tags,
                     connection,
                     facts: input.facts,
-                    paths: input.paths,
+                    paths: input
+                        .paths
+                        .into_iter()
+                        .map(|mut path| {
+                            // Evidence is collected by the backend, not authored by an invoke payload.
+                            path.repo_source = old
+                                .and_then(|server| {
+                                    server.paths.iter().find(|before| {
+                                        before.key == path.key
+                                            && before.path == path.path
+                                            && before.source == path.source
+                                    })
+                                })
+                                .and_then(|before| before.repo_source.clone());
+                            path
+                        })
+                        .collect(),
                     services: input.services,
                     served_hostnames: input.served_hostnames,
                     listening_ports: input.listening_ports,
@@ -211,27 +227,74 @@ impl Backend {
                 if validate
                     && self.list_assets()?.iter().filter_map(Asset::as_cli).any(|a| {
                         Some(a.id.as_str()) != input.id.as_deref()
+                            && input.cli_provider != CliProvider::Github
                             && a.cli_provider == input.cli_provider
                             && a.account == input.account
                     })
                 {
                     return Err(AppError::ipc(IpcErrorId::AliasTaken));
                 }
+                if validate
+                    && input.cli_provider == CliProvider::Github
+                    && old.is_some_and(|old| old.account != input.account)
+                {
+                    return Err(AppError::ipc(IpcErrorId::CliAccountUnavailable));
+                }
+                if validate && input.cli_provider != CliProvider::Github && input.github.is_some() {
+                    return Err(AppError::ipc(IpcErrorId::SettingsInvalid));
+                }
+                let github_receipt = if input.cli_provider == CliProvider::Github && old.is_none() && validate {
+                    let request = input.github.as_ref().ok_or_else(|| {
+                        AppError::ipc_with(
+                            IpcErrorId::CliScopeFailed,
+                            params! {"reason" => "owner-confirmation-required"},
+                        )
+                    })?;
+                    Some(self.cli.validate_github_create(request)?)
+                } else {
+                    None
+                };
+                let github = github_receipt
+                    .as_ref()
+                    .map(|receipt| receipt.config.clone())
+                    .or_else(|| old.and_then(|old| old.github.clone()));
+                if validate
+                    && let Some(config) = &github
+                    && let Some(owner) = &config.owner
+                    && self
+                        .database()?
+                        .github_owner_taken(&config.host, &owner.id, input.id.as_deref())?
+                {
+                    return Err(AppError::ipc(IpcErrorId::AliasTaken));
+                }
                 let unchanged_account = old.is_some_and(|a| a.account == input.account);
-                let states = if unchanged_account {
+                let states = if let Some(receipt) = &github_receipt {
+                    receipt.env_states.clone()
+                } else if unchanged_account {
                     old.unwrap().cli.env_states.clone()
                 } else {
                     Default::default()
                 };
-                let scope = match input.scope {
-                    Some(items) if validate => {
-                        self.cli
-                            .validate_scope(input.cli_provider, input.account.as_deref(), &items)?
+                let scope = if let Some(receipt) = &github_receipt {
+                    receipt.scope.clone()
+                } else if let Some(old) = old.filter(|_| input.cli_provider == CliProvider::Github) {
+                    // Profile saves cannot overwrite concurrent scope/identity changes.
+                    old.cli.scope.clone()
+                } else {
+                    match input.scope {
+                        Some(items) if validate => {
+                            self.cli
+                                .validate_scope(input.cli_provider, input.account.as_deref(), &items)?
+                        }
+                        Some(items) => items,
+                        None if unchanged_account => old.unwrap().cli.scope.clone(),
+                        None => Vec::new(),
                     }
-                    Some(items) => items,
-                    None if unchanged_account => old.unwrap().cli.scope.clone(),
-                    None => Vec::new(),
                 };
+                let account = github
+                    .as_ref()
+                    .and_then(|config| config.owner.as_ref().map(|owner| owner.login.clone()))
+                    .or(input.account);
                 let handle = if let Some(old) = old {
                     old.handle.clone()
                 } else {
@@ -268,12 +331,13 @@ impl Backend {
                     updated_at: now,
                     cli_provider: input.cli_provider,
                     handle,
-                    account: input.account,
+                    account,
                     cli: CliInfo {
                         binary: input.cli_provider.binary(),
                         env_states: states,
                         scope,
                     },
+                    github,
                 }))
             }
         }
@@ -294,7 +358,20 @@ impl Backend {
                         && prior.is_none_or(|old| !old.cli.scope.iter().any(|s| s.id == item.id && s.selected))
                 })
             });
-            if adds_scope || prior.is_none_or(|old| old.account != request.account) {
+            if request.cli_provider == CliProvider::Github {
+                if prior.is_none() {
+                    let github = request.github.as_ref().ok_or_else(|| {
+                        AppError::ipc_with(
+                            IpcErrorId::CliScopeFailed,
+                            params! {"reason" => "owner-confirmation-required"},
+                        )
+                    })?;
+                    let _running = self.cli_run(CliProvider::Github);
+                    self.cli
+                        .github_scope(&self.cli_contexts()?, &github.host, Some(&github.owner_login))?;
+                }
+                None
+            } else if adds_scope || prior.is_none_or(|old| old.account != request.account) {
                 Some(
                     self.cli
                         .detect(&self.cli_contexts()?, request.cli_provider, request.account.as_deref())?,

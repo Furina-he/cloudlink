@@ -30,7 +30,7 @@ export type EnvSetting = { id: EnvId, enabled: boolean, };
 
 export type IpcError = { id: IpcErrorId, params?: Record<string, string | number>, };
 
-export type IpcErrorId = "not-found" | "alias-taken" | "alias-conflict" | "cannot-distribute" | "password-missing" | "password-target-changed" | "connection-failed" | "settings-invalid" | "interop-disabled" | "target-exists" | "source-missing" | "compile-blocked" | "cli-account-unavailable" | "cli-scope-permission" | "cli-scope-failed" | "cli-command-unsupported" | "terminal-command-invalid" | "note-has-secret" | "reset-incomplete" | "update-busy" | "update-download-failed" | "update-signature-invalid" | "update-install-failed" | "internal";
+export type IpcErrorId = "not-found" | "alias-taken" | "alias-conflict" | "cannot-distribute" | "password-missing" | "password-target-changed" | "connection-failed" | "settings-invalid" | "interop-disabled" | "target-exists" | "source-missing" | "compile-blocked" | "cli-account-unavailable" | "cli-scope-permission" | "cli-scope-failed" | "cli-command-unsupported" | "terminal-command-invalid" | "note-has-secret" | "reset-incomplete" | "update-busy" | "update-download-failed" | "update-signature-invalid" | "update-install-failed" | "execution-unavailable" | "execution-stale" | "internal";
 
 export type OutputLanguage = "en";
 
@@ -73,7 +73,7 @@ prodInStandard: string, open: string, quit: string,
 /**
  * 系统通知标题与正文「{n} 项生产资源已切回只读」
  */
-notifyTitle: string, notifyAllReadOnly: string, };
+notifyTitle: string, notifyAllReadOnly: string, notifyExecution?: string, };
 
 /**
  * F-406：发现新版本后在后台下载并校验，下好（ready）才在顶栏提醒。

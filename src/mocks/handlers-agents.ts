@@ -4,6 +4,7 @@ import { emit } from "@tauri-apps/api/event"
 import type { AddCustomTargetRequest, BackupReason, Delivery, EnvId, PreviewRequest, SkillConfig } from "@/bindings"
 import * as fx from "./fixtures"
 import { compileSkill } from "./lint"
+import { cancelMockExecutions } from "./handlers-execution"
 import { deriveRelations, withHidden } from "./relations"
 import { agentKeyOf, db, directoryMembers, draftToAsset, emitCompiled, emitDeliveries, fail, includedIn, logActivity, newId, now, physicalUnit, recompile, sleep } from "./state"
 
@@ -24,6 +25,7 @@ const targetById = (id: string) => db.targets.find((t) => t.id === id) ?? fail("
 async function setTargetEnabled(id: string, enabled: boolean) {
   const t = targetById(id)
   await sleep(300)
+  if (t.enabled !== enabled) cancelMockExecutions()
   t.enabled = enabled
   t.detected = t.detected || enabled
   if (!enabled) {
@@ -61,6 +63,7 @@ function addCustomTarget(req: AddCustomTargetRequest) {
 
 function removeCustomTarget(id: string) {
   const t = targetById(id)
+  cancelMockExecutions()
   db.targets = db.targets.filter((x) => x.id !== id)
   // 目标没了，副本记录一并删除；冲突的目录不是 CloudLink 的，只是不再跟踪，文件不动
   db.deliveries = db.deliveries.filter((d) => d.targetId !== id)

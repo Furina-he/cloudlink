@@ -2,7 +2,7 @@
 import { emit } from "@tauri-apps/api/event"
 
 import type {
-  TrayCopy, ActivityItem, AgentId, Asset, AssetInput, CliAsset, CompileStatus, EnvId, Inclusion, IpcError, SaveResult, ServerAsset, Target } from "@/bindings"
+  TrayCopy, ActivityItem, AgentId, Asset, AssetInput, CliAsset, CompileStatus, EnvId, ExecutionRequest, RuntimeStatus, Inclusion, IpcError, SaveResult, ServerAsset, Target } from "@/bindings"
 import { cliEnvStatus, handleOf } from "@/stores/assets"
 import * as fx from "./fixtures"
 import { compileSkill, toStatus } from "./lint"
@@ -38,6 +38,8 @@ export const db = {
   trayCopy: null as TrayCopy | null,
   sharedMismatches: new Set<string>(),
   crossEnvironmentTargets: new Set<string>(),
+  executionRequests: [] as ExecutionRequest[],
+  runtime: { state: "active", epoch: "mock-session", revision: 1, checkedAt: new Date().toISOString() } as RuntimeStatus,
 }
 
 /**
@@ -302,8 +304,9 @@ export function draftToAsset(input: AssetInput): Asset {
   if (input.type === "cli") {
     const rest = { ...input }
     delete rest.scope
+    delete rest.github
     const cli = saved?.type === "cli" ? saved.cli : { binary: "wrangler" as const, envStates: {}, scope: input.scope ?? [] }
-    return { ...rest, id: input.id ?? "draft", handle: saved?.type === "cli" ? saved.handle : input.cliProvider, cli, agent, createdAt: saved?.createdAt ?? now(), updatedAt: now() }
+    return { ...rest, github: saved?.type === "cli" ? saved.github : undefined, id: input.id ?? "draft", handle: saved?.type === "cli" ? saved.handle : input.cliProvider, cli, agent, createdAt: saved?.createdAt ?? now(), updatedAt: now() }
   }
   const server = saved?.type === "vps" ? saved : undefined
   const c = input.connection

@@ -70,6 +70,9 @@ pub struct TrayCopy {
     /// 系统通知标题与正文「{n} 项生产资源已切回只读」
     pub notify_title: String,
     pub notify_all_read_only: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub notify_execution: Option<String>,
 }
 
 #[derive(Default)]
@@ -78,6 +81,7 @@ pub struct TrayState {
     guard_on: AtomicBool,
     refreshing: AtomicBool,
     pending: AtomicBool,
+    notified_requests: Mutex<std::collections::BTreeSet<String>>,
 }
 
 /// `tray://confirm-mode`：生产资源要切到标准运维，主窗口打开确认（AC1）
@@ -101,6 +105,9 @@ pub fn on_event(app: &AppHandle, event: &str, payload: &serde_json::Value) {
     let Some(state) = app.try_state::<Arc<TrayState>>() else {
         return;
     };
+    if event == "execution://changed" {
+        notify_execution(app, &state, payload);
+    }
     if event == "guard://changed" {
         let on = payload.get("statuses").and_then(|v| v.as_array()).is_some_and(|items| {
             items
@@ -115,6 +122,81 @@ pub fn on_event(app: &AppHandle, event: &str, payload: &serde_json::Value) {
     ) {
         schedule_refresh(app);
     }
+}
+
+/// Notifications contain only an opaque request ID and epoch, never a command or resource address.
+fn notify_execution(app: &AppHandle, state: &TrayState, payload: &serde_json::Value) {
+    use tauri_plugin_notification::NotificationExt;
+    let Some(copy) = state.copy.lock().ok().and_then(|copy| copy.clone()) else {
+        return;
+    };
+    let Some(body) = copy.notify_execution else { return };
+    let Some(requests) = payload["requests"].as_array() else {
+        return;
+    };
+    let Ok(mut notified) = state.notified_requests.lock() else {
+        return;
+    };
+    let ids: std::collections::BTreeSet<_> = requests
+        .iter()
+        .filter_map(|request| request["requestId"].as_str())
+        .collect();
+    notified.retain(|id| ids.contains(id.as_str()));
+    for request in requests.iter().filter(|request| request["state"] == "waiting") {
+        let Some(id) = request["requestId"].as_str() else {
+            continue;
+        };
+        if notified.contains(id) {
+            continue;
+        }
+        if app
+            .notification()
+            .builder()
+            .title(&copy.notify_title)
+            .body(&body)
+            .extra("cloudlinkRequestId", id)
+            .extra("cloudlinkEpoch", payload["epoch"].clone())
+            .show()
+            .is_ok()
+        {
+            notified.insert(id.into());
+        }
+    }
+}
+
+pub fn register_execution_notifications(app: &AppHandle) -> tauri_plugin_notification::Result<()> {
+    use tauri_plugin_notification::NotificationExt;
+    let handle = app.clone();
+    app.notification().on_action(move |action| {
+        if action.action_id() != "tap" {
+            return;
+        }
+        let Some(notification) = action.notification() else {
+            return;
+        };
+        let Some(id) = notification
+            .extra()
+            .get("cloudlinkRequestId")
+            .and_then(|id| id.as_str())
+        else {
+            return;
+        };
+        let Some(epoch) = notification
+            .extra()
+            .get("cloudlinkEpoch")
+            .and_then(|epoch| epoch.as_str())
+        else {
+            return;
+        };
+        let Some(backend) = handle.try_state::<Arc<Backend>>() else {
+            return;
+        };
+        if backend.get_runtime_status().is_ok_and(|status| status.epoch == epoch) {
+            show_main(&handle);
+            let _ = handle.emit("execution://focus", serde_json::json!({"requestId":id}));
+        }
+        // A notification never approves. The original card still requires an explicit GUI answer.
+    })
 }
 
 /// 合并连续的重建请求；读数据库在后台线程里做，不占用发事件的锁

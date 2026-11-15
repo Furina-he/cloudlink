@@ -3,10 +3,23 @@ use std::collections::BTreeSet;
 use serde_json::{Value, json};
 
 use crate::error::Result;
-use crate::model::asset::{Asset, CliProvider};
+use crate::model::asset::Asset;
+use crate::model::github::GithubConfig;
 use crate::paths::Paths;
 
 use super::owned;
+
+/// 时间戳和诊断摘要不是授权；相同元数据刷新不能撤销正在等待的单次许可。
+fn github_projection(config: Option<&GithubConfig>) -> Value {
+    let mut value = serde_json::to_value(config).expect("GitHub projection serializes");
+    if let Some(states) = value.get_mut("envStates").and_then(Value::as_object_mut) {
+        for snapshot in states.values_mut().filter_map(Value::as_object_mut) {
+            snapshot.remove("checkedAt");
+            snapshot.remove("reasonId");
+        }
+    }
+    value
+}
 
 /// The guard protects known resources independently of Skill publication. An
 /// unrelated lint failure must never leave an older, more permissive mode or
@@ -14,9 +27,6 @@ use super::owned;
 pub fn project_policy(assets: &[Asset]) -> Value {
     let resources: Vec<Value> = assets
         .iter()
-        // GitHub 的护栏规则在 v0.3（F-110 AC3）。在那之前不写进 policy：已安装的护栏程序只认
-        // cloudflare / vercel / oracle，混进未知的 provider 会让整份 policy 被判为无效
-        .filter(|asset| !matches!(asset, Asset::Cli(cli) if cli.cli_provider == CliProvider::Github))
         .map(|asset| match asset {
             Asset::Vps(server) => {
                 let hosts: BTreeSet<&str> = std::iter::once(server.connection.ssh_alias.as_str())
@@ -35,6 +45,7 @@ pub fn project_policy(assets: &[Asset]) -> Value {
                     "kind": "vps",
                     "handle": server.connection.ssh_alias,
                     "mode": server.agent.mode,
+                    "production": server.production,
                     "envIds": server.connection.defined_in,
                     "agentKeys": server.agent.agents,
                     "hosts": hosts,
@@ -47,6 +58,8 @@ pub fn project_policy(assets: &[Asset]) -> Value {
                 "kind": "cli",
                 "handle": cli.handle,
                 "mode": cli.agent.mode,
+                "production": cli.production,
+                "github": github_projection(cli.github.as_ref()),
                 "envIds": cli.cli.env_states.keys().collect::<Vec<_>>(),
                 "agentKeys": cli.agent.agents,
                 "provider": cli.cli_provider,
@@ -58,6 +71,17 @@ pub fn project_policy(assets: &[Asset]) -> Value {
         })
         .collect();
     json!({ "managedBy": "cloudlink", "kind": "guard-policy", "version": 1, "resources": resources })
+}
+
+pub fn project_runtime_policy(paths: &Paths, assets: &[Asset]) -> Value {
+    let mut policy = project_policy(assets);
+    policy["runtimePid"] = std::process::id().into();
+    policy["protectedPaths"] = json!([
+        crate::fsx::ssh_path(&paths.data_dir.join("runtime.json").to_string_lossy()),
+        crate::fsx::ssh_path(&paths.data_dir.join("guard/policy.json").to_string_lossy()),
+        crate::fsx::ssh_path(&paths.data_dir.join("routes").to_string_lossy()),
+    ]);
+    policy
 }
 
 pub fn write_policy(paths: &Paths, assets: &[Asset]) -> Result<()> {
@@ -88,7 +112,7 @@ pub fn write_policy(paths: &Paths, assets: &[Asset]) -> Result<()> {
             owned::MAX_SETTINGS,
         )?;
     }
-    let mut after = serde_json::to_vec(&project_policy(assets))?;
+    let mut after = serde_json::to_vec(&project_runtime_policy(paths, assets))?;
     after.push(b'\n');
     if after.len() as u64 > owned::MAX_SETTINGS {
         return Err(owned::invalid());
@@ -110,5 +134,5 @@ pub fn policy_current(paths: &Paths, assets: &[Asset]) -> bool {
     let Ok(Some(bytes)) = owned::read(&paths.data_dir.join("guard/policy.json"), owned::MAX_SETTINGS) else {
         return false;
     };
-    serde_json::from_slice::<Value>(&bytes).is_ok_and(|value| value == project_policy(assets))
+    serde_json::from_slice::<Value>(&bytes).is_ok_and(|value| value == project_runtime_policy(paths, assets))
 }

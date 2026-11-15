@@ -1,32 +1,36 @@
-# Fixed GitHub CLI metadata bridge. Tokens and gh diagnostics never reach stdout.
+# Fixed GitHub metadata operations. API bodies/tokens/diagnostics stay inside this process.
 import json
 import re
 import subprocess
 import sys
 import time
 
-OPERATION, PROVIDER, BINARY, ACCOUNT = sys.argv[1:]
+OPERATION, PROVIDER, BINARY, ACCOUNT = sys.argv[1:5]
+HOST = sys.argv[5] if len(sys.argv) == 6 else "github.com"
 STARTED = time.monotonic()
 MAX_BYTES = 1024 * 1024
 MAX_ITEMS = 500
-MAX_OWNERS = 20
+MAX_PAGES = 6
 OWNER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 REPO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$")
-NODE_ID = re.compile(r"^[A-Za-z0-9_=-]{1,64}$")
+NODE_ID = re.compile(r"^[A-Za-z0-9_=-]{1,128}$")
+HOST_PATTERN = re.compile(r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$")
 
 
 class MetadataError(Exception):
-    pass
+    def __init__(self, reason, status="offline"):
+        super().__init__(reason)
+        self.status = status
 
 
-def fail(error_id):
-    raise MetadataError(error_id)
+def fail(reason, status="offline"):
+    raise MetadataError(reason, status)
 
 
 def timeout():
     left = 25 - (time.monotonic() - STARTED)
     if left <= 0:
-        fail("cli-scope-failed")
+        fail("pagination-incomplete", "partial")
     return min(left, 8)
 
 
@@ -38,129 +42,149 @@ def run(arguments):
             timeout=timeout(), check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        fail("cli-scope-failed")
+        fail("offline")
     if len(result.stdout) > MAX_BYTES or len(result.stderr) > MAX_BYTES:
-        fail("cli-scope-failed")
-    text = (result.stderr + result.stdout).decode("utf-8", errors="replace")
-    return result.returncode, result.stdout, text
+        fail("pagination-incomplete", "partial")
+    diagnostic = (result.stderr + result.stdout).decode("utf-8", errors="replace")
+    return result.returncode, result.stdout, diagnostic
 
 
-def parse(stdout):
+def api(endpoint):
+    code, stdout, diagnostic = run(["api", "--hostname", HOST, "--method", "GET", endpoint])
+    if code:
+        lowered = diagnostic.lower()
+        if re.search(r"rate.?limit|429", lowered):
+            fail("rate-limited", "partial")
+        if re.search(r"401|403|404|bad credentials|not found|saml|forbidden|not logged|gh auth login", lowered):
+            fail("permission-denied", "denied")
+        fail("offline")
     try:
         return json.loads(stdout)
     except ValueError:
-        fail("cli-command-unsupported")
+        fail("invalid-metadata", "partial")
 
 
-def parse_quiet(stdout):
-    try:
-        return json.loads(stdout)
-    except ValueError:
-        return None
+def project_owner(value):
+    if not isinstance(value, dict):
+        fail("invalid-metadata", "partial")
+    node, login, kind = value.get("node_id"), value.get("login"), value.get("type")
+    if not isinstance(node, str) or not NODE_ID.fullmatch(node) or not isinstance(login, str) or not OWNER.fullmatch(login):
+        fail("invalid-metadata", "partial")
+    if kind not in ("User", "Organization"):
+        fail("invalid-metadata", "partial")
+    return {"id": node, "login": login, "kind": "user" if kind == "User" else "organization"}
+
+
+def effective_identity():
+    # The authenticated API response reflects GH_TOKEN/GITHUB_TOKEN precedence, not
+    # merely the keyring's active account. No auth status refresh or token export.
+    owner = project_owner(api("user"))
+    if owner["kind"] != "user":
+        fail("permission-denied", "denied")
+    return {"id": owner["id"], "login": owner["login"], "host": HOST}
 
 
 def identity():
-    # `--json` exits 0 whatever the auth state and never includes the token (only
-    # `--show-token` would). gh always acts as the active account, so only it counts.
-    code, stdout, text = run(["auth", "status", "--json", "hosts"])
-    data = parse_quiet(stdout)
-    lowered = text.lower()
-    if code == 0 and isinstance(data, dict):
-        hosts = data.get("hosts")
-        entries = hosts.get("github.com") if isinstance(hosts, dict) else None
-        entries = entries if isinstance(entries, list) else []
-        active = next((e for e in entries if isinstance(e, dict) and e.get("active") is True), None)
-        if active is None:
-            return {"loggedIn": False}
-        login = active.get("login")
-        if active.get("state") in ("success", "timeout") and isinstance(login, str) and OWNER.fullmatch(login):
-            return {"loggedIn": True, "login": login}
-        return {"loggedIn": False, "expired": active.get("state") == "refresh_expired"}
-    if "unknown flag" in lowered:
-        # Older gh without `auth status --json`: ask the API whose token is active.
-        code, stdout, text = run(["api", "user", "--jq", ".login"])
-        login = stdout.decode("utf-8", errors="replace").strip()
-        if code == 0 and OWNER.fullmatch(login):
-            return {"loggedIn": True, "login": login}
-        lowered = text.lower()
-        if re.search(r"401|bad credentials", lowered):
+    try:
+        value = effective_identity()
+        return {"loggedIn": True, "login": value["login"], "identity": value}
+    except MetadataError as error:
+        if error.status == "denied":
             return {"loggedIn": False, "expired": True}
-        if re.search(r"gh auth login|not logged", lowered):
-            return {"loggedIn": False}
         fail("cli-scope-failed")
-    if re.search(r"gh auth login|not logged", lowered):
-        return {"loggedIn": False}
-    fail("cli-command-unsupported")
 
 
-def scope():
-    if not OWNER.fullmatch(ACCOUNT):
-        fail("cli-account-unavailable")
-    owners = [ACCOUNT]
-    # Organisation membership needs read:org; without it only the user's own repositories are listed.
-    code, stdout, _ = run(["api", "--method", "GET", "user/orgs", "-f", "per_page=100", "--jq", "[.[].login]"])
-    if code == 0:
-        orgs = parse_quiet(stdout)
-        for org in orgs if isinstance(orgs, list) else []:
-            if isinstance(org, str) and OWNER.fullmatch(org) and org not in owners and len(owners) < MAX_OWNERS:
-                owners.append(org)
-    items = []
-    seen = set()
-    for owner in owners:
-        code, stdout, text = run([
-            "repo", "list", owner, "--limit", "200",
-            "--json", "id,nameWithOwner,defaultBranchRef,visibility,isArchived",
-        ])
-        if code:
-            lowered = text.lower()
-            # An organisation can hide its repositories (SSO, removed membership); keep the others.
-            if owner != ACCOUNT and re.search(r"403|404|not found|could not resolve|saml", lowered):
-                continue
-            if re.search(r"401|bad credentials|gh auth login", lowered):
-                fail("cli-scope-permission")
-            fail("cli-command-unsupported")
-        repos = parse(stdout)
-        if not isinstance(repos, list):
-            fail("cli-command-unsupported")
-        for repo in repos:
-            if not isinstance(repo, dict):
-                fail("cli-scope-failed")
-            if repo.get("isArchived") is True:
-                continue
-            node, name = repo.get("id"), repo.get("nameWithOwner")
-            if not isinstance(node, str) or not NODE_ID.fullmatch(node) or not isinstance(name, str) or not REPO.fullmatch(name):
-                fail("cli-scope-failed")
-            if node in seen:
-                continue
-            seen.add(node)
-            if len(items) >= MAX_ITEMS:
-                return {"items": items}
-            item = {"id": "repo:" + node, "kind": "repo", "name": name}
-            branch = repo.get("defaultBranchRef")
-            branch = branch.get("name") if isinstance(branch, dict) else None
-            if isinstance(branch, str) and branch:
-                item["defaultBranch"] = re.sub(r"[\x00-\x1f\x7f]", "", branch)[:255]
-            visibility = repo.get("visibility")
-            if visibility in ("PUBLIC", "PRIVATE", "INTERNAL"):
-                item["visibility"] = visibility.lower()
-            items.append(item)
-    return {"items": items}
+def list_pages(endpoint, project, maximum):
+    items, seen = [], set()
+    for page in range(1, MAX_PAGES + 1):
+        data = api(endpoint + ("&" if "?" in endpoint else "?") + "per_page=100&page=" + str(page))
+        if not isinstance(data, list):
+            fail("invalid-metadata", "partial")
+        for raw in data:
+            value = project(raw)
+            if value["id"] in seen:
+                fail("pagination-incomplete", "partial")
+            if len(items) >= maximum:
+                fail("pagination-incomplete", "partial")
+            seen.add(value["id"])
+            items.append(value)
+        if len(data) < 100:
+            return items
+    fail("pagination-incomplete", "partial")
+
+
+def project_repo(value, owner):
+    if not isinstance(value, dict):
+        fail("invalid-metadata", "partial")
+    raw_owner = project_owner(value.get("owner"))
+    node, name = value.get("node_id"), value.get("full_name")
+    if raw_owner["id"] != owner["id"] or raw_owner["login"].lower() != owner["login"].lower():
+        fail("owner-changed", "partial")
+    if not isinstance(node, str) or not NODE_ID.fullmatch(node) or not isinstance(name, str) or not REPO.fullmatch(name):
+        fail("invalid-metadata", "partial")
+    if name.split("/", 1)[0].lower() != owner["login"].lower():
+        fail("owner-changed", "partial")
+    item = {"id": "repo:" + node, "kind": "repo", "name": name, "ownerId": owner["id"], "selected": False}
+    database_id = value.get("id")
+    if type(database_id) is int and database_id > 0 and len(str(database_id)) <= 20:
+        item["databaseId"] = str(database_id)
+    branch = value.get("default_branch")
+    if isinstance(branch, str) and branch and len(branch) <= 255 and not re.search(r"[\x00-\x20\x7f`|\\~^:?*\[]", branch):
+        item["defaultBranch"] = branch
+    visibility = value.get("visibility")
+    if visibility in ("public", "private", "internal"):
+        item["visibility"] = visibility
+    elif isinstance(value.get("private"), bool):
+        item["visibility"] = "private" if value["private"] else "public"
+    return item
+
+
+def github_scope():
+    result = {"status": "complete", "owners": [], "items": []}
+    try:
+        current = effective_identity()
+        result["identity"] = current
+        personal = {"id": current["id"], "login": current["login"], "kind": "user"}
+        result["owners"] = [personal]
+        if not ACCOUNT:
+            result["owners"] += list_pages("user/orgs", project_owner, 100)
+        else:
+            if not OWNER.fullmatch(ACCOUNT):
+                fail("invalid-owner", "denied")
+            owner = project_owner(api("users/" + ACCOUNT))
+            if owner["kind"] == "user" and owner["id"] != current["id"]:
+                fail("permission-denied", "denied")
+            result["owner"] = owner
+            if owner["id"] != personal["id"]:
+                result["owners"].append(owner)
+            endpoint = "user/repos?affiliation=owner" if owner["kind"] == "user" else "orgs/" + owner["login"] + "/repos?type=all"
+            # No archived/private filtering: auto covers every accessible repository.
+            result["items"] = list_pages(endpoint, lambda repo: project_repo(repo, owner), MAX_ITEMS)
+        if effective_identity() != current:
+            result["items"] = []
+            fail("identity-changed", "denied")
+    except MetadataError as error:
+        result["status"] = error.status
+        result["reasonId"] = str(error)
+        # Incomplete pages never establish additions. The desktop retains its prior snapshot.
+        result["items"] = []
+    return result
 
 
 def main():
-    if PROVIDER != "github" or not BINARY.startswith("/"):
+    if PROVIDER != "github" or not BINARY.startswith("/") or not HOST_PATTERN.fullmatch(HOST) or ".." in HOST:
         fail("cli-command-unsupported")
     if OPERATION == "identity":
         return identity()
-    if OPERATION == "scope":
-        return scope()
+    if OPERATION in ("scope", "github-scope", "github-owners"):
+        return github_scope()
     fail("cli-command-unsupported")
 
 
 try:
     METADATA = main()
 except Exception as error:
-    error_id = str(error) if isinstance(error, MetadataError) else "cli-scope-failed"
+    error_id = str(error) if isinstance(error, MetadataError) and str(error) in ("cli-command-unsupported", "cli-scope-failed") else "cli-scope-failed"
     METADATA = {"error": error_id}
 print("\n__CLOUDLINK_CLI_METADATA__\n" + json.dumps(METADATA, separators=(",", ":")))
 if "error" in METADATA:

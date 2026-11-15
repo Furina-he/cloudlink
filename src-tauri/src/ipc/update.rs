@@ -56,6 +56,19 @@ impl Backend {
         let Some((version, package)) = self.updates.mark_installing() else {
             return Ok(());
         };
+        // Explicit handoff keeps a brief updater gap from becoming unchecked forwarding.
+        if self
+            .execution()?
+            .owner
+            .publish_handoff(crate::time::now_secs() + 120)
+            .is_err()
+        {
+            self.updates
+                .install_failed(crate::update::Failure::Install.error(), package);
+            return Err(AppError::ipc(IpcErrorId::ExecutionUnavailable));
+        }
+        self.execution()?.state = crate::model::execution::RuntimeState::Starting;
+        self.cancel_unstarted_execution_locked("execution-update")?;
         // F-406 AC5：退出前写一条活动记录
         let recorded = self.activity(
             ActivityKind::Update,
@@ -69,6 +82,8 @@ impl Backend {
         }
         if let Err(failure) = self.updates.install(&package) {
             self.updates.install_failed(failure.error(), package);
+            // The update did not take over. Restore checks, never resurrect cancelled approvals.
+            self.activate_execution()?;
         }
         Ok(())
     }

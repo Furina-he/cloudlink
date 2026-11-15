@@ -45,6 +45,15 @@ fn field(data: &mut ProbeData, key: &str, raw: &str) -> Option<String> {
 }
 
 pub fn parse(raw: &str) -> ProbeData {
+    parse_for_paths(raw, &[], &[])
+}
+
+pub(super) fn parse_for_paths(
+    raw: &str,
+    paths: &[crate::model::asset::AssetPath],
+    github_hosts: &[String],
+) -> ProbeData {
+    let known_section = |section: &str| SECTIONS.contains(&section) || section == "git";
     if raw.len() > MAX_OUTPUT {
         return ProbeData::default();
     }
@@ -55,7 +64,7 @@ pub fn parse(raw: &str) -> ProbeData {
     for line in raw.lines().map(|line| line.trim_end_matches('\r')) {
         if let Some(status) = line.strip_prefix("@@status ") {
             let words: Vec<_> = status.split_whitespace().collect();
-            if words.len() != 2 || Some(words[0]) != current || !SECTIONS.contains(&words[0]) {
+            if words.len() != 2 || Some(words[0]) != current || !known_section(words[0]) {
                 complete = false;
                 continue;
             }
@@ -68,7 +77,7 @@ pub fn parse(raw: &str) -> ProbeData {
             }
             current = None;
         } else if let Some(section) = line.strip_prefix("@@") {
-            if !SECTIONS.contains(&section) || sections.insert(section, Vec::new()).is_some() || current.is_some() {
+            if !known_section(section) || sections.insert(section, Vec::new()).is_some() || current.is_some() {
                 complete = false;
             }
             current = Some(section);
@@ -241,6 +250,46 @@ pub fn parse(raw: &str) -> ProbeData {
         }
         data.listening_ports
             .sort_by(|a, b| a.addr.cmp(&b.addr).then(a.port.cmp(&b.port)));
+    }
+    if statuses.get("git") == Some(&0) {
+        let mut seen = BTreeSet::new();
+        for line in lines("git").into_iter().filter(|line| !line.is_empty()) {
+            let fields: Vec<_> = line.splitn(3, '\t').collect();
+            if fields.len() != 3 {
+                failure(&mut data, "git");
+                data.repo_sources.clear();
+                break;
+            }
+            let Some(path) = paths
+                .iter()
+                .filter(|path| super::safe_work_dir(path))
+                .take(16)
+                .find(|path| path.key == fields[0])
+            else {
+                continue;
+            };
+            if !seen.insert(path.key.clone()) {
+                failure(&mut data, "git");
+                data.repo_sources.clear();
+                break;
+            }
+            if !matches!(fields[1], "0" | "1") {
+                if path.repo_source.is_some() && !data.failed_sections.iter().any(|section| section == "git") {
+                    data.failed_sections.push("git".into());
+                }
+                continue;
+            }
+            let source = (fields[1] == "0")
+                .then(|| crate::model::asset::RepoSource::from_remote(fields[2], github_hosts))
+                .flatten();
+            data.repo_sources.insert(
+                path.key.clone(),
+                super::RepoObservation {
+                    path: path.path.clone(),
+                    source,
+                },
+            );
+        }
     }
     data.valid = complete && (data.facts.os.is_some() || data.facts.kernel.is_some());
     data

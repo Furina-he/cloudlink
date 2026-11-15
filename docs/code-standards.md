@@ -1,6 +1,6 @@
 # 代码规范
 
-本文整理仓库已有的实现约定与检查边界，不额外建立一套与工具配置冲突的规则。
+本文整理当前开发源码的实现约定与检查边界，不额外建立一套与工具配置冲突的规则。执行通道、审批与 GitHub 按归属范围对应 v0.3 候选实现，不表示它们已在 v0.2.0 发布；发行版能力见[发布说明](releases/)。
 
 开发、构建、测试和参与流程统一见[贡献指南](../CONTRIBUTING.md)；颜色、字体、布局和交互视觉规则见[设计系统](design-system.md)；模块职责见[架构概览](architecture.md)。
 
@@ -58,6 +58,8 @@
 
 事件在应用加载前集中订阅，销毁时解除。新增事件应同时更新 Rust 发送端、前端分发和接收 store，包含足够的资源或任务身份，避免旧结果更新当前页面。
 
+执行与运行状态沿用 [execution store](../src/stores/execution.ts) 的 epoch / revision 比较，审批和取消请求携带 `expectedRevision`。不要让迟到事件、旧会话请求或重复点击恢复已取消的状态；动作失败可以重新读取状态，不能重新提交命令。
+
 更新检测由 Rust 承担；前端即使处于 IPC 封装或 Mock 层，也不能导入 `@tauri-apps/plugin-updater`。
 
 跨语言类型保持三处一致：
@@ -78,6 +80,8 @@
 
 - 表单草稿不等同于已保存资源；成功提示以实际 IPC 结果为依据。
 - Agent 选择、资源列入与副本送达分别表达；不要仅切换前端布尔值就宣称同步成功。
+- 审批允许、已领取许可、进程运行和最终结果分别表达。旧 hook 放行没有退出码，不等于执行成功；`checked: false` 不能显示为已通过 CloudLink 检查。
+- 未核实的调用方按未知来源显示；系统通知只定位审批，不批准、不泄漏原始命令。
 - 必须乐观更新时，失败路径恢复之前状态，再按后端返回结果校准。
 - 加载状态保留 `idle / loading / ready / error` 等明确区分；面向用户的操作失败通过既有反馈入口呈现。
 - `unknown` 拒绝值先经 [toIpcError](../src/lib/ipc.ts) 归一化，再由文案层展示。
@@ -93,6 +97,25 @@ IPC 入口只负责参数映射和调度，业务顺序放在 [ipc](../src-tauri
 
 外部进程复用 [proc.rs](../src-tauri/src/proc.rs) 及 SSH、CLI 专用 runner 的超时、取消、输出上限与平台处理。不要为了少写参数拼接代码而把结构化输入变成任意 shell 字符串。
 
+### 执行协议与审批
+
+- [共享 runtime](../src-tauri/crates/guard-rules/src/runtime.rs) 是 hook 与 runner 的运行身份依据；同时核对安装身份、epoch、进程创建标识和实例锁。不能仅凭 JSON 中的 `stopped`、PID 或一次连接失败认定应用已退出。
+- [协议](../src-tauri/crates/guard-rules/src/protocol.rs) 保留 loopback 限制、版本检查、有界帧、短读写超时与常时间凭证比较。不要另造一个可从 CLI、可改 JSON 或命令行开关批准执行的入口；批准只经主窗口具名命令。
+- [协调器](../src-tauri/src/ipc/execution.rs) 的许可只消费一次，原始输入只保留在必要会话内存。`waiting` 票据通过 `wait` 延续，不重新提交、不延长创建时的有效期；超时、断线和未知结果不能自动重跑，也不承诺跨崩溃 exactly-once。
+- [私有路由](../src-tauri/src/ipc/routes.rs) 以稳定资源 ID 与环境选择目标，策略、路由和授权 revision 独立于 Skill lint。语义变化使未启动许可失效；仅检查时间或诊断文字变化不应伪装成授权变化。
+- [runner](../src-tauri/crates/cloudlink-guard/src/runner/mod.rs) 在创建子进程前复核会话、到期时间、路由、策略及输入摘要；展示用脱敏文本不能反过来当执行输入。GUI 不接管标准流，不替调用方启动获准命令。
+- [进程适配](../src-tauri/crates/cloudlink-guard/src/runner/process.rs) 保留已解析程序和 argv。任意请求不拼入 Login Shell；WSL 使用指定发行版与互操作入口。Windows npm `.cmd` 仅解析已知 Node 包入口，不通过 shell 解释整份 shim。
+- 不用“拒绝一切”替代规则正确性，也不以用户审批绕过凭据、身份、目标或范围红线。支持范围以 [执行规则](../src-tauri/crates/guard-rules/src/execution.rs) 和 [GitHub 规则](../src-tauri/crates/guard-rules/src/github.rs) 为准。
+- Hook 分支与 runner 分工不同，不能再假设整个 sidecar 只读 policy、完全离线。原始 stdout/stderr 与脱敏审计分开；停止检查后的新请求明确标注未检查。
+
+### GitHub 归属与范围
+
+[GithubConfig](../src-tauri/src/model/github.rs) 的 owner 不是登录身份；稳定 owner / repo ID 才用于归属、选择与排除，不能只比较名称或仓库 URL。自动跟随、手动选择和历史迁移状态分开处理。
+
+[GitHub IPC](../src-tauri/src/ipc/github.rs) 在查询完成后复核资源 revision 与重置 epoch。分页不完整、离线或权限失败保留旧快照，不合并新范围或推断删除；扩围必须重新验证，历史选择不静默改为自动模式。
+
+实际执行使用 runner 的 GitHub preflight 独立核实有效身份、仓库、owner、范围及适用的默认分支限制。展示缓存、HTTP GET 或自报账号都不能单独证明请求已获授权。
+
 ### SSH 与凭据
 
 - [main.rs](../src-tauri/src/main.rs) 的第一条执行语句必须是 askpass 分流，早于单实例、日志和数据库初始化。
@@ -100,7 +123,8 @@ IPC 入口只负责参数映射和调度，业务顺序放在 [ipc](../src-tauri
 - Windows helper 使用相对可执行文件名并设置其所在目录；接受的 broker socket 恢复阻塞模式。复用 [askpass.rs](../src-tauri/src/secret/askpass.rs)，不要移除这些兼容处理。
 - SSH 参数在别名前放置 `--`；OpenSSH 路径使用 [fsx::ssh_path](../src-tauri/src/fsx.rs) 的转换，不能直接传 Windows verbatim canonical path。
 - 复用已保存密码之前，保留 [saved_password_allowed](../src-tauri/src/ssh/connect.rs) 的目标匹配检查。目标变化不能继续读取旧目标密码。
-- 密码使用 [SecretString](../src-tauri/src/secret/mod.rs)；凭据读写通过 [CredentialStore](../src-tauri/src/secret/store.rs)，不要在其他模块直接调用原生凭据 API。
+- 密码使用 [SecretString](../src-tauri/src/secret/mod.rs)；凭据读写通过 [CredentialStore](../src-tauri/src/secret/store.rs)，不要在其他模块直接调用原生凭据 API。独立 runner 不读取该密码库。
+- [SSH 诊断](../src-tauri/src/ssh/diagnostic.rs) 只返回白名单阶段、客户端信息、退出码与摘要 ID，不暴露任意 stderr、地址或认证材料；诊断增强不能移除主机指纹及密码目标检查。
 
 ### 文件与所有权
 
@@ -112,13 +136,17 @@ Skills 父目录的既有链接由 [deliver/paths.rs](../src-tauri/src/deliver/p
 
 用户的 SSH 配置、Agent 设置及非受管文件不属于可整体替换的目录。沿用专用 Include、hook 安装记录和备份恢复流程，保留其他内容；失败时也不能扩大清理范围。
 
+[单文件传输](../src-tauri/crates/cloudlink-guard/src/runner/transfer.rs) 保持新路径、无递归、无覆盖的边界：上传绑定输入摘要并暂存，下载在相邻受保护目录完成后排他发布；只清理本次有所有权证明的暂存项。远端不存在检查与上传之间仍有竞态，不宣称原子排他创建，也不为失败添加覆盖回退。
+
+[更新交接](../src-tauri/src/ipc/update.rs) 发布限时 `starting` 并取消未启动审批，失败恢复检查而非恢复审批；[sidecar 替换](../src-tauri/src/guard/mod.rs) 沿用旧文件改名、所有权记录和原子写入，不因可执行文件被占用就删除未知文件或把交接当成退出放行。
+
 ## 测试隔离与最小验证
 
 测试不得读写真实用户的 Skills、SSH 配置、私钥或系统凭据。隔离不是改一个目录名后继续依赖真实用户环境。
 
 - 路径使用 [Paths::isolated_in](../src-tauri/src/paths.rs) 或明确的 `CLOUDLINK_HOME` 夹具根；用户目录和 WSL 根也必须属于测试夹具。存在覆盖时，不得回退真实 `HOME`、`USERPROFILE` 或 `APPDATA`。
 - 原生 `OsCredentialStore` 在 `cfg!(test)` 下直接失败。注入内存凭据、模拟系统、CLI runner、事件出口或更新源，不通过改测试开关绕过保护。
-- 子进程、安装器及重启后的进程都必须延续隔离配置；清理只针对已确认归测试所有的内容。
+- 子进程、安装器及重启后的进程都必须延续隔离配置；清理只针对已确认归测试所有的内容。Runner 的 Windows / WSL 子进程还需覆盖 HOME 与 CLI 配置目录、去除真实认证变量，不能只隔离桌面数据库。
 - [Vitest](../vitest.config.ts) 只发现 `src/` 下的单元测试，运行于 Node 环境；[Playwright](../playwright.config.ts) 的 `e2e/` 使用 Mock IPC。
 - Mock 界面通过不等于真实 SSH、WSL 或安装更新通过。桌面及系统集成验证使用贡献指南对应的隔离流程，并明确记录实际运行了哪一层。
 - Rust 检查与完整 Vitest / Playwright 套件串行运行，避免同时争用资源。

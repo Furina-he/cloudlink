@@ -5,6 +5,7 @@ import type {
   CliScopeItem,
   EnvId,
   ServerAsset,
+  GithubScopeResult,
 } from "@/bindings"
 import {
   CLI_BINARY,
@@ -13,6 +14,8 @@ import {
   loginCommand,
 } from "@/lib/cliProviders"
 import { cliAccounts } from "./fixtures"
+import { githubHandlers } from "./handlers-github"
+import { cancelMockExecutions } from "./handlers-execution"
 import {
   cliById,
   compileUnits,
@@ -73,7 +76,7 @@ async function detect(req: CliRequest) {
       }),
       checkedAt,
     }
-    if (account)
+    if (account && req.provider !== "github")
       state.authenticated &&= (
         state.accounts ?? (state.account ? [state.account] : [])
       ).includes(account)
@@ -101,6 +104,10 @@ async function detect(req: CliRequest) {
 }
 
 async function refreshScope(req: CliRequest) {
+  if (req.provider === "github") {
+    const result = await githubHandlers.get_github_scope({ req: { assetId: req.assetId, ownerLogin: req.assetId ? undefined : req.account, force: true } }) as GithubScopeResult
+    return result.scope
+  }
   await sleep(300)
   const ready = agentEnvs()
     .map((env) => db.cliMachine[req.provider][env])
@@ -137,10 +144,15 @@ async function refreshScope(req: CliRequest) {
   return merged
 }
 
-function setScope(assetId: string, selectedIds: string[]) {
+async function setScope(assetId: string, selectedIds: string[]) {
   const asset = cliById(assetId)
+  if (asset.cliProvider === "github") {
+    const result = await githubHandlers.get_github_scope({ req: { assetId, force: false } }) as GithubScopeResult
+    return githubHandlers.save_github_scope({ req: { assetId, expectedRevision: result.config.revision, mode: result.config.mode, selectedRepoIds: selectedIds, excludedRepoIds: result.config.mode === "auto" ? result.scope.filter((repo) => !selectedIds.includes(repo.id)).map((repo) => repo.id) : result.config.excludedRepoIds } })
+  }
   if (selectedIds.some((id) => !asset.cli.scope.some((item) => item.id === id)))
     fail("cli-scope-failed")
+  if (asset.cli.scope.some((item) => item.selected !== selectedIds.includes(item.id))) cancelMockExecutions(assetId)
   asset.cli.scope = asset.cli.scope.map((x) => ({
     ...x,
     selected: selectedIds.includes(x.id),

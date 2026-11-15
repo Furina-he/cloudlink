@@ -54,6 +54,26 @@ function identityProjection(data) {
   }
   return out;
 }
+// Project Git bindings are facts, not authorization. Never retain a raw remote,
+// deploy-hook URL or git credential; malformed sources simply provide no evidence.
+function githubSource(source) {
+  if (!source || typeof source !== "object" || !["github", "github-limited", "github-custom-host"].includes(source.type)) return undefined;
+  let host = source.type === "github-custom-host" ? source.host : "github.com";
+  let owner = source.org || source.owner, repo = source.repo || source.repo_name;
+  if (typeof repo === "string" && repo.includes("/") && !owner) [owner, repo] = repo.split("/");
+  if ((!owner || !repo) && typeof source.url === "string" && !/[\s@%?#\\]/.test(source.url)) {
+    const match = /^https:\/\/([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?$/.exec(source.url);
+    if (match) [, host, owner, repo] = match;
+  }
+  if (typeof host !== "string" || host.length > 253 || !/^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$/.test(host) || host.includes("..")
+      || typeof owner !== "string" || !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(owner)
+      || typeof repo !== "string" || !/^[A-Za-z0-9._-]{1,100}$/.test(repo) || [".", ".."].includes(repo)) return undefined;
+  const result = {host: host.toLowerCase(), owner, repo};
+  const id = source.repoId ?? source.repo_id;
+  if (typeof id === "string" && /^(?:[0-9]{1,20}|repo:[A-Za-z0-9_=-]{1,128})$/.test(id)) result.repoId = id;
+  else if (typeof id === "number" && Number.isSafeInteger(id) && id > 0) result.repoId = String(id);
+  return result;
+}
 async function main() {
   if (!["identity", "scope"].includes(operation) || !binary || !binary.startsWith("/")) fail("cli-command-unsupported");
   if (operation === "identity") {
@@ -92,7 +112,10 @@ async function main() {
       if (next !== undefined) args.push("--next", String(next));
       const data = run(args);
       if (!Array.isArray(data.projects)) fail("cli-command-unsupported");
-      for (const project of data.projects) add({ id: project.id, kind: "project", name: clean(project.name) });
+      for (const project of data.projects) {
+        const repoSource = githubSource(project.link || project.gitRepository);
+        add({ id: project.id, kind: "project", name: clean(project.name), ...(repoSource ? {repoSource} : {}) });
+      }
       next = cursor(data, next, seen);
       if (next === undefined) return { items };
     }
@@ -160,7 +183,8 @@ async function main() {
     const workers = await get("/accounts/" + account + "/workers/scripts", {});
     for (const script of workers.result) add({ id: "worker:" + (script.tag || script.id), kind: "worker", name: clean(script.id) });
     await list("/accounts/" + account + "/pages/projects", {}, project => {
-      add({ id: "pages:" + project.name, kind: "pages", name: clean(project.name) });
+      const repoSource = project.source && githubSource({...project.source.config, type:project.source.type});
+      add({ id: "pages:" + project.name, kind: "pages", name: clean(project.name), ...(repoSource ? {repoSource} : {}) });
     });
     return { items };
   } finally { authHeaders = null; }

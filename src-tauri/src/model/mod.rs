@@ -6,6 +6,8 @@ pub mod compile;
 pub mod connection;
 pub mod delivery;
 pub mod env;
+pub mod execution;
+pub mod github;
 pub mod guard;
 pub mod misc;
 pub mod notes;

@@ -28,7 +28,7 @@ use crate::env::EnvContext;
 use crate::error::{AppError, Result};
 use crate::fsx;
 use crate::model::asset::{AuthMethod, ConnectionInput, ConnectionSource, ServerAsset};
-use crate::model::connection::{ConnectionTestStatus, HostKeyInfo, HostKeyKnown, KeyCheckStatus};
+use crate::model::connection::{ConnectionDiagnostic, ConnectionTestStatus, HostKeyInfo, HostKeyKnown, KeyCheckStatus};
 use crate::model::misc::IpcErrorId;
 use crate::model::probe::{SshError, SshErrorId};
 use crate::params;
@@ -75,6 +75,7 @@ pub struct TestOutcome {
     pub remote_os: Option<String>,
     pub error: Option<SshError>,
     pub host_key: Option<HostKeyInfo>,
+    pub diagnostic: Option<ConnectionDiagnostic>,
 }
 
 impl TestOutcome {
@@ -85,6 +86,7 @@ impl TestOutcome {
             remote_os: None,
             error: Some(error),
             host_key: None,
+            diagnostic: None,
         }
     }
 
@@ -95,6 +97,7 @@ impl TestOutcome {
             remote_os: None,
             error: None,
             host_key: None,
+            diagnostic: None,
         }
     }
 
@@ -110,6 +113,7 @@ impl TestOutcome {
                 known: HostKeyKnown::Changed,
                 known_as: None,
             }),
+            diagnostic: None,
         }
     }
 }
@@ -534,6 +538,7 @@ pub fn run_test(
             remote_os: pretty_name(&out.stdout_str()),
             error: None,
             host_key: trusted,
+            diagnostic: None,
         };
     }
     let mut err = classify(
@@ -548,6 +553,7 @@ pub fn run_test(
     ) {
         err = key_error(err.id, t, None);
     }
+    let diagnostic = Some(super::diagnostic::for_error(tools, &t.env, err.id, Some(&out)));
     match (err.id, fp) {
         (SshErrorId::HostKeyUnknown, Some(fingerprint)) if accept.is_none() => {
             if let Some(known_as) = known_elsewhere(tools, t, &fingerprint, cancel) {
@@ -570,6 +576,7 @@ pub fn run_test(
                     known: HostKeyKnown::New,
                     known_as: None,
                 }),
+                diagnostic: None,
             }
         }
         (SshErrorId::HostKeyChanged, Some(fingerprint)) => TestOutcome {
@@ -582,9 +589,11 @@ pub fn run_test(
                 known: HostKeyKnown::Changed,
                 known_as: None,
             }),
+            diagnostic,
         },
         _ => TestOutcome {
             host_key: trusted,
+            diagnostic,
             ..TestOutcome::failed(err, ms())
         },
     }

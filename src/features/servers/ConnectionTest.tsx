@@ -13,6 +13,7 @@ import type { ServerFormValues } from "@/lib/schemas"
 import { isTestCurrent, useConnectionStore, type ConnectionTest } from "@/stores/connection"
 import { toastError, useConverting } from "./actions"
 import { connectionInputOfForm } from "./serverForm"
+import { ConnectionDiagnostic } from "./ConnectionDiagnostic"
 
 /** 测试前只校验连接用到的字段；名称等其他字段留到保存时 */
 const TEST_FIELDS: FieldPath<ServerFormValues>[] = [
@@ -126,13 +127,16 @@ export function TestResult({
     const e = test.error ?? { id: "unknown" as const }
     const params = { alias: test.alias, ...e.params }
     body = (
-      <span className="flex items-start gap-1.5 text-destructive">
-        <CircleXIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-        <span className="flex flex-col gap-0.5">
-          <span>{copy.sshError[e.id].title(params)}</span>
-          <span className="text-muted-foreground">{copy.sshError[e.id].hint(params)}</span>
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <span className="flex items-start gap-1.5 text-destructive">
+          <CircleXIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          <span className="flex flex-col gap-0.5">
+            <span>{copy.sshError[e.id].title(params)}</span>
+            <span className="text-muted-foreground">{copy.sshError[e.id].hint(params)}</span>
+          </span>
         </span>
-      </span>
+        <ConnectionDiagnostic diagnostic={test.diagnostic} />
+      </div>
     )
   }
   // 每个新结果淡入 150ms（PRD 7.7）；外层的 aria-live 区域保持不动，读屏照常播报
