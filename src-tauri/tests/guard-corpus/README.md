@@ -22,7 +22,7 @@ with another value.
 Run from the repository root, serially with other Rust/frontend suites:
 
 ```powershell
-cargo test --locked --jobs 1 --manifest-path cloudlink/src-tauri/Cargo.toml -p guard-rules -p cloudlink-guard -- --test-threads=1
+cargo test --locked --jobs 1 --manifest-path src-tauri/Cargo.toml -p guard-rules -p cloudlink-guard -- --test-threads=1
 ```
 
 The two crates add 18 Rust tests: nine rule tests (including the 496-case corpus),
