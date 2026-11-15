@@ -12,13 +12,15 @@ import { cn } from "@/lib/utils"
 import { useAssetStore } from "@/stores/assets"
 import { useGuardStore } from "@/stores/guard"
 import { useNotesStore } from "@/stores/notes"
+import { useExecutionStore } from "@/stores/execution"
 import { VIEWS, useUIStore } from "@/stores/ui"
 
 /** 资源数（muted，没有资源时不显示 0）与「动态」的待确认圆点（PRD 6.2） */
 function useNavMarks() {
   const count = useAssetStore((s) => (s.status === "ready" ? s.ids.length : null))
   const pending = useNotesStore((s) => Object.values(s.byAsset).some((list) => list.length > 0))
-  return { count, pending }
+  const commandPending = useExecutionStore((s) => s.requests.some((request) => request.state === "waiting"))
+  return { count, pending: pending || commandPending }
 }
 
 function NavMark({ id }: { id: ViewId }) {

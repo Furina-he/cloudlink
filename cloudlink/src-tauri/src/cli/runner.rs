@@ -191,21 +191,39 @@ fn query_args(query: &Query) -> (&str, CliProvider, &str, Option<&str>) {
             path,
             account,
         } => ("scope", *provider, path, Some(account)),
+        Query::Github { path, owner, .. } => (
+            if owner.is_some() {
+                "github-scope"
+            } else {
+                "github-owners"
+            },
+            CliProvider::Github,
+            path,
+            owner.as_deref(),
+        ),
     }
 }
 
 pub(crate) fn script_for(env: &EnvContext, query: &Query) -> Result<String> {
     let (operation, provider, path, account) = query_args(query);
-    if (!path.is_empty() && !valid_path(path, env)) || account.is_some_and(|a| !valid_account(provider, a)) {
+    let host = match query {
+        Query::Github { host, .. } => host.as_str(),
+        _ => "github.com",
+    };
+    if (!path.is_empty() && !valid_path(path, env))
+        || account.is_some_and(|a| !valid_account(provider, a))
+        || provider == CliProvider::Github && !super::valid_github_host(host)
+    {
         return Err(AppError::ipc(IpcErrorId::CliAccountUnavailable));
     }
     if env.is_windows() {
         let settings = format!(
-            "$clOperation={}; $clProvider={}; $clBinary={}; $clAccount={};\n",
+            "$clOperation={}; $clProvider={}; $clBinary={}; $clAccount={}; $clHost={};\n",
             ps_quote(operation),
             ps_quote(provider.as_str()),
             ps_quote(path),
-            ps_quote(account.unwrap_or(""))
+            ps_quote(account.unwrap_or("")),
+            ps_quote(host)
         );
         Ok(format!(
             "{}\n{}\n{}",
@@ -223,9 +241,15 @@ pub(crate) fn script_for(env: &EnvContext, query: &Query) -> Result<String> {
         );
         let body = if provider == CliProvider::Oracle && matches!(operation, "profiles" | "identity" | "scope") {
             format!("python3 -c {} {args}", sh_quote(include_str!("oracle.py")))
-        } else if provider == CliProvider::Github && matches!(operation, "identity" | "scope") {
-            // gh 是单个 Go 程序，WSL 里不一定装了 Node；和 OCI 一样用系统自带的 python3 做桥
-            format!("python3 -c {} {args}", sh_quote(include_str!("github.py")))
+        } else if provider == CliProvider::Github
+            && matches!(operation, "identity" | "scope" | "github-scope" | "github-owners")
+        {
+            // gh 是单个 Go 程序；固定 Python 桥只输出白名单元数据。
+            format!(
+                "python3 -I -c {} {args} {}",
+                sh_quote(include_str!("github.py")),
+                sh_quote(host)
+            )
         } else if matches!(operation, "scope" | "identity") {
             format!("node -e {} {args}", sh_quote(include_str!("metadata.js")))
         } else {

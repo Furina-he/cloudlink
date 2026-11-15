@@ -38,7 +38,7 @@ mod windows {
     use std::time::Instant;
 
     use super::*;
-    use crate::probe::{MAX_OUTPUT, SCRIPT};
+    use crate::probe::MAX_OUTPUT;
 
     const POLL: Duration = Duration::from_millis(20);
 
@@ -105,6 +105,7 @@ mod windows {
 
     pub(super) fn capture(
         mut command: Command,
+        script: &str,
         timeout: Duration,
         cancel: &AtomicBool,
         tick: &mut dyn FnMut() -> io::Result<()>,
@@ -115,7 +116,7 @@ mod windows {
         }
         // 临时文件只含内置脚本，不承载任何服务器输出。
         let mut stdin = tempfile::tempfile()?;
-        stdin.write_all(SCRIPT.as_bytes())?;
+        stdin.write_all(script.as_bytes())?;
         stdin.seek(SeekFrom::Start(0))?;
         command
             .stdin(Stdio::from(stdin))
@@ -162,6 +163,7 @@ mod windows {
     }
 }
 
+#[cfg(test)]
 pub(super) fn capture(
     command: Command,
     timeout: Duration,
@@ -169,13 +171,24 @@ pub(super) fn capture(
     tick: &mut dyn FnMut() -> io::Result<()>,
     stdout_tick: &mut dyn FnMut(&[u8]),
 ) -> Result<Output, CaptureError> {
+    capture_script(command, crate::probe::SCRIPT, timeout, cancel, tick, stdout_tick)
+}
+
+pub(super) fn capture_script(
+    command: Command,
+    script: &str,
+    timeout: Duration,
+    cancel: &AtomicBool,
+    tick: &mut dyn FnMut() -> io::Result<()>,
+    stdout_tick: &mut dyn FnMut(&[u8]),
+) -> Result<Output, CaptureError> {
     #[cfg(windows)]
     {
-        windows::capture(command, timeout, cancel, tick, stdout_tick)
+        windows::capture(command, script, timeout, cancel, tick, stdout_tick)
     }
     #[cfg(not(windows))]
     {
-        let _ = (command, timeout, cancel, tick, stdout_tick);
+        let _ = (command, script, timeout, cancel, tick, stdout_tick);
         Err(CaptureError::Unsupported)
     }
 }

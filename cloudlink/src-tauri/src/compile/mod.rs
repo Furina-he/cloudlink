@@ -20,6 +20,7 @@ pub struct CompileInput<'a> {
     pub config: &'a SkillConfig,
     /// 该运行环境写法的笔记收件箱目录
     pub inbox: &'a str,
+    pub runner: &'a str,
     pub body_line_limit: u32,
     pub write_snapshot_time: bool,
     /// 编译时刻（秒），决定 `Snapshot:` 日期和探测是否过期
@@ -29,6 +30,8 @@ pub struct CompileInput<'a> {
 pub fn compile(input: &CompileInput) -> CompilePreview {
     let today = crate::time::format_date(input.now_secs);
     let rendered = render::render_skill(&render::RenderInput {
+        env_id: input.env_id,
+        runner: input.runner,
         assets: input.assets,
         all_assets: input.all_assets,
         config: input.config,
@@ -73,5 +76,7 @@ pub fn to_status(p: &CompilePreview, previous: Option<&CompileStatus>, now: &str
     }
 }
 
+#[cfg(test)]
+mod p8_tests;
 #[cfg(test)]
 mod tests;

@@ -22,6 +22,7 @@ import { currentDeliverySnapshot, serverActions, toastError } from "./actions"
 import { CliEnvList, CliScopeList, RecheckButton } from "./CliParts"
 import { CreateHeader } from "./CreateParts"
 import { DetailGroup } from "./DetailParts"
+import { NewGithubForm } from "./NewGithubForm"
 
 /**
  * 添加云平台 CLI（PRD 6.5 分支 B）：只检测已启用 Agent 所在的运行环境，展示版本和 whoami 账号；
@@ -31,6 +32,10 @@ import { DetailGroup } from "./DetailParts"
  * 同一家可以接多个账号：登录能看到几个账号（Cloudflare Account、Vercel Team、OCI Profile）就列几个，已接入的标「已添加」
  */
 export function NewCliForm({ provider }: { provider: CliProvider }) {
+  return provider === "github" ? <NewGithubForm /> : <StandardCliForm provider={provider} />
+}
+
+function StandardCliForm({ provider }: { provider: CliProvider }) {
   const detection = useCliStore((s) => s.byProvider[provider]) ?? emptyDetection
   const { agents } = useAgentOptions()
   const [saving, setSaving] = useState(false)

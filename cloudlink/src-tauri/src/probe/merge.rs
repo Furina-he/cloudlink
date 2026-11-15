@@ -41,6 +41,11 @@ enum Mutation {
     Panel(Option<PanelInfo>),
     Service(Service),
     ListeningPorts(Vec<ListeningPort>),
+    RepoSource {
+        key: String,
+        path: String,
+        source: Option<crate::model::asset::RepoSource>,
+    },
 }
 
 fn service_at<'a>(asset: &'a ServerAsset, observed: &Service) -> Option<&'a Service> {
@@ -128,6 +133,17 @@ impl Mutation {
                 _ => false,
             },
             Self::ListeningPorts(_) => current.listening_ports == baseline.listening_ports,
+            Self::RepoSource { key, path, .. } => current
+                .paths
+                .iter()
+                .find(|item| item.key == *key && item.path == *path)
+                .zip(
+                    baseline
+                        .paths
+                        .iter()
+                        .find(|item| item.key == *key && item.path == *path),
+                )
+                .is_some_and(|(current, before)| current.repo_source == before.repo_source),
         }
     }
 
@@ -156,6 +172,15 @@ impl Mutation {
                 }
             }
             Self::ListeningPorts(value) => asset.listening_ports.clone_from(value),
+            Self::RepoSource { key, path, source } => {
+                if let Some(item) = asset
+                    .paths
+                    .iter_mut()
+                    .find(|item| item.key == *key && item.path == *path && item.source == FieldSource::Manual)
+                {
+                    item.repo_source.clone_from(source);
+                }
+            }
         }
     }
 
@@ -219,6 +244,21 @@ impl Mutation {
                     old.map(service_text),
                     Some(service_text(value)),
                     value.missing.then_some(ProbeChangeKind::Missing),
+                )
+            }
+            Self::RepoSource { key, path, source } => {
+                let shown = |source: &Option<crate::model::asset::RepoSource>| {
+                    source
+                        .as_ref()
+                        .map(|source| format!("{}/{}/{}", source.host, source.owner, source.repo))
+                };
+                let old = before.paths.iter().find(|item| item.key == *key && item.path == *path);
+                (
+                    Field::Facts,
+                    old.map_or_else(|| key.clone(), |item| item.label.clone()),
+                    old.and_then(|item| shown(&item.repo_source)),
+                    shown(source),
+                    None,
                 )
             }
             Self::ListeningPorts(value) => {
@@ -342,6 +382,25 @@ pub fn merge(current: &ServerAsset, data: &ProbeData, run_id: &str, at: &str) ->
             run_id,
         );
     }
+    for (key, observation) in &data.repo_sources {
+        if let Some(path) = current
+            .paths
+            .iter()
+            .find(|path| path.key == *key && path.path == observation.path && path.source == FieldSource::Manual)
+            && path.repo_source != observation.source
+        {
+            result.record(
+                current,
+                Mutation::RepoSource {
+                    key: key.clone(),
+                    path: observation.path.clone(),
+                    source: observation.source.clone(),
+                },
+                false,
+                run_id,
+            );
+        }
+    }
     result.asset.probe.last_run_id = Some(run_id.into());
     result.asset.probe.last_success_at = Some(at.into());
     result.asset.probe.status = ProbeState::Ok;
@@ -459,6 +518,21 @@ pub fn undo(current: &ServerAsset, before: &ServerAsset, after: &ServerAsset) ->
         restore(&mut service.sanitized, &previous.sanitized, &probed.sanitized);
         true
     });
+    for path in &mut restored.paths {
+        if let Some((previous, probed)) = before
+            .paths
+            .iter()
+            .find(|item| item.key == path.key && item.path == path.path)
+            .zip(
+                after
+                    .paths
+                    .iter()
+                    .find(|item| item.key == path.key && item.path == path.path),
+            )
+        {
+            restore(&mut path.repo_source, &previous.repo_source, &probed.repo_source);
+        }
+    }
     if same_connection(current, after) {
         restore(
             &mut restored.connection.verified,

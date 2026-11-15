@@ -247,7 +247,14 @@ fn dangerous(words: &[String], critical: &[String], depth: usize) -> Option<&'st
     let words = command_words(words);
     let name = words.first().map(|s| shell::binary(s)).unwrap_or("");
     let all = words.join(" ").to_ascii_lowercase();
-    if ["env", "printenv"].contains(&name) {
+    if ["env", "printenv"].contains(&name)
+        || name == "kubectl"
+            && (words.iter().any(|word| {
+                word.split([',', '/']).any(|part| ["secret", "secrets"].contains(&part))
+                    || word == "--raw"
+                    || word.starts_with("--raw=")
+            }) || words.windows(2).any(|pair| pair[0] == "config" && pair[1] == "view"))
+    {
         return Some("credential-read");
     }
     if ["sh", "bash", "dash", "zsh"].contains(&name)
@@ -433,6 +440,17 @@ fn read_only(words: &[String], depth: usize) -> bool {
                     .all(|a| ["show", "list", "-4", "-6", "-s", "-d"].contains(&a.as_str()))
         }
         "command" => has("-v") && args.len() >= 2,
+        "kubectl" => {
+            let action = subcommand(
+                words,
+                1,
+                &["--context", "--cluster", "--namespace", "-n", "--kubeconfig", "--user"],
+            );
+            words
+                .get(action)
+                .is_some_and(|word| ["get", "describe", "logs", "top", "version"].contains(&word.as_str()))
+                && !args.iter().any(|word| word == "--raw" || word.starts_with("--raw="))
+        }
         "systemctl" => {
             let action = subcommand(
                 words,

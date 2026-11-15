@@ -24,6 +24,9 @@ import { toastError } from "@/features/servers/actions"
 import { handleOf, useAssetStore } from "@/stores/assets"
 import { useNotesStore } from "@/stores/notes"
 import { useOperationStore } from "@/stores/operations"
+import { useExecutionStore } from "@/stores/execution"
+import { operationStatus } from "@/lib/operation-status"
+import { ExecutionCard } from "./ExecutionCard"
 
 type Filter = "all" | "denied" | "allowed"
 
@@ -134,13 +137,21 @@ const ASKS_SHOWN = 2
 function Asks() {
   const byAsset = useNotesStore((s) => s.byAsset)
   const notes = useMemo(() => Object.values(byAsset).flat().sort((a, b) => b.writtenAt.localeCompare(a.writtenAt)), [byAsset])
+  const requests = useExecutionStore((s) => s.requests)
+  const commands = useMemo(() => {
+    const asked = requests.filter((request) => request.approvalRequired).sort((a, b) => Number(b.state === "waiting") - Number(a.state === "waiting") || b.createdAt.localeCompare(a.createdAt))
+    const live = asked.filter((request) => ["waiting", "approved", "dispatching", "running"].includes(request.state))
+    const settled = asked.filter((request) => !["waiting", "approved", "dispatching", "running"].includes(request.state)).slice(0, 2)
+    return [...live, ...settled]
+  }, [requests])
   const [expanded, setExpanded] = useState(false)
-  if (notes.length === 0) return null
+  if (notes.length === 0 && commands.length === 0) return null
   const hidden = notes.length - ASKS_SHOWN
   const shown = expanded || hidden <= 0 ? notes : notes.slice(0, ASKS_SHOWN)
   return (
-    <ListGroup id="feed-asks" title={copy.feed.asks} count={notes.length}>
+    <ListGroup id="feed-asks" title={copy.feed.asks} count={notes.length + commands.filter((request) => request.state === "waiting").length}>
       <div role="list" aria-labelledby="feed-asks" className="divide-y divide-line-2">
+        {commands.map((request) => <ExecutionCard key={request.requestId} request={request} />)}
         {/* 处理后离场：淡出并上移 4px，120ms（PRD 7.7） */}
         <AnimatePresence initial={false}>
           {shown.map((n) => (
@@ -172,11 +183,11 @@ function FeedRow({ op }: { op: Operation }) {
     return a ? handleOf(a) : copy.feed.deletedAsset
   })
   const denied = op.decision === "denied"
-  const unparsed = !denied && op.reasonId === "unparsed"
+  const status = operationStatus(op)
   const copyCommand = () => void navigator.clipboard.writeText(op.command).then(() => toast.add({ title: copy.common.copiedValue(op.command) })).catch(() => undefined)
   return (
     <div role="listitem" className="group/feed flex min-h-11 items-center gap-3 px-3.5 py-2">
-      <AgentAvatar />
+      {op.source === "runner" ? <span aria-hidden className="flex size-5.5 shrink-0 items-center justify-center rounded-control border border-line bg-card"><AgentMark agent="custom" label={copy.execution.source} lit={false} className="size-3.5" /></span> : <AgentAvatar />}
       <div className="flex min-w-0 flex-1 items-center gap-1">
         <code className="truncate font-mono text-xs select-text" title={op.command}>
           {op.command}
@@ -192,7 +203,7 @@ function FeedRow({ op }: { op: Operation }) {
             <TooltipTrigger render={<span tabIndex={0} className="flex min-w-0 items-center rounded-sm text-destructive outline-none focus-visible:ring-2 focus-visible:ring-ring" />}>
               <StatusDot tone="err" />
               <span className="truncate">
-                {copy.feed.denied}
+                {status.text}
                 {op.reasonId && ` · ${copy.feed.reasonShort(op.reasonId)}`}
               </span>
             </TooltipTrigger>
@@ -200,8 +211,8 @@ function FeedRow({ op }: { op: Operation }) {
           </Tooltip>
         ) : (
           <span className="flex min-w-0 items-center text-fg-2">
-            <StatusDot tone={unparsed ? "warn" : "ok"} />
-            <span className="truncate">{unparsed ? copy.feed.unparsed : copy.feed.allowed}</span>
+            <StatusDot tone={status.tone} />
+            <span className="truncate" title={status.text}>{status.text}</span>
           </span>
         )}
       </span>

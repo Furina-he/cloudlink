@@ -2,6 +2,10 @@
 import type { ConnectionInput } from "./asset"
 import type { EnvId } from "./env"
 import type { SshError } from "./probe"
+export type ConnectionDiagnostic = import("./generated/connection").ConnectionDiagnostic
+export type DiagnosticStage = import("./generated/connection").DiagnosticStage
+export type SshClientKind = import("./generated/connection").SshClientKind
+export type DiagnosticSummaryId = import("./generated/connection").DiagnosticSummaryId
 
 /**
  * test_connection 的请求。新建表单里还没有 assetId；编辑时带 assetId，连接参数取表单草稿。
@@ -41,6 +45,7 @@ export interface ConnectionTestedEvent {
   error?: SshError
   /** host-key 状态时等待核对（new）或已阻断（changed）；成功或认证失败时说明指纹已信任（trusted）或沿用（adopted） */
   hostKey?: HostKeyInfo
+  diagnostic?: ConnectionDiagnostic
 }
 
 /** 私钥文件预检的结论（F-108「检测常见问题」）；unchecked 表示没能检查，不下结论 */

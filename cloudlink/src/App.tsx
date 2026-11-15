@@ -25,6 +25,7 @@ import { useGuardStore } from "@/stores/guard"
 import { syncTrayCopy } from "@/stores/backups"
 import { loadAll, useLoadError } from "@/stores/load"
 import { useNotesStore } from "@/stores/notes"
+import { useExecutionStore } from "@/stores/execution"
 import { togglePreview, useUIStore } from "@/stores/ui"
 
 const VIEW_COMPONENT: Record<ViewId, ComponentType<{ focusTitle: boolean }>> = {
@@ -73,7 +74,7 @@ function useRecheckOnFocus() {
       refreshing = true
       try {
         // F-307/308: these reads import both the shared inbox and guard logs in the backend.
-        await Promise.allSettled([useNotesStore.getState().load(), useGuardStore.getState().load()])
+        await Promise.allSettled([useNotesStore.getState().load(), useGuardStore.getState().load(), useExecutionStore.getState().load()])
       } finally {
         refreshing = false
       }

@@ -42,6 +42,73 @@ pub struct IngestClaim {
 }
 
 impl Db {
+    /// Update only the same runner request. A late waiting/approved record cannot replace a
+    /// terminal result, and hook allowances never acquire an invented execution outcome.
+    pub fn upsert_execution_operation(&self, operation: &Operation) -> Result<bool> {
+        use crate::model::execution::ExecutionState;
+        use crate::model::guard::OperationSource;
+        if operation.source != Some(OperationSource::Runner)
+            || operation.checked != Some(true)
+            || operation
+                .request_id
+                .as_ref()
+                .is_none_or(|id| operation.id != format!("exec_{id}"))
+            || operation
+                .epoch
+                .as_ref()
+                .is_none_or(|epoch| epoch.is_empty() || epoch.len() > 128)
+            || operation.execution_state.is_none()
+        {
+            return Err(AppError::ipc(IpcErrorId::SettingsInvalid));
+        }
+        self.require_asset(&operation.asset_id)?;
+        let before: Option<String> = self
+            .conn
+            .query_row("SELECT json FROM operations WHERE id=?1", [&operation.id], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        let mut after = operation.clone();
+        if let Some(before) = before {
+            let old: Operation = super::from_json(&before)?;
+            if old.source != Some(OperationSource::Runner)
+                || old.request_id != after.request_id
+                || old.epoch != after.epoch
+                || old.asset_id != after.asset_id
+                || old.env_id != after.env_id
+            {
+                return Err(AppError::ipc(IpcErrorId::SettingsInvalid));
+            }
+            if old
+                .execution_state
+                .is_some_and(|state| state.terminal() && state != ExecutionState::Unknown)
+                && old.execution_state != after.execution_state
+            {
+                return Ok(false);
+            }
+            if old.execution_state == Some(ExecutionState::Unknown)
+                && !matches!(
+                    after.execution_state,
+                    Some(ExecutionState::Succeeded | ExecutionState::Failed | ExecutionState::Unknown)
+                )
+            {
+                return Ok(false);
+            }
+            after.at = old.at;
+            after.command = old.command;
+            after.cwd = old.cwd;
+            if before == super::to_json(&after)? {
+                return Ok(false);
+            }
+        }
+        self.conn.execute(
+            "INSERT INTO operations(id,asset_id,at,json) VALUES(?1,?2,?3,?4)
+             ON CONFLICT(id) DO UPDATE SET json=excluded.json",
+            params![after.id, after.asset_id, after.at, super::to_json(&after)?],
+        )?;
+        Ok(true)
+    }
+
     pub fn create_ingest_claim(&self, claim: &IngestClaim) -> Result<()> {
         self.conn.execute(
             "INSERT INTO ingest_claims(id,kind,file_name,source_name,asset_id,at) VALUES (?1,?2,?3,?4,?5,?6)",
@@ -145,7 +212,11 @@ impl Db {
         let mut inserted = false;
         if let Some((op, activity)) = record {
             self.require_asset(&op.asset_id)?;
-            inserted = self.add_operation(op)?;
+            inserted = if op.source == Some(crate::model::guard::OperationSource::Runner) {
+                self.upsert_execution_operation(op)?
+            } else {
+                self.add_operation(op)?
+            };
             if inserted {
                 self.add_activity(activity)?;
             }
@@ -276,6 +347,13 @@ mod tests {
             command: "ssh hk-edge uptime".into(),
             decision: OperationDecision::Allowed,
             reason_id: None,
+            source: None,
+            checked: None,
+            execution_state: None,
+            request_id: None,
+            epoch: None,
+            exit_code: None,
+            duration_ms: None,
         };
         let item = ActivityItem {
             id: "act_op_atomic".into(),

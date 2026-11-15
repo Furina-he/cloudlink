@@ -455,6 +455,13 @@ impl Backend {
                 remote_os: outcome.remote_os.clone(),
                 error: outcome.error.clone(),
                 host_key: outcome.host_key.clone(),
+                diagnostic: outcome.diagnostic.clone().or_else(|| {
+                    outcome.error.as_ref().and_then(|error| {
+                        self.tools()
+                            .ok()
+                            .map(|tools| ssh::diagnostic::for_error(&tools, &target.env, error.id, None))
+                    })
+                }),
             },
         );
         let _ = self.activity(
@@ -958,12 +965,26 @@ impl Backend {
                             },
                         );
                     };
-                    probe::execute(
+                    let github_hosts = backend
+                        .list_assets()
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(|asset| {
+                            asset
+                                .as_cli()
+                                .and_then(|cli| cli.github.as_ref())
+                                .map(|github| github.host.clone())
+                        })
+                        .collect::<Vec<_>>();
+                    probe::execute_with_paths(
                         &backend
                             .tools()
                             .map_err(|_| probe::ExecuteError::Failed(SshError::new(SshErrorId::Unknown, params! {})))?,
                         &env,
-                        snapshot.handle(),
+                        snapshot.as_server().ok_or_else(|| {
+                            probe::ExecuteError::Failed(SshError::new(SshErrorId::Unknown, params! {}))
+                        })?,
+                        &github_hosts,
                         password.as_ref(),
                         Duration::from_secs(u64::from(
                             backend
@@ -1467,6 +1488,7 @@ fn cancelled_test() -> TestOutcome {
         remote_os: None,
         error: None,
         host_key: None,
+        diagnostic: None,
     }
 }
 fn failed_test(error: SshErrorId, alias: &str) -> TestOutcome {
@@ -1476,6 +1498,7 @@ fn failed_test(error: SshErrorId, alias: &str) -> TestOutcome {
         remote_os: None,
         error: Some(SshError::new(error, params! {"alias"=>alias})),
         host_key: None,
+        diagnostic: None,
     }
 }
 
@@ -1585,6 +1608,7 @@ mod tests {
             remote_os: None,
             error: None,
             host_key: None,
+            diagnostic: None,
         }
     }
 

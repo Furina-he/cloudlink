@@ -1,6 +1,8 @@
 # Health check
 
-Check the servers the user asked about; if none were named, check every server in the overview table. Run the checks for one server in a single ssh call, then report one table: server, status (OK / attention / unreachable), findings. Do not fix anything; list suggested actions separately and wait for the user.
+Check the servers the user asked about; if none were named, check every server in the overview table. Read each server's details first and use its Connect entry for one remote command, then report one table: server, status (OK / attention / unreachable), findings. Do not fix anything; list suggested actions separately and wait for the user.
+
+The direct SSH examples below are only for non-production aliases. For a production server, pass the same quoted remote command after `--` in its absolute CloudLink runner entry; do not run the `ssh <alias>` prefix. Keep the stable resource ID and use the PowerShell variant when applicable. A waiting ticket is continued with `wait`, never by retrying the check through direct SSH.
 
     ssh <alias> 'uptime; nproc; free -m; df -hP -x tmpfs -x devtmpfs -x overlay -x squashfs; docker ps -a --format "{{.Names}}\t{{.Status}}"; systemctl --failed --no-legend --plain; journalctl -p err --since "24 hours ago" --no-pager | tail -n 30'
 

@@ -6,6 +6,8 @@ import { connectionInputOf } from "@/features/servers/serverForm"
 import { connectionSignature } from "@/stores/connection"
 import { handleOf, selectCanDistribute } from "@/stores/assets"
 import { startProbe } from "./handlers-probe"
+import { prepareGithubCreate } from "./handlers-github"
+import { cancelMockExecutions } from "./handlers-execution"
 import { assetById, compileUnits, db, fail, logActivity, newId, now, recompile, saveSnapshot, serverById, sharedAgentKeys } from "./state"
 
 /** 已保存服务器的连接参数，与前端表单交给 save_asset 的形状一致（签名比对用） */
@@ -64,11 +66,16 @@ function saveCli(input: CliAssetInput) {
   const envs = [...new Set(compileUnits().map((u) => u.envId))]
   const rest = { ...input }
   delete rest.scope
+  delete rest.github
+  const github = input.cliProvider === "github" && !prev ? prepareGithubCreate(input) : undefined
+  if (prev && input.production !== prev.production) cancelMockExecutions(prev.id)
   const asset: CliAsset = {
     ...rest,
     id: prev?.id ?? newId("ast"),
     handle: prev?.handle ?? nextCliHandle(input.cliProvider),
-    cli: prev?.cli ?? {
+    account: prev?.account ?? github?.account ?? input.account,
+    github: prev?.github ?? github?.github,
+    cli: prev?.cli ?? github?.cli ?? {
       binary: CLI_BINARY[input.cliProvider],
       envStates: Object.fromEntries(envs.map((e) => [e, db.cliMachine[input.cliProvider][e] ?? { installed: false, authenticated: false, expired: false, checkedAt: now() }])),
       scope: input.scope ?? [],
@@ -92,6 +99,9 @@ function saveServer(input: ServerAssetInput) {
   checkAlias(alias, saved?.id, input.connection)
   const rest = { ...input }
   delete rest.testId
+  if (saved && (saved.production !== input.production || connectionSignature(connInputOf(saved)) !== connectionSignature(input.connection) || JSON.stringify(saved.services.filter((s) => s.critical).map((s) => s.name).sort()) !== JSON.stringify(input.services.filter((s) => s.critical).map((s) => s.name).sort()))) cancelMockExecutions(saved.id)
+  // Repository evidence belongs to the collector, never to an ordinary form request.
+  rest.paths = input.paths.map((path) => ({ ...path, repoSource: saved?.paths.find((old) => old.key === path.key && old.path === path.path)?.repoSource }))
   const asset: ServerAsset = {
     ...rest,
     id: saved?.id ?? newId("ast"),
@@ -115,6 +125,7 @@ function saveServer(input: ServerAssetInput) {
 
 function deleteAsset(id: string, opts: { removeGeneratedKey: boolean }) {
   const asset = assetById(id)
+  cancelMockExecutions(id)
   db.assets = db.assets.filter((a) => a.id !== id)
   db.passwords.delete(id)
   db.notes = db.notes.filter((n) => n.assetId !== id)
@@ -178,12 +189,15 @@ function setDistribute(id: string, agentKey: string, on: boolean) {
   if (on && !can.ok) fail("cannot-distribute", { reason: can.reason })
   const affectedAgentKeys = sharedAgentKeys(agentKey)
   const rest = asset.agent.agents.filter((k) => !affectedAgentKeys.includes(k))
-  asset.agent.agents = on ? [...rest, ...affectedAgentKeys] : rest
+  const next = on ? [...rest, ...affectedAgentKeys] : rest
+  if (JSON.stringify([...asset.agent.agents].sort()) !== JSON.stringify([...next].sort())) cancelMockExecutions(id)
+  asset.agent.agents = next
   return { ...saveSnapshot(asset), affectedAgentKeys }
 }
 
 function setMode(id: string, mode: Mode) {
   const asset = assetById(id)
+  if (asset.agent.mode !== mode) cancelMockExecutions(id)
   asset.agent.mode = mode
   asset.updatedAt = now()
   logActivity({ kind: "mode", assetId: id, messageId: "mode-changed", params: { alias: handleOf(asset), mode }, ok: true })
@@ -194,6 +208,7 @@ function setMode(id: string, mode: Mode) {
 function allReadOnly() {
   const list = db.assets.filter((a) => a.production && a.agent.mode === "standard")
   for (const a of list) {
+    cancelMockExecutions(a.id)
     a.agent.mode = "read-only"
     logActivity({ kind: "mode", assetId: a.id, messageId: "mode-changed", params: { alias: handleOf(a), mode: "read-only" }, ok: true })
   }

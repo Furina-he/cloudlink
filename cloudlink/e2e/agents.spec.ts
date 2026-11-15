@@ -100,7 +100,7 @@ test.describe("Agent 视图", () => {
     const rulesRow = page.getByRole("button", { name: /^护栏规则/ })
     await expect(rulesRow).toContainText(/拦截 \d+ 类危险操作/)
     await rulesRow.click()
-    await expect(page.getByRole("heading", { name: "标准运维时拦下" })).toBeVisible()
+    await expect(page.getByRole("heading", { name: "标准运维的高风险操作" })).toBeVisible()
     await expect(page.getByRole("heading", { name: "任何档位都拦下" })).toBeVisible()
     const allow = page.getByRole("button", { name: /^只放行查看类命令，其余都拦下/ })
     await expect(allow).toHaveAttribute("aria-expanded", "false")

@@ -111,12 +111,14 @@ pub fn hk_edge() -> ServerAsset {
                 label: "OpenResty site configs".into(),
                 path: "/opt/1panel/apps/openresty/openresty/conf/conf.d".into(),
                 source: FieldSource::Manual,
+                repo_source: None,
             },
             AssetPath {
                 key: "compose-root".into(),
                 label: "Docker Compose projects".into(),
                 path: "/opt/1panel/docker/compose".into(),
                 source: FieldSource::Manual,
+                repo_source: None,
             },
         ],
         services: vec![Service {
@@ -203,6 +205,7 @@ pub fn sg_db() -> ServerAsset {
             label: "PostgreSQL data directory".into(),
             path: "/var/lib/postgresql/16/main".into(),
             source: FieldSource::Manual,
+            repo_source: None,
         }],
         services: vec![
             Service {
@@ -337,6 +340,7 @@ pub fn cloudflare() -> CliAsset {
                     address: None,
                     default_branch: None,
                     visibility: None,
+                    repo_source: None,
                 },
                 CliScopeItem {
                     id: "zone_2".into(),
@@ -347,6 +351,7 @@ pub fn cloudflare() -> CliAsset {
                     address: None,
                     default_branch: None,
                     visibility: None,
+                    repo_source: None,
                 },
                 CliScopeItem {
                     id: "zone_3".into(),
@@ -357,6 +362,7 @@ pub fn cloudflare() -> CliAsset {
                     address: None,
                     default_branch: None,
                     visibility: None,
+                    repo_source: None,
                 },
                 CliScopeItem {
                     id: "worker_1".into(),
@@ -367,9 +373,11 @@ pub fn cloudflare() -> CliAsset {
                     address: None,
                     default_branch: None,
                     visibility: None,
+                    repo_source: None,
                 },
             ],
         },
+        github: None,
     }
 }
 
@@ -394,6 +402,7 @@ pub fn github() -> CliAsset {
         address: None,
         default_branch: Some(branch.into()),
         visibility: Some(visibility),
+        repo_source: None,
     };
     CliAsset {
         tag: CliTag::Tag,
@@ -420,6 +429,7 @@ pub fn github() -> CliAsset {
                 repo("repo:R_notes", "octo/notes", "master", RepoVisibility::Public, false),
             ],
         },
+        github: None,
     }
 }
 

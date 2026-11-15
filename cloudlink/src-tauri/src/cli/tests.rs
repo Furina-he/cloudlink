@@ -25,6 +25,7 @@ impl Runner for FixtureRunner {
             } else { format!("/isolated/{}", provider.binary().as_str()) } }),
             Query::Version { .. } => json!({ "version": "4.157.0" }),
             Query::Profiles { .. } => json!({ "profiles": ["DEFAULT", "production", "bad profile"] }),
+            Query::Github { .. } => json!({"status":"offline","owners":[],"items":[],"reasonId":"offline"}),
             Query::Identity {
                 provider: CliProvider::Cloudflare,
                 ..
@@ -599,7 +600,7 @@ fn github_metadata_runs_through_the_python_bridge_in_wsl() {
         },
     ] {
         let script = runner::script_for(&envs[1], &query).unwrap();
-        assert!(script.contains("python3 -c") && !script.contains("node -e"));
+        assert!(script.contains("python3 -I -c") && !script.contains("node -e"));
         assert!(script.contains("GH_PROMPT_DISABLED=1"));
     }
     let windows = runner::script_for(

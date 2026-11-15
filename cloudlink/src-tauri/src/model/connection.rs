@@ -125,6 +125,64 @@ pub struct KeyCheckRequest {
     pub path: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export, export_to = "connection.ts")]
+pub enum DiagnosticStage {
+    KeyCheck,
+    Connection,
+    HostKey,
+    Authentication,
+    Command,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export, export_to = "connection.ts")]
+pub enum SshClientKind {
+    #[serde(rename = "windows-openssh")]
+    WindowsOpenSsh,
+    #[serde(rename = "git-openssh")]
+    GitOpenSsh,
+    #[serde(rename = "wsl-openssh")]
+    WslOpenSsh,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export, export_to = "connection.ts")]
+pub enum DiagnosticSummaryId {
+    CheckLoginAndAuth,
+    KeyPermissions,
+    KeyMissing,
+    KeyFormat,
+    HostIdentityChanged,
+    VerifyHostIdentity,
+    NetworkTimeout,
+    ConnectionRefused,
+    ResolveFailed,
+    InteractionRequired,
+    OutputLimited,
+    UnknownResult,
+}
+
+/// Whitelist-only metadata; no original stderr, target address, username or credentials.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "connection.ts")]
+pub struct ConnectionDiagnostic {
+    pub stage: DiagnosticStage,
+    pub client: SshClientKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub client_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub exit_code: Option<i32>,
+    pub summary: Vec<DiagnosticSummaryId>,
+}
+
 /// `connection://tested` 的载荷
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -144,6 +202,9 @@ pub struct ConnectionTestedEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub host_key: Option<HostKeyInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub diagnostic: Option<ConnectionDiagnostic>,
 }
 
 #[cfg(test)]

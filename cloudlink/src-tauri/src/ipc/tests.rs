@@ -133,9 +133,9 @@ impl Runner for MetadataRunner {
     }
 }
 
-struct Fixture {
-    backend: Arc<Backend>,
-    paths: Paths,
+pub(super) struct Fixture {
+    pub(super) backend: Arc<Backend>,
+    pub(super) paths: Paths,
     credentials: Arc<MemoryCredentialStore>,
     events: Arc<RecordingEvents>,
     // Drop the backend/database before asking TempDir to remove its isolated tree on Windows.
@@ -143,7 +143,7 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self::with_runner(Arc::new(cli::EmptyRunner), false)
     }
 
@@ -202,6 +202,7 @@ impl Fixture {
                 cli::Service::new(runner),
                 events.clone(),
                 Arc::new(super::feedback::NoProcessSelfTest),
+                None,
             )
         }
         .unwrap();
@@ -232,7 +233,7 @@ impl Fixture {
         server
     }
 
-    fn seed_ready_server(&self) -> Asset {
+    pub(super) fn seed_ready_server(&self) -> Asset {
         let server = self.server();
         let input = server_input(&server, Some(&server.id));
         self.backend
@@ -403,6 +404,7 @@ fn cli_input(account: &str, scope: Option<Vec<CliScopeItem>>) -> CliAssetInput {
         cli_provider: CliProvider::Cloudflare,
         account: Some(account.into()),
         scope,
+        github: None,
     }
 }
 

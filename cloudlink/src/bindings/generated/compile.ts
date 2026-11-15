@@ -41,7 +41,7 @@ text: string,
  */
 hidden: boolean, };
 
-export type RelationKind = "proxy-jump" | "same-host" | "dns" | "instance" | "site";
+export type RelationKind = "proxy-jump" | "same-host" | "dns" | "instance" | "site" | "deployment";
 
 /**
  * 用户补充或改写的一条关系（一句英文，写进「How they fit together」）

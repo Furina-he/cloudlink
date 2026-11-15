@@ -4,6 +4,7 @@ import { emit } from "@tauri-apps/api/event"
 import type { ActivityItem, ActivityQuery, Operation, OperationQuery, Settings } from "@/bindings"
 import * as fx from "./fixtures"
 import { setAutoCheck } from "./handlers-update"
+import { resetMockExecutions } from "./handlers-execution"
 import { secretRule } from "./lint"
 import { aliasOf, assetById, db, fail, logActivity, now, recompile, saveSnapshot } from "./state"
 
@@ -66,6 +67,7 @@ function listActivity(q: ActivityQuery) {
 
 /** 清空数据：同时删除托管 ssh 配置、凭据库中的密码、护栏的 hook、笔记收件箱和操作记录；检测到的 Agent 目标保留 */
 function resetData() {
+  resetMockExecutions()
   db.assets = []
   db.cliMachine = structuredClone(fx.cliMachine)
   db.deliveries = []

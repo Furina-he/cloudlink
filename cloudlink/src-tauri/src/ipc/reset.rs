@@ -144,6 +144,9 @@ impl Backend {
                 db.begin_reset()?;
             }
             self.reset_epoch.fetch_add(1, Ordering::SeqCst);
+            self.execution()?.routes_current = false;
+            self.cancel_unstarted_execution_locked("execution-reset")?;
+            self.clear_execution_routes_locked()?;
             self.cancel_jobs_for_reset();
             // A vault write may be waiting for a native prompt with no state lock held.
             // Its stale commit will fail and queue cleanup. Keep the durable reset intent until it finishes.
@@ -173,6 +176,7 @@ impl Backend {
                 operations::cleanup(&self.paths, &db)?;
                 db.reset_domain()?;
             }
+            self.forget_execution_requests_locked()?;
             self.shared_mismatches
                 .lock()
                 .map_err(|_| AppError::internal("sharing state unavailable"))?

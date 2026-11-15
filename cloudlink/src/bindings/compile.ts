@@ -76,7 +76,7 @@ export interface SkillConfig {
   conventions: Convention[]
 }
 
-export type RelationKind = "proxy-jump" | "same-host" | "dns" | "instance" | "site"
+export type RelationKind = "proxy-jump" | "same-host" | "dns" | "instance" | "site" | "deployment"
 
 /** CloudLink 从资源数据推出的一条关系（list_relations）。界面文案由 copy.ts 按 kind 和 params 生成 */
 export interface Relation {

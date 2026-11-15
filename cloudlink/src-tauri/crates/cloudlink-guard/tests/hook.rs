@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 struct Fixture {
     root: PathBuf,
     exe: PathBuf,
+    runtime: Option<guard_rules::runtime::RuntimeOwner>,
 }
 
 impl Fixture {
@@ -35,7 +36,19 @@ impl Fixture {
             b"{\"managedBy\":\"cloudlink\",\"kind\":\"guard\"}",
         )
         .unwrap();
-        let fixture = Self { root, exe };
+        let runtime = guard_rules::runtime::RuntimeOwner::start(&root, "hook-test").unwrap();
+        runtime
+            .publish(
+                "active",
+                Some("127.0.0.1:40000"),
+                Some(&guard_rules::runtime::nonce().unwrap()),
+            )
+            .unwrap();
+        let fixture = Self {
+            root,
+            exe,
+            runtime: Some(runtime),
+        };
         fixture.policy(json!({"version":1,"resources":[{"id":"ast-test","kind":"vps","handle":"test-vps","mode":"read-only","envIds":["windows","wsl:Fixture"],"hosts":[],"criticalServices":[]}]}));
         fixture
     }
@@ -107,8 +120,60 @@ impl Drop for Fixture {
         let resolved = fs::canonicalize(parent).unwrap();
         assert!(resolved.starts_with(&temporary) && resolved != temporary);
         assert!(no_links(parent));
+        guard_rules::runtime::read_owned_json(
+            &self.root.join(".cloudlink.json"),
+            "data",
+            guard_rules::runtime::MAX_RUNTIME,
+        )
+        .unwrap();
         fs::remove_dir_all(parent).unwrap();
     }
+}
+
+#[test]
+fn stopped_hooks_do_not_check_but_a_damaged_record_never_means_exit() {
+    let mut fixture = Fixture::new();
+    fixture.runtime.take();
+    let record = json!({"managedBy":"cloudlink","kind":"runtime","version":1,
+        "installationId":guard_rules::runtime::installation_id(&fixture.root).unwrap(),
+        "epoch":"dead","pid":u32::MAX,"processCreated":"0","state":"stopped"});
+    fs::write(fixture.root.join("runtime.json"), serde_json::to_vec(&record).unwrap()).unwrap();
+    assert!(fixture.bash("ssh test-vps reboot").stdout.is_empty());
+    assert!(fixture.records().is_empty());
+    fs::write(fixture.root.join("runtime.json"), b"{").unwrap();
+    let output = fixture.bash("ssh test-vps uptime");
+    let deny: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(deny["hookSpecificOutput"]["permissionDecision"], "deny");
+}
+
+#[test]
+fn production_direct_calls_use_the_channel_and_an_owned_runner_is_not_rechecked() {
+    let fixture = Fixture::new();
+    fixture.policy(json!({"version":1,"resources":[{"id":"ast-test","kind":"vps","handle":"test-vps","production":true,"mode":"standard","envIds":["windows"],"hosts":[],"criticalServices":[]}]}));
+    let output = fixture.bash("ssh test-vps uptime");
+    let deny: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        deny["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .unwrap()
+            .contains("execution channel")
+    );
+    let command = format!(
+        "'{}' exec --env windows --asset ast-test -- 'cat .env'",
+        fixture.exe.to_string_lossy().replace('\\', "/")
+    );
+    assert!(fixture.bash(&command).stdout.is_empty());
+    assert_eq!(fixture.records().len(), 1);
+}
+
+#[test]
+fn status_reports_no_capability_or_endpoint_to_the_terminal() {
+    let fixture = Fixture::new();
+    let output = fixture.run(b"", &["status"]);
+    assert!(output.status.success());
+    let status: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(status["state"], "active");
+    assert!(status.get("capability").is_none() && status.get("endpoint").is_none());
 }
 
 #[test]

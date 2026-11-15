@@ -131,7 +131,7 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     const panel = inspector(page)
     await expect(panel.getByText("WSL Ubuntu-24.04 里的 Claude Code 还用不了这台服务器")).toBeVisible()
     await expect(panel.getByRole("button", { name: "配置私钥" })).toBeVisible()
-    await expect(panel.getByText("红线写给 Agent 看。Claude Code 上护栏会强制拦截，能防手滑，防不了刻意绕过。")).toBeVisible()
+    await expect(panel.getByText("这里的红线写给 Agent 看。CloudLink 运行中，生产资源经执行入口按档位检查；Claude Code 护栏也会引导可识别直连。能防手滑，不是安全沙箱。")).toBeVisible()
     await shot(page, "state-06-detail-hk-edge")
     await expect(panel.getByRole("button", { name: /条 Agent 笔记等你确认/ })).toBeVisible()
     await expect(panel.getByRole("list", { name: "最近的操作记录" })).toBeVisible()
@@ -165,7 +165,7 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     await sheet.getByRole("combobox", { name: "文件" }).click()
     await page.getByRole("option", { name: "SKILL.md" }).click()
     await expect(sheet.getByRole("combobox", { name: "文件" })).toContainText("SKILL.md")
-    await sheet.getByRole("button", { name: /定位到 references\/hk-edge\.md 第 32 行/ }).click()
+    await sheet.getByRole("button", { name: /定位到 references\/hk-edge\.md 第 \d+ 行/ }).first().click()
     await expect(sheet.getByRole("combobox", { name: "文件" })).toContainText("hk-edge.md")
   })
 

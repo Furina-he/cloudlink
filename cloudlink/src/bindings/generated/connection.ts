@@ -3,6 +3,11 @@ import type { ConnectionInput } from "./asset";
 import type { EnvId } from "./env";
 import type { SshError } from "./probe";
 
+/**
+ * Whitelist-only metadata; no original stderr, target address, username or credentials.
+ */
+export type ConnectionDiagnostic = { stage: DiagnosticStage, client: SshClientKind, clientVersion?: string, exitCode?: number, summary: Array<DiagnosticSummaryId>, };
+
 export type ConnectionTestRequest = { assetId?: string, connection: ConnectionInput, password?: string, envId?: EnvId, };
 
 export type ConnectionTestStatus = "ok" | "failed" | "cancelled" | "host-key";
@@ -10,7 +15,11 @@ export type ConnectionTestStatus = "ok" | "failed" | "cancelled" | "host-key";
 /**
  * `connection://tested` 的载荷
  */
-export type ConnectionTestedEvent = { testId: string, status: ConnectionTestStatus, ms?: number, remoteOs?: string, error?: SshError, hostKey?: HostKeyInfo, };
+export type ConnectionTestedEvent = { testId: string, status: ConnectionTestStatus, ms?: number, remoteOs?: string, error?: SshError, hostKey?: HostKeyInfo, diagnostic?: ConnectionDiagnostic, };
+
+export type DiagnosticStage = "key-check" | "connection" | "host-key" | "authentication" | "command";
+
+export type DiagnosticSummaryId = "check-login-and-auth" | "key-permissions" | "key-missing" | "key-format" | "host-identity-changed" | "verify-host-identity" | "network-timeout" | "connection-refused" | "resolve-failed" | "interaction-required" | "output-limited" | "unknown-result";
 
 export type HostKeyInfo = { fingerprint: string, known: HostKeyKnown, 
 /**
@@ -40,3 +49,5 @@ path: string, };
  * 私钥文件预检的结论（F-108「检测常见问题」）
  */
 export type KeyCheckStatus = "ok" | "missing" | "permissions" | "passphrase" | "putty" | "public-key" | "invalid" | "unchecked";
+
+export type SshClientKind = "windows-openssh" | "git-openssh" | "wsl-openssh" | "unknown";

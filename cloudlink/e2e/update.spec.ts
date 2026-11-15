@@ -92,7 +92,7 @@ test.describe("检测更新", () => {
     await openDialog(page)
     await expect(dialog(page).getByText("当前版本 0.1.0 · 发布于 2026-11-20")).toBeVisible()
     await expect(button(page, "重启以更新")).toBeFocused()
-    await expect(dialog(page).getByText("安装时 CloudLink 会自动关闭并重新打开；护栏和已分发的 Skill 照常工作。")).toBeVisible()
+    await expect(dialog(page).getByText("安装时 CloudLink 会关闭并重新打开。交接期间执行入口短等就绪，不跳过检查；未启动的审批会取消，更新后不会自动执行。已分发的 Skill 会保留。")).toBeVisible()
     // 已经下好，对话框里没有进度条，也没有取消下载
     await expect(dialog(page).getByRole("progressbar")).toHaveCount(0)
     await expect(dialog(page).getByRole("button", { name: /取消/ })).toHaveCount(0)
@@ -124,7 +124,7 @@ test.describe("检测更新", () => {
     await expect(dialog(page).locator("[aria-live=polite]")).toHaveText("正在安装。CloudLink 即将关闭并重新打开。")
     await expect(button(page, "正在安装")).toBeDisabled()
     // 两句意思相同的提示只留一句；「稍后」、关闭按钮和 Esc 都不能关掉对话框
-    await expect(dialog(page).getByText("安装时 CloudLink 会自动关闭并重新打开；护栏和已分发的 Skill 照常工作。")).toHaveCount(0)
+    await expect(dialog(page).getByText("安装时 CloudLink 会关闭并重新打开。交接期间执行入口短等就绪，不跳过检查；未启动的审批会取消，更新后不会自动执行。已分发的 Skill 会保留。")).toHaveCount(0)
     await expect(button(page, "稍后")).toBeDisabled()
     await expect(dialog(page).getByRole("button", { name: "关闭" })).toHaveCount(0)
     await page.keyboard.press("Escape")

@@ -387,16 +387,17 @@ fn policy_tracks_modes_and_selected_scopes_without_secrets_or_private_paths() {
 }
 
 #[test]
-fn policy_leaves_github_out_until_its_guard_rules_ship() {
+fn policy_includes_github_with_its_shipped_guard_rules() {
     let (_temporary, paths, _environment) = fixture();
     let assets = vec![Asset::Vps(testkit::hk_edge()), Asset::Cli(testkit::github())];
     write_policy(&paths, &assets).unwrap();
     let value: Value =
         serde_json::from_str(&fs::read_to_string(paths.data_dir.join("guard/policy.json")).unwrap()).unwrap();
-    // 已安装的护栏程序只认三家云平台；混进 github 会让整份 policy 失效
+    // P8 includes GitHub without invalidating the independent SSH policy.
     assert!(guard_rules::policy_valid(&value));
-    assert_eq!(value["resources"].as_array().unwrap().len(), 1);
+    assert_eq!(value["resources"].as_array().unwrap().len(), 2);
     assert_eq!(value["resources"][0]["kind"], "vps");
+    assert_eq!(value["resources"][1]["provider"], "github");
     assert!(policy_current(&paths, &assets));
 }
 

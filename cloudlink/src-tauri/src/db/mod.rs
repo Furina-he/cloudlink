@@ -4,6 +4,7 @@
 
 use std::path::Path;
 
+mod github;
 mod p4b;
 mod p4c;
 
@@ -100,6 +101,8 @@ const MIGRATIONS: &[&str] = &[
         json(CASE WHEN json_extract(json, '$.envTag') = 'prod' THEN 'true' ELSE 'false' END)), '$.envTag')
     WHERE json_type(json, '$.envTag') IS NOT NULL;
     "#,
+    // v6: F-110 owner/identity separation; legacy selections remain manual and pending.
+    github::MIGRATION,
 ];
 
 pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;

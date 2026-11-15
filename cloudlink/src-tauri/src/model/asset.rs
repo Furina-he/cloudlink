@@ -253,6 +253,92 @@ pub struct AssetPath {
     pub label: String,
     pub path: String,
     pub source: FieldSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo_source: Option<RepoSource>,
+}
+
+/// Only the public GitHub origin identity is retained. URL credentials, deploy-hook
+/// URLs, gitCredentialId and arbitrary CLI response fields never enter the model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, export_to = "asset.ts")]
+pub struct RepoSource {
+    pub host: String,
+    pub owner: String,
+    pub repo: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo_id: Option<String>,
+}
+
+impl RepoSource {
+    pub fn valid(&self) -> bool {
+        crate::cli::valid_github_host(&self.host)
+            && crate::cli::valid_github_owner(&self.owner)
+            && !self.repo.is_empty()
+            && self.repo.len() <= 100
+            && self.repo != "."
+            && self.repo != ".."
+            && self
+                .repo
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            && self.repo_id.as_ref().is_none_or(|id| {
+                !id.is_empty()
+                    && id.len() <= 133
+                    && (id.len() <= 20 && id.bytes().all(|byte| byte.is_ascii_digit())
+                        || crate::cli::valid_github_ids(std::slice::from_ref(id)))
+            })
+    }
+
+    pub fn from_remote(remote: &str, allowed_hosts: &[String]) -> Option<Self> {
+        if remote.len() > 2048
+            || remote
+                .chars()
+                .any(|character| character.is_control() || character.is_whitespace())
+            || remote.contains(['?', '#', '%', '\\'])
+        {
+            return None;
+        }
+        let (host, path) = if let Some(remote) = remote.strip_prefix("git@") {
+            remote.split_once(':')?
+        } else if let Some(remote) = remote.strip_prefix("https://") {
+            if remote.contains('@') {
+                return None;
+            }
+            remote.split_once('/')?
+        } else if let Some(remote) = remote.strip_prefix("ssh://git@") {
+            remote.split_once('/')?
+        } else {
+            return None;
+        };
+        let host = host
+            .strip_suffix(":443")
+            .or_else(|| host.strip_suffix(":22"))
+            .unwrap_or(host)
+            .to_ascii_lowercase();
+        let host = if host == "ssh.github.com"
+            && allowed_hosts
+                .iter()
+                .any(|allowed| allowed.eq_ignore_ascii_case("github.com"))
+        {
+            "github.com".to_string()
+        } else {
+            host
+        };
+        if !allowed_hosts.iter().any(|allowed| allowed.eq_ignore_ascii_case(&host)) {
+            return None;
+        }
+        let (owner, repo) = path.strip_suffix(".git").unwrap_or(path).split_once('/')?;
+        let source = Self {
+            host,
+            owner: owner.into(),
+            repo: repo.into(),
+            repo_id: None,
+        };
+        source.valid().then_some(source)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -497,6 +583,9 @@ pub struct CliScopeItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub visibility: Option<RepoVisibility>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo_source: Option<RepoSource>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -551,6 +640,10 @@ pub struct CliAsset {
     pub handle: String,
     pub account: Option<String>,
     pub cli: CliInfo,
+    // F-110: stable resource ownership is independent from the active gh login.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub github: Option<super::github::GithubConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -740,6 +833,9 @@ pub struct CliAssetInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub scope: Option<Vec<CliScopeItem>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub github: Option<super::github::GithubCreateInput>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -778,6 +874,33 @@ mod tests {
         let mut wrong = cli;
         wrong["type"] = "vps".into();
         assert!(serde_json::from_value::<Asset>(wrong).is_err());
+    }
+
+    #[test]
+    fn repository_origin_projection_rejects_credentials_unknown_hosts_and_injection() {
+        let hosts = vec!["github.com".to_string(), "git.example.com".to_string()];
+        for remote in [
+            "git@github.com:acme/app.git",
+            "https://github.com/acme/app.git",
+            "ssh://git@ssh.github.com:443/acme/app.git",
+        ] {
+            let source = RepoSource::from_remote(remote, &hosts).unwrap();
+            assert_eq!(
+                (source.host.as_str(), source.owner.as_str(), source.repo.as_str()),
+                ("github.com", "acme", "app")
+            );
+        }
+        for remote in [
+            "https://token@github.com/acme/app.git",
+            "https://user:pass@github.com/acme/app.git",
+            "git@unknown.example:acme/app.git",
+            "https://github.com/acme/app.git?token=fake",
+            "https://github.com/acme/%61pp.git",
+            "https://github.com/acme/..",
+            "git@github.com:acme/app.git\n@@status git 0",
+        ] {
+            assert!(RepoSource::from_remote(remote, &hosts).is_none(), "{remote:?}");
+        }
     }
 
     #[test]

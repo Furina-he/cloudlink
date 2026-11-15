@@ -190,8 +190,107 @@ function Get-ClCfList([string]$path, $query) {
   }
   Throw-Cl 'cli-scope-failed'
 }
+function Project-ClGithubSource($source) {
+  if ($null -eq $source -or $source.type -cnotin @('github','github-limited','github-custom-host')) { return $null }
+  $hostName=if ($source.type -ceq 'github-custom-host') {$source.host} else {'github.com'}
+  $owner=if ($source.org) {$source.org} else {$source.owner}
+  $repo=if ($source.repo) {$source.repo} else {$source.repo_name}
+  if ($repo -is [string] -and $repo.Contains('/') -and -not $owner) {
+    $parts=$repo.Split('/'); if ($parts.Count -eq 2) {$owner=$parts[0];$repo=$parts[1]}
+  }
+  if ((-not $owner -or -not $repo) -and $source.url -is [string] -and $source.url -notmatch '[\s@%?#\\]' -and $source.url -cmatch '^https://([^/]+)/([^/]+)/([^/]+?)(?:\.git)?$') {
+    $hostName=$Matches[1];$owner=$Matches[2];$repo=$Matches[3]
+  }
+  if ($hostName -isnot [string] -or $hostName.Length -gt 253 -or $hostName -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$' -or $hostName.Contains('..') -or $owner -isnot [string] -or $owner -cnotmatch $clGhOwner -or $repo -isnot [string] -or $repo -cnotmatch '^[A-Za-z0-9._-]{1,100}$' -or $repo -in @('.','..')) { return $null }
+  $result=@{host=$hostName.ToLowerInvariant();owner=$owner;repo=$repo}
+  $id=if ($null -ne $source.repoId) {$source.repoId} else {$source.repo_id}
+  if (($id -is [string] -or $id -is [int] -or $id -is [long] -or $id -is [decimal] -or $id -is [double]) -and [string]$id -cmatch '^[0-9]{1,20}$|^repo:[A-Za-z0-9_=-]{1,128}$') { $result.repoId=[string]$id }
+  return $result
+}
+# GitHub uses the effective API identity, including environment-token precedence.
+# Only these fixed endpoints run; response bodies and credentials never leave the bridge.
+function Get-ClGhHost {
+  $hostName = if ($clHost) { [string]$clHost } else { 'github.com' }
+  if ($hostName.Length -gt 253 -or $hostName -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$' -or $hostName.Contains('..')) { Throw-Cl 'invalid-host' }
+  return $hostName.ToLowerInvariant()
+}
+function Get-ClGhApi([string]$endpoint) {
+  $run = Invoke-ClCapture @('api','--hostname',(Get-ClGhHost),'--method','GET',$endpoint)
+  if ($run.code -ne 0) {
+    if ($run.diagnostic -match 'rate.?limit|429') { Throw-Cl 'rate-limited' }
+    if ($run.diagnostic -match '401|403|404|Bad credentials|not found|SAML|forbidden|not logged|gh auth login') { Throw-Cl 'permission-denied' }
+    Throw-Cl 'offline'
+  }
+  $data = ConvertFrom-ClJson $run.raw
+  if ($null -eq $data) { Throw-Cl 'invalid-metadata' }
+  return ,$data
+}
+function Project-ClGhOwner($data) {
+  if ($data.node_id -isnot [string] -or $data.node_id -cnotmatch '^[A-Za-z0-9_=-]{1,128}$' -or $data.login -isnot [string] -or $data.login -cnotmatch $clGhOwner -or $data.type -cnotin @('User','Organization')) { Throw-Cl 'invalid-metadata' }
+  return @{id=$data.node_id;login=$data.login;kind=$(if ($data.type -ceq 'User') { 'user' } else { 'organization' })}
+}
+function Get-ClGhIdentity {
+  $owner = Project-ClGhOwner (Get-ClGhApi 'user')
+  if ($owner.kind -ne 'user') { Throw-Cl 'permission-denied' }
+  return @{id=$owner.id;login=$owner.login;host=(Get-ClGhHost)}
+}
+function Get-ClGhPages([string]$endpoint, $owner, [int]$maximum) {
+  $items=[Collections.Generic.List[object]]::new(); $seen=[Collections.Generic.HashSet[string]]::new()
+  for ($page=1; $page -le 6; $page++) {
+    $separator=if ($endpoint.Contains('?')) { '&' } else { '?' }
+    $data=Get-ClGhApi ($endpoint+$separator+'per_page=100&page='+$page)
+    if ($data -isnot [array]) { Throw-Cl 'invalid-metadata' }
+    foreach ($raw in $data) {
+      if ($null -eq $owner) { $item=Project-ClGhOwner $raw }
+      else {
+        $repoOwner=Project-ClGhOwner $raw.owner
+        if ($repoOwner.id -cne $owner.id -or $repoOwner.login -ine $owner.login) { Throw-Cl 'owner-changed' }
+        if ($raw.node_id -isnot [string] -or $raw.node_id -cnotmatch '^[A-Za-z0-9_=-]{1,128}$' -or $raw.full_name -isnot [string] -or $raw.full_name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$' -or $raw.full_name.Split('/')[0] -ine $owner.login) { Throw-Cl 'invalid-metadata' }
+        $item=@{id=('repo:'+$raw.node_id);kind='repo';name=$raw.full_name;ownerId=$owner.id;selected=$false}
+        if (($raw.id -is [int] -or $raw.id -is [long] -or $raw.id -is [decimal] -or $raw.id -is [double]) -and [string]$raw.id -cmatch '^[0-9]{1,20}$') {$item.databaseId=[string]$raw.id}
+        $branch=$raw.default_branch
+        if ($branch -is [string] -and $branch -and $branch.Length -le 255 -and $branch -notmatch '[\x00-\x20\x7f`|\\~^:?*\[]') { $item.defaultBranch=$branch }
+        if ($raw.visibility -cin @('public','private','internal')) { $item.visibility=$raw.visibility }
+        elseif ($raw.private -is [bool]) { $item.visibility=$(if ($raw.private) { 'private' } else { 'public' }) }
+      }
+      if (-not $seen.Add($item.id) -or $items.Count -ge $maximum) { Throw-Cl 'pagination-incomplete' }
+      $items.Add($item)
+    }
+    if ($data.Count -lt 100) { return ,$items.ToArray() }
+  }
+  Throw-Cl 'pagination-incomplete'
+}
+function Get-ClGithub {
+  $result=@{status='complete';owners=@();items=@()}
+  try {
+    $identity=Get-ClGhIdentity; $result.identity=$identity
+    $personal=@{id=$identity.id;login=$identity.login;kind='user'}; $result.owners=@($personal)
+    if (-not $clAccount) {
+      $orgs=Get-ClGhPages 'user/orgs' $null 100
+      $result.owners=@($personal)+@($orgs)
+    } else {
+      if ($clAccount -cnotmatch $clGhOwner) { Throw-Cl 'invalid-owner' }
+      $owner=Project-ClGhOwner (Get-ClGhApi ('users/'+$clAccount))
+      if ($owner.kind -eq 'user' -and $owner.id -cne $identity.id) { Throw-Cl 'permission-denied' }
+      $result.owner=$owner
+      if ($owner.id -cne $personal.id) { $result.owners+=@($owner) }
+      $endpoint=if ($owner.kind -eq 'user') { 'user/repos?affiliation=owner' } else { 'orgs/'+$owner.login+'/repos?type=all' }
+      $result.items=Get-ClGhPages $endpoint $owner $clMaxItems
+    }
+    $after=Get-ClGhIdentity
+    if ($after.id -cne $identity.id -or $after.login -cne $identity.login) { Throw-Cl 'identity-changed' }
+  } catch {
+    $reason=$_.Exception.Message
+    $result.status=if ($reason -in @('permission-denied','identity-changed','invalid-owner')) { 'denied' } elseif ($reason -in @('pagination-incomplete','rate-limited','invalid-metadata','owner-changed','cli-scope-failed')) { 'partial' } else { 'offline' }
+    $result.reasonId=if ($reason -in @('permission-denied','identity-changed','invalid-owner','pagination-incomplete','rate-limited','invalid-metadata','owner-changed','offline')) { $reason } else { 'offline' }
+    $result.items=@()
+  }
+  return $result
+}
 try {
-  if ($clOperation -eq 'discover') {
+  if ($clProvider -eq 'github' -and $clOperation -in @('github-scope','github-owners')) {
+    $clResult=Get-ClGithub
+  } elseif ($clOperation -eq 'discover') {
     $name = switch ($clProvider) { 'cloudflare' { 'wrangler' } 'vercel' { 'vercel' } 'oracle' { 'oci' } 'github' { 'gh' } default { Throw-Cl 'cli-command-unsupported' } }
     $found = Get-Command -Name $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     $clResult = if ($found) { @{ installed=$true; path=$found.Source } } else { @{ installed=$false } }
@@ -213,25 +312,13 @@ try {
         $clResult=if ($checked.authenticated -eq $false) { $checked } else { @{authenticated=$true; expired=$false} }
       } catch { $clResult=@{authenticated=$false; expired=$false} }
     } elseif ($clProvider -eq 'github') {
-      # `--json` exits 0 whatever the auth state and never includes the token (only
-      # `--show-token` would). gh always acts as the active account, so only it counts.
-      $run=Invoke-ClCapture @('auth','status','--json','hosts')
-      $data=ConvertFrom-ClJson $run.raw
-      if ($run.code -eq 0 -and $null -ne $data) {
-        $active=@($data.hosts.'github.com' | Where-Object { $_.active -eq $true }) | Select-Object -First 1
-        if ($null -eq $active) { $clResult=@{loggedIn=$false} }
-        elseif ($active.state -in @('success','timeout') -and $active.login -is [string] -and $active.login -cmatch $clGhOwner) { $clResult=@{loggedIn=$true;login=$active.login} }
-        else { $clResult=@{loggedIn=$false;expired=($active.state -eq 'refresh_expired')} }
-      } elseif ($run.diagnostic -match 'unknown flag') {
-        # Older gh without `auth status --json`: ask the API whose token is active.
-        $run=Invoke-ClCapture @('api','user','--jq','.login')
-        $login=$run.raw.Trim()
-        if ($run.code -eq 0 -and $login -cmatch $clGhOwner) { $clResult=@{loggedIn=$true;login=$login} }
-        elseif ($run.diagnostic -match '401|Bad credentials') { $clResult=@{loggedIn=$false;expired=$true} }
-        elseif ($run.diagnostic -match 'gh auth login|not logged') { $clResult=@{loggedIn=$false} }
+      try {
+        $identity=Get-ClGhIdentity
+        $clResult=@{loggedIn=$true;login=$identity.login;identity=$identity}
+      } catch {
+        if ($_.Exception.Message -eq 'permission-denied') { $clResult=@{loggedIn=$false;expired=$true} }
         else { Throw-Cl 'cli-scope-failed' }
-      } elseif ($run.diagnostic -match 'gh auth login|not logged') { $clResult=@{loggedIn=$false} }
-      else { Throw-Cl 'cli-command-unsupported' }
+      }
     } else {
       try {
         $data=if ($clProvider -eq 'cloudflare') { Invoke-ClJson @('whoami','--json') } else { Invoke-ClJson @('whoami','--format=json') }
@@ -269,7 +356,13 @@ try {
         if ($null -ne $next) { $arguments+=@('--next',[string]$next) }
         $data=Invoke-ClJson $arguments
         if ($data.projects -isnot [array]) { Throw-Cl 'cli-command-unsupported' }
-        foreach ($project in $data.projects) { Add-ClItem @{id=$project.id;kind='project';name=(Clean-Cl $project.name)} }
+        foreach ($project in $data.projects) {
+          $source=if ($project.link) {$project.link} else {$project.gitRepository}
+          $repoSource=Project-ClGithubSource $source
+          $item=@{id=$project.id;kind='project';name=(Clean-Cl $project.name)}
+          if ($null -ne $repoSource) {$item.repoSource=$repoSource}
+          Add-ClItem $item
+        }
         $next=Get-ClNext $data $next $seen
         if ($null -eq $next) { break }
         if ($page -eq $clMaxPages-1) { Throw-Cl 'cli-scope-failed' }
@@ -331,46 +424,18 @@ try {
           Add-ClItem @{id=('worker:'+$workerId);kind='worker';name=(Clean-Cl $worker.id)}
         }
         $pages=Get-ClCfList ('/accounts/'+$clAccount+'/pages/projects') @{}
-        foreach ($project in $pages) { Add-ClItem @{id=('pages:'+$project.name);kind='pages';name=(Clean-Cl $project.name)} }
-      } finally { $clAuthHeaders=$null }
-    } elseif ($clProvider -eq 'github') {
-      if ($clAccount -cnotmatch $clGhOwner) { Throw-Cl 'cli-account-unavailable' }
-      $owners=[Collections.Generic.List[string]]::new(); $owners.Add($clAccount)
-      # Organisation membership needs read:org; without it only the user's own repositories are listed.
-      $run=Invoke-ClCapture @('api','--method','GET','user/orgs','-f','per_page=100','--jq','[.[].login]')
-      if ($run.code -eq 0) {
-        # Assign first: @() around the call would wrap the returned array instead of unrolling it.
-        $orgs=ConvertFrom-ClJson $run.raw
-        foreach ($org in @($orgs)) {
-          if ($org -is [string] -and $org -cmatch $clGhOwner -and -not $owners.Contains($org) -and $owners.Count -lt 20) { $owners.Add($org) }
-        }
-      }
-      $seen=[Collections.Generic.HashSet[string]]::new()
-      foreach ($owner in $owners) {
-        $run=Invoke-ClCapture @('repo','list',$owner,'--limit','200','--json','id,nameWithOwner,defaultBranchRef,visibility,isArchived')
-        if ($run.code -ne 0) {
-          # An organisation can hide its repositories (SSO, removed membership); keep the others.
-          if ($owner -ne $clAccount -and $run.diagnostic -match '403|404|not found|Could not resolve|SAML') { continue }
-          if ($run.diagnostic -match '401|Bad credentials|gh auth login') { Throw-Cl 'cli-scope-permission' }
-          Throw-Cl 'cli-command-unsupported'
-        }
-        $repos=ConvertFrom-ClJson $run.raw
-        if ($repos -isnot [array]) { Throw-Cl 'cli-command-unsupported' }
-        foreach ($repo in $repos) {
-          if ($repo.isArchived -eq $true) { continue }
-          if ($repo.id -isnot [string] -or $repo.id -cnotmatch '^[A-Za-z0-9_=-]{1,64}$' -or $repo.nameWithOwner -isnot [string] -or $repo.nameWithOwner -cnotmatch '^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$') { Throw-Cl 'cli-scope-failed' }
-          if (-not $seen.Add($repo.id)) { continue }
-          if ($clItems.Count -ge $clMaxItems) { break }
-          $item=@{id=('repo:'+$repo.id);kind='repo';name=$repo.nameWithOwner}
-          $branch=$repo.defaultBranchRef.name
-          if ($branch -is [string] -and $branch) { $branch=$branch -replace '[\x00-\x1f\x7f]',''; $item.defaultBranch=$branch.Substring(0,[Math]::Min(255,$branch.Length)) }
-          if ($repo.visibility -cin @('PUBLIC','PRIVATE','INTERNAL')) { $item.visibility=$repo.visibility.ToLowerInvariant() }
+        foreach ($project in $pages) {
+          $source=$project.source.config
+          $repoSource=if ($project.source.type -ceq 'github') {Project-ClGithubSource @{type='github';owner=$source.owner;repo_name=$source.repo_name;repo_id=$source.repo_id}} else {$null}
+          $item=@{id=('pages:'+$project.name);kind='pages';name=(Clean-Cl $project.name)}
+          if ($null -ne $repoSource) {$item.repoSource=$repoSource}
           Add-ClItem $item
         }
-        if ($clItems.Count -ge $clMaxItems) { break }
-      }
+      } finally { $clAuthHeaders=$null }
+    } elseif ($clProvider -eq 'github') {
+      $clResult=Get-ClGithub
     } else { Throw-Cl 'cli-command-unsupported' }
-    $clResult=@{items=@($clItems.ToArray())}
+    if ($clProvider -ne 'github') { $clResult=@{items=@($clItems.ToArray())} }
   } else { Throw-Cl 'cli-command-unsupported' }
   [Console]::WriteLine('__CLOUDLINK_CLI_METADATA__')
   [Console]::WriteLine((ConvertTo-Json -InputObject $clResult -Depth 8 -Compress))

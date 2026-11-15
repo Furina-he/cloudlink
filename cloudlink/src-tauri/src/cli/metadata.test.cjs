@@ -171,7 +171,7 @@ test("oversized HTTP responses fail with a fixed ID", async () => {
 // discovery or login-profile code is used. All Oracle config and HTTP reads are mocked.
 function powershellBridge(operation, provider, fake) {
   const psSource = readFileSync(join(__dirname, "metadata.ps1"), "utf8");
-  const at = psSource.indexOf("\ntry {\n  if ($clOperation");
+  const at = psSource.indexOf("\ntry {\n  if (");
   assert.ok(at > 0);
   const script = `${psSource.slice(0, at)}\n$clOperation='${operation}';$clProvider='${provider}';$clBinary='ClFake';$clAccount='${provider === "oracle" ? "Production" : provider === "vercel" ? "team_current" : account}';$script:clCalls=0;\n${fake}\n${psSource.slice(at)}`;
   const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
@@ -331,6 +331,43 @@ def fake_call(arguments, **kwargs):
     { id: "ocid1.instance.test.live", kind: "instance", name: "Compute", address: "203.0.113.7" },
     { id: "ocid1.instance.test.no-network", kind: "instance", name: "No network", address: null },
   ]);
+});
+
+test("Vercel Git binding projection keeps public repository identity, never hooks or credentials", async () => {
+  const result = await bridge("scope", "vercel", () => ({projects:[{id:"prj_app",name:"App",link:{type:"github",org:"acme",repo:"app",repoId:123,gitCredentialId:privateMarker,deployHooks:[{url:privateMarker}]}}],pagination:{next:null}}));
+  assert.deepEqual(result.metadata.items[0].repoSource,{host:"github.com",owner:"acme",repo:"app",repoId:"123"});
+});
+
+test("Cloudflare Pages repository source is public evidence and not a deployment token", async () => {
+  const result = await bridge("scope", "cloudflare", token, url => url.pathname.endsWith("/pages/projects")
+    ? success([{name:"web",source:{type:"github",config:{owner:"acme",repo_name:"site",repo_id:"456",secret:privateMarker}},deployment_configs:{production:{env_vars:{secret:privateMarker}}}}]) : success([]));
+  assert.deepEqual(result.metadata.items[0].repoSource,{host:"github.com",owner:"acme",repo:"site",repoId:"456"});
+});
+
+test("untrusted repository URLs and object-valued source names do not become evidence", async () => {
+  const result = await bridge("scope", "vercel", () => ({projects:[
+    {id:"prj_url",name:"App",gitRepository:{type:"github",url:"https://"+privateMarker+"@github.com/acme/app"}},
+    {id:"prj_obj",name:"Site",link:{type:"github",org:{secret:privateMarker},repo:"app"}}
+  ],pagination:{next:null}}));
+  assert.equal(result.metadata.items.some(item=>item.repoSource),false);
+});
+
+test("Windows Vercel Git binding projection excludes credentials", windowsOnly, () => {
+  const metadata = powershellBridge("scope", "vercel", `
+function ClFake { '{"projects":[{"id":"prj_app","name":"App","link":{"type":"github","org":"acme","repo":"app","repoId":123,"gitCredentialId":"${privateMarker}"}}],"pagination":{"next":null}}' }
+`);
+  assert.deepEqual(metadata.items[0].repoSource,{host:"github.com",owner:"acme",repo:"app",repoId:"123"});
+});
+
+test("Windows Pages source excludes deployment config contents", windowsOnly, () => {
+  const metadata = powershellBridge("scope", "cloudflare", `
+function ClFake { '{"type":"oauth","token":"${privateMarker}"}' }
+function Get-ClCf([string]$path,$query) {
+ if ($path -match '/pages/projects$') {return @{success=$true;result=@(@{name='web';source=@{type='github';config=@{owner='acme';repo_name='site';repo_id='456';secret='${privateMarker}'}};deployment_configs=@{secret='${privateMarker}'}});result_info=@{total_pages=1}}}
+ return @{success=$true;result=@();result_info=@{total_pages=1}}
+}
+`);
+  assert.deepEqual(metadata.items[0].repoSource,{host:"github.com",owner:"acme",repo:"site",repoId:"456"});
 });
 
 test("OCI rejects an object-valued name without coercing nested credentials", () => {

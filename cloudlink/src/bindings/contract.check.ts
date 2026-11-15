@@ -10,6 +10,8 @@ import type * as GGuard from "./generated/guard"
 import type * as GMisc from "./generated/misc"
 import type * as GNotes from "./generated/notes"
 import type * as GProbe from "./generated/probe"
+import type * as GExecution from "./generated/execution"
+import type * as GGithub from "./generated/github"
 
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
 type Assert<T extends true> = T
@@ -119,4 +121,31 @@ export type ContractCheck = [
   Assert<Same<H.Target, GDelivery.Target>>,
   Assert<Same<H.UpdateState, GMisc.UpdateState>>,
   Assert<Same<H.UpdateStatus, GMisc.UpdateStatus>>,
+  Assert<Same<H.RepoSource, GAsset.RepoSource>>,
+  Assert<Same<H.ConnectionDiagnostic, GConnection.ConnectionDiagnostic>>,
+  Assert<Same<H.DiagnosticStage, GConnection.DiagnosticStage>>,
+  Assert<Same<H.DiagnosticSummaryId, GConnection.DiagnosticSummaryId>>,
+  Assert<Same<H.SshClientKind, GConnection.SshClientKind>>,
+  Assert<Same<H.OperationSource, GGuard.OperationSource>>,
+  Assert<Same<H.RuntimeState, GExecution.RuntimeState>>,
+  Assert<Same<H.RuntimeStatus, GExecution.RuntimeStatus>>,
+  Assert<Same<H.ExecutionState, GExecution.ExecutionState>>,
+  Assert<Same<H.ExecutionKind, GExecution.ExecutionKind>>,
+  Assert<Same<H.ExecutionRequest, GExecution.ExecutionRequest>>,
+  Assert<Same<H.ExecutionChangedEvent, GExecution.ExecutionChangedEvent>>,
+  Assert<Same<H.ExecutionResponse, GExecution.ExecutionResponse>>,
+  Assert<Same<H.RespondExecutionRequest, GExecution.RespondExecutionRequest>>,
+  Assert<Same<H.CancelExecutionRequest, GExecution.CancelExecutionRequest>>,
+  Assert<Same<H.GithubConfig, GGithub.GithubConfig>>,
+  Assert<Same<H.GithubCreateInput, GGithub.GithubCreateInput>>,
+  Assert<Same<H.GithubOwner, GGithub.GithubOwner>>,
+  Assert<Same<H.GithubOwnerKind, GGithub.GithubOwnerKind>>,
+  Assert<Same<H.GithubIdentity, GGithub.GithubIdentity>>,
+  Assert<Same<H.GithubRepo, GGithub.GithubRepo>>,
+  Assert<Same<H.GithubScopeMode, GGithub.GithubScopeMode>>,
+  Assert<Same<H.GithubSnapshot, GGithub.GithubSnapshot>>,
+  Assert<Same<H.GithubSnapshotStatus, GGithub.GithubSnapshotStatus>>,
+  Assert<Same<H.GithubScopeRequest, GGithub.GithubScopeRequest>>,
+  Assert<Same<H.GithubScopeResult, GGithub.GithubScopeResult>>,
+  Assert<Same<H.GithubScopeSaveRequest, GGithub.GithubScopeSaveRequest>>,
 ]

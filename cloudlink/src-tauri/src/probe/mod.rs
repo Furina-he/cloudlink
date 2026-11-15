@@ -8,12 +8,12 @@ mod runner;
 pub use merge::{MergeResult, confirm, merge, undo};
 pub use parse::parse;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::env::EnvContext;
-use crate::model::asset::{AssetFacts, ListeningPort, Service};
+use crate::model::asset::{AssetFacts, AssetPath, FieldSource, ListeningPort, RepoSource, ServerAsset, Service};
 use crate::model::probe::{ProbeStep, ProbeStepStatus, SshError, SshErrorId};
 use crate::params as p;
 use crate::secret::SecretString;
@@ -24,6 +24,44 @@ pub const SCRIPT: &str = include_str!("probe.sh");
 pub const MAX_OUTPUT: usize = 64 * 1024;
 pub const MAX_VALUE_CHARS: usize = 128;
 
+pub(super) fn safe_work_dir(path: &AssetPath) -> bool {
+    path.source == FieldSource::Manual
+        && !path.key.is_empty()
+        && path.key.len() <= 64
+        && path
+            .key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        && path.path.starts_with('/')
+        && path.path != "/"
+        && path.path.len() <= 4096
+        && !path.path.chars().any(char::is_control)
+        && !path.path.split('/').any(|part| part == "..")
+}
+
+pub fn script_for_paths(paths: &[AssetPath]) -> String {
+    let calls = paths
+        .iter()
+        .filter(|path| safe_work_dir(path))
+        .take(16)
+        .map(|path| {
+            format!(
+                "cloudlink_git_remote {} {}",
+                crate::cli::sh_quote(&path.key),
+                crate::cli::sh_quote(&path.path)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    SCRIPT.replace("# CLOUDLINK_GIT_REMOTE_CALLS", &calls)
+}
+
+#[derive(Debug, Clone)]
+pub struct RepoObservation {
+    pub path: String,
+    pub source: Option<RepoSource>,
+}
+
 /// 内部解析结果，不含 raw stdout/stderr。失败段不能用于推断服务已经消失。
 #[derive(Debug, Clone, Default)]
 pub struct ProbeData {
@@ -31,6 +69,7 @@ pub struct ProbeData {
     pub services: Vec<Service>,
     pub listening_ports: Vec<ListeningPort>,
     pub tools: Vec<String>,
+    pub repo_sources: BTreeMap<String, RepoObservation>,
     pub failed_sections: Vec<String>,
     pub valid: bool,
     pub(super) successful_sections: BTreeSet<String>,
@@ -108,6 +147,54 @@ pub fn execute(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(ProbeStep, ProbeStepStatus, Option<u32>),
 ) -> std::result::Result<ProbeData, ExecuteError> {
+    execute_script(tools, env, alias, password, timeout, cancel, progress, SCRIPT, &[], &[])
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the original injectable SSH execution inputs plus approved metadata context"
+)]
+pub fn execute_with_paths(
+    tools: &SshTools,
+    env: &EnvContext,
+    server: &ServerAsset,
+    github_hosts: &[String],
+    password: Option<&SecretString>,
+    timeout: Duration,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(ProbeStep, ProbeStepStatus, Option<u32>),
+) -> std::result::Result<ProbeData, ExecuteError> {
+    let script = script_for_paths(&server.paths);
+    execute_script(
+        tools,
+        env,
+        &server.connection.ssh_alias,
+        password,
+        timeout,
+        cancel,
+        progress,
+        &script,
+        &server.paths,
+        github_hosts,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "shared execution implementation retains the original SSH interface and a bounded script context"
+)]
+fn execute_script(
+    tools: &SshTools,
+    env: &EnvContext,
+    alias: &str,
+    password: Option<&SecretString>,
+    timeout: Duration,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(ProbeStep, ProbeStepStatus, Option<u32>),
+    script: &str,
+    paths: &[AssetPath],
+    github_hosts: &[String],
+) -> std::result::Result<ProbeData, ExecuteError> {
     use ProbeStep as Step;
     use ProbeStepStatus as Status;
 
@@ -156,8 +243,9 @@ pub fn execute(
         }
     };
     let mut cursor = 0;
-    let output = runner::capture(
+    let output = runner::capture_script(
         command,
+        script,
         timeout.min(Duration::from_secs(30)).saturating_sub(started.elapsed()),
         cancel,
         &mut || match &mut broker {
@@ -217,7 +305,9 @@ pub fn execute(
             alias,
         )));
     }
-    let data = String::from_utf8(output.stdout).ok().map(|stdout| parse(&stdout));
+    let data = String::from_utf8(output.stdout)
+        .ok()
+        .map(|stdout| parse::parse_for_paths(&stdout, paths, github_hosts));
     let Some(data) = data.filter(|data| data.valid) else {
         progress(phase, Status::Error, Some(ms(started)));
         return Err(ExecuteError::Failed(SshError::new(
@@ -229,6 +319,8 @@ pub fn execute(
     Ok(data)
 }
 
+#[cfg(test)]
+mod repositories;
 #[cfg(test)]
 mod tests;
 

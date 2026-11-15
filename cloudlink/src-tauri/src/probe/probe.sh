@@ -3,6 +3,22 @@
 # Every section reports its own exit status; a failed section never implies absence.
 finish() { printf '@@status %s %s\n' "$1" "$2"; }
 
+# Calls are inserted only for registered manual work directories by the backend.
+# --local avoids reading a global remote when a directory is not a repository.
+# No hooks, repository scripts, fetches, file bodies or credential commands run.
+cloudlink_git_remote() {
+    cl_remote=$(git -C "$2" config --local --get remote.origin.url 2>/dev/null)
+    cl_code=$?
+    case "$cl_remote" in
+        *[!\ -~]*) printf '%s\t128\t\n' "$1"; return ;;
+    esac
+    if [ "${#cl_remote}" -gt 2048 ]; then
+        printf '%s\t128\t\n' "$1"
+    else
+        printf '%s\t%s\t%s\n' "$1" "$cl_code" "$cl_remote"
+    fi
+}
+
 printf '@@os\n'
 cat /etc/os-release
 finish os "$?"
@@ -65,3 +81,7 @@ else
     netstat -tln
 fi
 finish listen "$?"
+
+printf '@@git\n'
+# CLOUDLINK_GIT_REMOTE_CALLS
+finish git 0

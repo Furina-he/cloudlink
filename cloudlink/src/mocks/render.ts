@@ -8,14 +8,16 @@ export const envWord = (a: { production: boolean }) => (a.production ? "producti
 
 const BUILTIN_RULES = [
   "Never read or print credential files (`.env`, `*.pem`, `*.key`, `id_*`, `/etc/shadow`, `~/.ssh/`) and never use `docker inspect` to view environment variables.",
-  "Never ask for or record passwords, private keys or IP addresses; connect only through the SSH alias.",
+  "Never ask for or record passwords, private keys or IP addresses; use the Connect entry in the resource's details file.",
   'If a host does not match its details file, report the difference to the user instead of "fixing" the server to match the document.',
   "If CloudLink's guard blocks a command, report it to the user; never try to work around the block with scripts, encoding or other tools.",
 ]
 
 const HEALTH_CHECK = `# Health check
 
-Check the servers the user asked about; if none were named, check every server in the overview table. Run the checks for one server in a single ssh call, then report one table: server, status (OK / attention / unreachable), findings. Do not fix anything; list suggested actions separately and wait for the user.
+Check the servers the user asked about; if none were named, check every server in the overview table. Read each server's details first and use its Connect entry for one remote command, then report one table: server, status (OK / attention / unreachable), findings. Do not fix anything; list suggested actions separately and wait for the user.
+
+The direct SSH examples below are only for non-production aliases. For a production server, pass the same quoted remote command after \`--\` in its absolute CloudLink runner entry; do not run the \`ssh <alias>\` prefix. Keep the stable resource ID and use the PowerShell variant when applicable. A waiting ticket is continued with \`wait\`, never by retrying the check through direct SSH.
 
     ssh <alias> 'uptime; nproc; free -m; df -hP -x tmpfs -x devtmpfs -x overlay -x squashfs; docker ps -a --format "{{.Names}}\\t{{.Status}}"; systemctl --failed --no-legend --plain; journalctl -p err --since "24 hours ago" --no-pager | tail -n 30'
 
@@ -40,14 +42,34 @@ const code = (s: string) => `\`${s.slice(0, 128)}\``
 const portText = (p: ServerAsset["services"][number]["ports"][number]) =>
   `${p.hostIp}:${p.hostPort}->${p.containerPort}${p.proto === "udp" ? "/udp" : ""}`
 
+export function skillHandle(a: Asset): string {
+  if (!isServer(a) || a.export.resolvedConnection) return handleOf(a)
+  const alias = a.connection.sshAlias.toLowerCase()
+  const privateAlias = [a.connection.host, a.connection.resolved?.hostname].some((host) =>
+    host && !a.servedHostnames.some((site) => site.toLowerCase() === host.toLowerCase()) &&
+    [host.toLowerCase(), host.replace(/[.:]/g, "-"), host.replace(/[.:]/g, "_")].some((value) => alias.includes(value.toLowerCase()))
+  )
+  return privateAlias ? `server-${a.id.toLowerCase().replaceAll("_", "-")}` : handleOf(a)
+}
+
+function runnerCommand(settings: Settings, envId: EnvId, op: string, assetId?: string, tail = "", powershell = false): string {
+  const path = `${inboxPath(settings.dataDir, envId).slice(0, -"/inbox".length)}/bin/cloudlink-guard.exe`
+  const quote = (s: string) => powershell ? `'${s.replaceAll("'", "''")}'` : `'${s.replaceAll("'", "'\\''")}'`
+  return `${powershell ? "& " : ""}${quote(path)} ${op}${op === "status" ? "" : ` --env ${quote(envId)}`}${assetId ? ` --asset ${quote(assetId)}` : ""}${tail ? ` ${tail}` : ""}`
+}
+
+function entryLines(settings: Settings, envId: EnvId, op: string, assetId?: string, tail = ""): string[] {
+  return ["", `    ${runnerCommand(settings, envId, op, assetId, tail)}`, ...(envId === "windows" ? ["", "PowerShell:", "", `    ${runnerCommand(settings, envId, op, assetId, tail, true)}`] : []), ""]
+}
+
 /** 详情文件名：别名转小写，非法字符换成连字符；重名时后创建的加 -2（5.3） */
 export function detailNames(assets: Asset[]): Map<string, string> {
   const out = new Map<string, string>()
-  const used = new Set<string>()
+  const used = new Set<string>(["health-check"])
   ;[...assets]
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     .forEach((a) => {
-      const base = handleOf(a).toLowerCase().replace(/[^a-z0-9-]/g, "-")
+      const base = skillHandle(a).toLowerCase().replace(/[^a-z0-9-]/g, "-")
       let name = base
       for (let n = 2; used.has(name); n++) name = `${base}-${n}`
       used.add(name)
@@ -79,7 +101,7 @@ export function description(assets: Asset[]): { text: string; rawChars: number }
     const r = withRole ? role(a) : a.summary.trim()
     const text = short && r.length > 40 ? `${r.slice(0, 39)}…` : r
     const tail = [a.production ? "production" : "", a.agent.mode === "read-only" ? "read-only" : ""].filter(Boolean).join(", ")
-    return `${handleOf(a)} (${[text, tail].filter(Boolean).join("; ")})`
+    return `${skillHandle(a)} (${[text, tail].filter(Boolean).join("; ")})`
   }
   // 接了 GitHub 时，仓库相关的任务也要能触发这份 Skill（F-110）
   const targets = assets.some((a) => a.type === "cli" && a.cliProvider === "github") ? "servers, sites, cloud projects or repositories" : "servers, sites or cloud projects"
@@ -105,32 +127,45 @@ const ACCOUNT_FLAG: Record<CliAsset["cliProvider"], (account: string) => string>
   cloudflare: (x) => `Target this account on every command: set \`CLOUDFLARE_ACCOUNT_ID\` to the id of \`${x}\` from \`wrangler whoami\`.`,
   vercel: (x) => `Target this team on every command: append \`--scope ${x}\`.`,
   oracle: (x) => `Target this profile on every command: append \`--profile ${x}\`.`,
-  github: (x) => `Commands run as the active \`gh\` account. If \`gh auth status\` shows an active account other than \`${x}\`, stop and tell the user; never switch accounts.`,
+  github: () => "The repository owner is not the active `gh` login; never switch accounts to expand access. The `gh` identity does not identify SSH Git or custom Git credential helpers.",
 }
 
 /** 云平台的详情文件（references/cloudflare.md）：只写勾选的范围和关联的服务器，不写凭据 */
-function renderCliDetails(a: CliAsset, aliasById: (id: string) => string | undefined): string {
+function renderCliDetails(a: CliAsset, aliasById: (id: string) => string | undefined, settings: Settings, envId: EnvId): string {
   const account = a.account ?? Object.values(a.cli.envStates).find((s) => s?.account)?.account
   const scope = a.cli.scope.filter((x) => x.selected)
+  const github = a.github
+  const snapshot = github?.envStates[envId]
   return [
     `# ${a.handle} — ${a.name}`,
     "",
     `> ${a.production ? "Production | " : ""}Mode: ${a.agent.mode}`,
     "",
     "## Connect",
-    `- Run \`${a.cli.binary} <command>\` in the local shell; it is already logged in. Never print or export its credentials.`,
-    ...(account ? [`- Account: ${account}`, `- ${ACCOUNT_FLAG[a.cliProvider](account)}`] : []),
+    ...(a.production
+      ? ["Use separate CLI arguments after `--`, without the provider binary or a shell wrapper. Never print or export credentials:", ...entryLines(settings, envId, "exec", a.id, "-- <command arguments>")]
+      : [`- Run \`${a.cli.binary} <command>\` in the local shell; it is already logged in. Never print or export its credentials.`]),
+    ...(a.cliProvider === "github"
+      ? [`- Host: ${code(github?.host ?? "github.com")}`, `- Owner: ${github?.owner ? code(github.owner.login) : "not verified; preserve the historical selection"}`, `- Effective \`gh\` login in this environment: ${snapshot?.identity ? code(snapshot.identity.login) : "not verified"}`, `- Snapshot: ${snapshot?.status ?? "not verified"}. The owner is not the login identity; never switch accounts to expand access. A \`gh\` login does not identify SSH Git or custom Git credential helpers.`]
+      : account ? [`- Account: ${account}`, `- ${ACCOUNT_FLAG[a.cliProvider](account)}`] : []),
     ...(a.summary.trim() ? [`- Role: ${a.summary.trim()}`] : []),
     ...(a.guardrails.rules.length ? ["", "## Guardrails (must follow)", ...a.guardrails.rules.map((r, i) => `${i + 1}. ${r.text}`)] : []),
     "",
     ...(a.cliProvider === "github"
       ? [
           "## Repositories",
-          "Only operate on these repositories; ask the user before touching any other repository on the account.",
-          "",
+          github?.mode === "auto" && !github.migrationPending
+            ? "Auto scope follows the verified owner: current and future repositories this environment's login can access, including private repositories, except the excluded stable IDs below. Repository renames do not remove an exclusion; a repository transferred out of the owner is no longer in scope. This table is a known snapshot, not an exhaustive future list."
+            : "Manual scope: only the selected stable repository IDs represented below. Historical selections never expand automatically; an unverified owner must be confirmed in CloudLink, not inferred from names.",
+          ...(github?.mode === "auto" && github.excludedRepoIds.length ? [`Excluded stable repository IDs: ${github.excludedRepoIds.map(code).join(", ")}.`] : []),
+          "Partial, offline or denied refreshes preserve known history and cannot enlarge authorization. Refresh through this read-only metadata entry before relying on a new repository, changed identity or deployment relation; failure is not permission to switch accounts or broaden scope:",
+          ...entryLines(settings, envId, "discover", a.id),
           "| Repository | Default branch | Visibility |",
           "| --- | --- | --- |",
           ...scope.map((x) => `| ${code(x.name)} | ${x.defaultBranch ? code(x.defaultBranch) : "-"} | ${x.visibility ?? "-"} |`),
+          "",
+          "Deleting repositories, exporting credentials, or force-pushing the default/unspecified branch cannot be approved. Ordinary commits/pushes are not blanket-protected by CloudLink. Deployment relations are collected evidence, not additional authorization.",
+          ...(a.production ? ["For the specifically checked high-risk Git operations, use `--tool git` and explicit Git arguments/branch; the runner verifies the actual push remote and repository. This is not an arbitrary local-program runner:", ...entryLines(settings, envId, "exec", a.id, "--tool git -- <git arguments>")] : []),
         ]
       : [
           "## Scope",
@@ -145,9 +180,10 @@ function renderCliDetails(a: CliAsset, aliasById: (id: string) => string | undef
 }
 
 /** 每台服务器的详情文件（5.2 的 references/hk-edge.md） */
-export function renderDetails(a: ServerAsset, settings: Settings): string {
+export function renderDetails(a: ServerAsset, settings: Settings, envId: EnvId): string {
   const f = a.facts
-  const alias = a.connection.sshAlias
+  const alias = skillHandle(a)
+  const useEntry = a.production || alias !== a.connection.sshAlias
   const critical = a.services.filter((s) => s.critical)
   const rules = [
     ...a.guardrails.rules.map((r) => r.text),
@@ -166,7 +202,9 @@ export function renderDetails(a: ServerAsset, settings: Settings): string {
     `> ${a.production ? "Production | " : ""}Mode: ${a.agent.mode}${snapshot}`,
     "",
     "## Connect",
-    `- \`ssh ${alias} '<command>'\``,
+    ...(useEntry
+      ? ["Pass exactly one quoted remote command after `--`; the stable ID maps to the private SSH configuration. Do not replace this entry with a direct alias:", ...entryLines(settings, envId, "exec", a.id, "-- '<command>'")]
+      : [`- \`ssh ${alias} '<command>'\``]),
     ...(system.length ? [`- System: ${system.join(" | ")}`] : []),
     ...(a.summary.trim() ? [`- Role: ${role(a)}`] : []),
     ...(a.export.resolvedConnection && resolved ? [`- Resolved: HostName ${resolved.hostname}, User ${resolved.user}, Port ${resolved.port}`] : []),
@@ -190,6 +228,7 @@ export function renderDetails(a: ServerAsset, settings: Settings): string {
     ...(a.export.listeningPorts && a.listeningPorts.length
       ? ["", "## Listening ports", ...a.listeningPorts.map((p) => `- ${code(`${p.addr}:${p.port}/${p.proto}`)}`)]
       : []),
+    ...(useEntry ? ["", "## Single-file transfer", "Only new destination paths, never overwrite, recurse, glob or resume. Upload is a write and binds the source digest; a changed source invalidates approval. Download refuses credential paths and follows no local links. Failure may leave remote partial data; do not delete user directories. The remote existence check is not an exclusive safe-publication guarantee.", ...entryLines(settings, envId, "put", a.id, "-- '<localFile>' '<remoteFile>'"), ...entryLines(settings, envId, "get", a.id, "-- '<remoteFile>' '<localFile>'")] : []),
     ...(a.notes.trim() ? ["", "## Notes", a.notes.trim()] : []),
     "",
     "Live metrics such as free disk or memory are not recorded here; check them on the host when needed (e.g. `df -h`, `free -m`).",
@@ -220,18 +259,18 @@ export function renderSkill(envId: EnvId, assets: Asset[], config: SkillConfig, 
     "",
     `> Generated by CloudLink — do not edit${snapshot}`,
     "",
-    "Connect only through the SSH aliases below: `ssh <alias> '<command>'`. Authentication is handled by the local SSH configuration; never ask for or record passwords, IPs or private keys. Before running commands on a server, read its details file.",
+    "Before operating on a resource, read its details file and use its exact Connect entry. Production SSH and cloud CLI operations in both modes use the CloudLink runner; other resources keep their listed connection. Authentication stays in the local SSH/CLI configuration; never ask for or record passwords, IPs or private keys.",
     "",
     "| Alias | Role | Env | Mode | Details |",
     "| --- | --- | --- | --- | --- |",
     ...assets.filter(isServer).map(
-      (a) => `| \`${a.connection.sshAlias}\` | ${role(a) || "-"} | ${envWord(a)} | ${a.agent.mode} | \`${detailPath.get(a.id)}\` |`
+      (a) => `| \`${skillHandle(a)}\` | ${role(a) || "-"} | ${envWord(a)} | ${a.agent.mode} | \`${detailPath.get(a.id)}\` |`
     ),
     ...(assets.some(isCli)
       ? [
           "",
           "## Cloud platforms",
-          "Use these CLIs from the local shell. They are already logged in; only touch the resources listed in each details file.",
+          "Only touch the owner/account and scope in each details file. Use its runner entry for production, not a bare local CLI. CLI arguments remain separate arguments; do not wrap them in a shell string.",
           "",
           "| Platform | CLI | Role | Env | Mode | Details |",
           "| --- | --- | --- | --- | --- | --- |",
@@ -244,14 +283,23 @@ export function renderSkill(envId: EnvId, assets: Asset[], config: SkillConfig, 
     "",
     "## Modes",
     "- **read-only**: inspection commands only, e.g. `docker ps`, `docker logs --tail 200 <container>`, `df -h`, `free -m`, `uptime`, `ss -tln`, `journalctl -u <service> -n 200`. If a change is needed, describe the plan to the user and stop; the user can switch it to standard mode in CloudLink.",
-    "- **standard**: routine deployments and service restarts are allowed. Ask the user before deleting data or volumes, changing the firewall or SSH configuration, stopping critical services, or rebooting.",
-    "- In Claude Code, CloudLink's guard enforces these modes. A blocked command comes back with the reason.",
+    "- **standard**: routine deployments and service restarts are allowed. High-risk or unparseable production commands may require the user's one-time approval. Credentials, repository deletion and default/unspecified-branch force-pushes cannot be approved.",
+    "- While CloudLink runs, including in the tray, the runner checks production operations and Claude Code's hook redirects recognized direct connections. This is not a sandbox for other tools, credentials or aliases. Non-production keeps its existing behavior.",
+    ...(assets.some((a) => a.production || skillHandle(a) !== handleOf(a) || isCli(a) && a.cliProvider === "github") ? [
+      "", "## Execution and approval",
+      "- Use the absolute runner path and stable resource ID in the details, never a name as a route. Git Bash/WSL and PowerShell examples use their own quoting; do not alter the executable path.",
+      "- `exec` waits up to about 90 seconds for approval. A structured `waiting` result with a request ticket (exit 75) is not rejection or execution failure. Keep the original ticket private and continue the same request; never resubmit through another tool:",
+      ...entryLines(settings, envId, "wait", undefined, "'<requestId.ownerToken>'"),
+      "- Approval expires 5 minutes after request creation. Only the original inline caller or `wait` consumes it, at most once. “Approved” is not “executed”; expired/cancelled requests do not run. `wait` can return waiting again. Never replay unknown results.",
+      "- No TTY or opaque stdin scripts. Foreground execution defaults to 90 seconds; set `--timeout <seconds>` before `--` (maximum 3600) and raise your own tool timeout when needed. A timeout may leave remote work running; inspect rather than retry. Output streams are bounded and not saved by default.",
+      "- Closing to the tray keeps checks active. After a verified full exit, new calls still forward but CloudLink checks/approval stop; Agent and remote permissions and these advisory rules remain. Exit/restart never approves or resumes an old request. Starting, updating, corrupt state or an unreachable live coordinator are not exit bypasses. Inspect runtime with the same quoted runner followed by `status` (no other arguments).",
+    ] : []),
     "",
     "## Rules for every server",
     ...rules.map((r, i) => `${i + 1}. ${r}`),
     "",
     "## Health check",
-    "When the user asks for a health check of all or some servers, follow `references/health-check.md`.",
+    "When the user asks for a health check of all or some servers, follow `references/health-check.md` using each resource's Connect entry.",
     "",
     "## Notes for next time",
     `When you learn something durable about a server that its details file does not cover — how something is deployed, where a config lives, a pitfall — append one line to \`${inboxPath(settings.dataDir, envId)}/<name>.md\`, where \`<name>\` matches the server's details file; create the file if needed:`,
@@ -264,7 +312,7 @@ export function renderSkill(envId: EnvId, assets: Asset[], config: SkillConfig, 
       { path: "SKILL.md", content: skill },
       ...assets.map((a) => ({
         path: detailPath.get(a.id)!,
-        content: a.type === "vps" ? renderDetails(a, settings) : renderCliDetails(a, (id) => assets.find((x) => x.id === id && x.type === "vps") && handleOf(assets.find((x) => x.id === id)!)),
+        content: a.type === "vps" ? renderDetails(a, settings, envId) : renderCliDetails(a, (id) => { const linked = assets.find((x) => x.id === id && x.type === "vps"); return linked && skillHandle(linked) }, settings, envId),
       })),
       { path: "references/health-check.md", content: HEALTH_CHECK },
     ],

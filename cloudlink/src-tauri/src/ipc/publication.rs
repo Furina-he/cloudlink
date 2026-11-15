@@ -180,6 +180,14 @@ impl Backend {
             }
         }
         self.database()?.replace_inclusions(&inclusions)?;
+        if self
+            .project_execution_routes_locked(&assets, &envs, &targets, &inclusions)
+            .is_err()
+        {
+            self.execution()?.routes_current = false;
+            self.cancel_unstarted_execution_locked("execution-routes-unavailable")?;
+            log::warn!("CloudLink execution routes could not be updated");
+        }
         let config = self.get_skill_config()?;
         let settings = self.get_settings()?;
         let previous = self.get_compile_status()?;
@@ -231,6 +239,7 @@ impl Backend {
             }
             let old = previous.iter().find(|s| s.env_id == env_id && s.agent_key == agent_key);
             let inbox = env.windows_path_to_native(&self.paths.inbox_dir());
+            let runner = env.windows_path_to_native(&crate::guard::executable_path(&self.paths));
             let mut preview = compile::compile(&CompileInput {
                 env_id: &env_id,
                 agent_key: &agent_key,
@@ -238,6 +247,7 @@ impl Backend {
                 all_assets: &assets,
                 config: &config,
                 inbox: &inbox,
+                runner: &runner,
                 body_line_limit: settings.body_line_limit,
                 write_snapshot_time: settings.write_snapshot_time,
                 now_secs: crate::time::now_secs(),
@@ -267,7 +277,7 @@ impl Backend {
                         agent_keys: member_keys.clone(),
                         content_hash: content_hash.clone(),
                         compiled_at: now.clone(),
-                        template_version: 1,
+                        template_version: compile::render::TEMPLATE_VERSION,
                     },
                 };
                 let published = if same_source

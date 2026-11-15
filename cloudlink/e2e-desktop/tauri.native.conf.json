@@ -1,0 +1,18 @@
+{
+  "identifier": "com.cloudlink.p8-native-check",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "CloudLink",
+        "width": 1000,
+        "height": 680,
+        "decorations": true,
+        "minWidth": 760,
+        "minHeight": 520,
+        "zoomHotkeysEnabled": true,
+        "visible": true
+      }
+    ]
+  }
+}

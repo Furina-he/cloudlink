@@ -1,5 +1,6 @@
 // 手写契约（PRD F-306、F-307、8.6）：Claude Code 护栏与操作记录
 import type { EnvId } from "./env"
+import type { ExecutionState } from "./execution"
 
 export type GuardState = "active" | "not-installed" | "broken" | "unavailable"
 
@@ -24,6 +25,7 @@ export interface GuardStatus {
 }
 
 export type OperationDecision = "allowed" | "denied"
+export type OperationSource = "hook" | "runner"
 
 /** 拦下或标注的原因（8.6 判定流程） */
 export type GuardReasonId =
@@ -48,6 +50,12 @@ export type GuardReasonId =
   /** 命令目标不在已公开的 Scope 内，或无法确认目标 */
   | "cli-scope"
   | "unparsed"
+  | "execution-channel"
+  | "runtime-protected"
+  | "cli-identity"
+  | "github-repo-delete"
+  | "github-default-force"
+  | "github-dangerous"
 
 /** 护栏判定过的一条命令（F-307） */
 export interface Operation {
@@ -61,6 +69,13 @@ export interface Operation {
   command: string
   decision: OperationDecision
   reasonId?: GuardReasonId
+  source?: OperationSource
+  checked?: boolean
+  executionState?: ExecutionState
+  requestId?: string
+  epoch?: string
+  exitCode?: number
+  durationMs?: number
 }
 
 export interface OperationQuery {

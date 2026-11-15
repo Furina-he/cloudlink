@@ -73,6 +73,8 @@ pub struct Backend {
     pub(super) startup_environments: Mutex<Option<StartupEnvironments>>,
     /// 开机启动的开关（tauri-plugin-autostart）。隔离模式和单元测试不注册，设置只记在数据库里
     pub(super) autostart: std::sync::OnceLock<AutostartHook>,
+    /// Runtime lease and in-memory approval ledger; raw commands are never serialized to disk.
+    pub(super) execution: Mutex<super::execution::ExecutionService>,
 }
 
 pub type AutostartHook = Box<dyn Fn(bool) -> bool + Send + Sync>;
@@ -108,6 +110,14 @@ impl Drop for CliRun<'_> {
 impl Backend {
     /// 桌面应用的 setup 调用：打开数据库就返回，其余启动工作在后台线程里做（见 `startup.rs`）
     pub fn open(paths: Paths, events: Arc<dyn EventSink>) -> Result<Arc<Self>> {
+        Self::open_with_runtime(paths, events, None)
+    }
+
+    pub fn open_with_runtime(
+        paths: Paths,
+        events: Arc<dyn EventSink>,
+        runtime: Option<guard_rules::runtime::RuntimeOwner>,
+    ) -> Result<Arc<Self>> {
         let isolated = paths.isolated || cfg!(test);
         let system: Arc<dyn System> = if isolated {
             Arc::new(env::FakeSystem::from_env())
@@ -140,7 +150,11 @@ impl Backend {
             cli::Service::new(runner),
             events,
             guard_test,
+            runtime,
         )?;
+        if !cfg!(test) {
+            backend.start_execution_service()?;
+        }
         if cfg!(test) {
             // Unit tests never copy the packaged guard helper and finish starting before they continue.
             backend.start(Start::Inline)?;
@@ -174,7 +188,7 @@ impl Backend {
         events: Arc<dyn EventSink>,
         guard_test: Arc<dyn crate::guard::SelfTest>,
     ) -> Result<Arc<Self>> {
-        let backend = Self::assemble(paths, system, credentials, cli, events, guard_test)?;
+        let backend = Self::assemble(paths, system, credentials, cli, events, guard_test, None)?;
         backend.start(Start::Inline)?;
         Ok(backend)
     }
@@ -187,6 +201,7 @@ impl Backend {
         cli: cli::Service,
         events: Arc<dyn EventSink>,
         guard_test: Arc<dyn crate::guard::SelfTest>,
+        runtime: Option<guard_rules::runtime::RuntimeOwner>,
     ) -> Result<Arc<Self>> {
         // The production WSL root is a UNC server, not a filesystem directory.
         for path in [&paths.data_dir, &paths.user_home] {
@@ -197,6 +212,10 @@ impl Backend {
         }
         fs::create_dir_all(&paths.data_dir)?;
         ensure_data_marker(&paths)?;
+        let execution = super::execution::ExecutionService::new(match runtime {
+            Some(owner) => owner,
+            None => super::execution::begin_runtime(&paths)?,
+        })?;
         for directory in [paths.log_dir(), paths.tmp_dir(), paths.inbox_dir()] {
             check_ancestors(&directory)?;
             fs::create_dir_all(directory)?;
@@ -238,6 +257,7 @@ impl Backend {
             startup: StartupGate::closed(),
             startup_environments: Mutex::new(None),
             autostart: std::sync::OnceLock::new(),
+            execution: Mutex::new(execution),
         });
         Ok(backend)
     }
@@ -857,6 +877,7 @@ impl Backend {
         let config = req.config.unwrap_or(self.get_skill_config()?);
         let settings = self.get_settings()?;
         let inbox = env.windows_path_to_native(&self.paths.inbox_dir());
+        let runner = env.windows_path_to_native(&crate::guard::executable_path(&self.paths));
         Ok(compile::compile(&CompileInput {
             env_id: &req.env_id,
             agent_key: &req.agent_key,
@@ -864,6 +885,7 @@ impl Backend {
             all_assets: &assets,
             config: &config,
             inbox: &inbox,
+            runner: &runner,
             body_line_limit: settings.body_line_limit,
             write_snapshot_time: settings.write_snapshot_time,
             now_secs: crate::time::now_secs(),
@@ -975,6 +997,17 @@ impl Backend {
     }
 
     pub fn detect_cli_environment(&self, req: CliRequest) -> Result<BTreeMap<EnvId, CliEnvState>> {
+        if req.provider == CliProvider::Github {
+            return self
+                .get_github_scope(crate::model::github::GithubScopeRequest {
+                    asset_id: req.asset_id,
+                    owner_login: req.account,
+                    host: None,
+                    force: Some(true),
+                    expected_revision: None,
+                })
+                .map(|result| result.env_states);
+        }
         let _run = self.cli_run(req.provider);
         let epoch = self.reset_epoch.load(Ordering::SeqCst);
         drop(self.edit_at(epoch)?);
@@ -1013,6 +1046,17 @@ impl Backend {
     }
 
     pub fn refresh_cli_scope(&self, req: CliRequest) -> Result<Vec<CliScopeItem>> {
+        if req.provider == CliProvider::Github {
+            return self
+                .get_github_scope(crate::model::github::GithubScopeRequest {
+                    asset_id: req.asset_id,
+                    owner_login: req.account,
+                    host: None,
+                    force: Some(true),
+                    expected_revision: None,
+                })
+                .map(|result| result.scope);
+        }
         let _run = self.cli_run(req.provider);
         let epoch = self.reset_epoch.load(Ordering::SeqCst);
         drop(self.edit_at(epoch)?);
@@ -1062,6 +1106,36 @@ impl Backend {
         }
         let snapshot = self.database()?.require_asset(asset_id)?;
         let cli = snapshot.as_cli().ok_or_else(|| AppError::ipc(IpcErrorId::NotFound))?;
+        if cli.cli_provider == CliProvider::Github {
+            let result = self.get_github_scope(crate::model::github::GithubScopeRequest {
+                asset_id: Some(asset_id.into()),
+                owner_login: None,
+                host: None,
+                force: Some(false),
+                expected_revision: None,
+            })?;
+            let mut excluded = result.config.excluded_repo_ids.clone();
+            if result.config.mode == crate::model::github::GithubScopeMode::Auto {
+                excluded.retain(|id| !selected_ids.contains(id));
+                excluded.extend(
+                    result
+                        .scope
+                        .iter()
+                        .filter(|item| !selected_ids.contains(&item.id))
+                        .map(|item| item.id.clone()),
+                );
+                excluded.sort();
+                excluded.dedup();
+            }
+            return self.save_github_scope(crate::model::github::GithubScopeSaveRequest {
+                asset_id: asset_id.into(),
+                expected_revision: result.config.revision,
+                mode: result.config.mode,
+                selected_repo_ids: selected_ids.to_vec(),
+                excluded_repo_ids: excluded,
+                owner_login: None,
+            });
+        }
         // Reject IDs outside this saved account before refresh can mutate its state or timestamps.
         if selected_ids
             .iter()
@@ -1121,7 +1195,7 @@ pub(super) fn check_ancestors(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn ensure_data_marker(paths: &Paths) -> Result<()> {
+pub(super) fn ensure_data_marker(paths: &Paths) -> Result<()> {
     let path = paths.data_dir.join(".cloudlink.json");
     check_ancestors(&path)?;
     match fs::symlink_metadata(&path) {

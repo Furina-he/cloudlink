@@ -23,6 +23,13 @@ import type {
   Environment,
   GuardRules,
   GuardStatus,
+  GithubScopeRequest,
+  GithubScopeResult,
+  GithubScopeSaveRequest,
+  CancelExecutionRequest,
+  ExecutionRequest,
+  RespondExecutionRequest,
+  RuntimeStatus,
   ImportHost,
   Inclusion,
   IpcError,
@@ -100,6 +107,12 @@ export const ipc = {
   /** 范围勾选立即生效（PRD 6.4），重新编译（2026-11-02 补充） */
   setCliScope: (assetId: string, selectedIds: string[]) =>
     invoke<SaveResult>("set_cli_scope", { assetId, selectedIds }),
+  getGithubScope: (req: GithubScopeRequest) => invoke<GithubScopeResult>("get_github_scope", { req }),
+  saveGithubScope: (req: GithubScopeSaveRequest) => invoke<SaveResult>("save_github_scope", { req }),
+  getRuntimeStatus: () => invoke<RuntimeStatus>("get_runtime_status"),
+  listExecutionRequests: () => invoke<ExecutionRequest[]>("list_execution_requests"),
+  respondExecution: (req: RespondExecutionRequest) => invoke<ExecutionRequest>("respond_execution", { req }),
+  cancelExecution: (req: CancelExecutionRequest) => invoke<ExecutionRequest>("cancel_execution", { req }),
   /** F-104 AC2：在对应运行环境打开终端，预填安装或登录命令 */
   openEnvTerminal: (req: { envId: EnvId; command: string }) =>
     invoke<void>("open_env_terminal", { req }),

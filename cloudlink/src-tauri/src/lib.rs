@@ -33,6 +33,13 @@ pub fn run() {
     use tauri_plugin_log::{Target, TargetKind};
 
     let paths = paths::Paths::from_env().expect("invalid CloudLink paths");
+    // Publish starting before logging, database initialization or WebView setup.
+    // A second production instance still reaches the single-instance plugin to focus the first.
+    let early_runtime = match ipc::begin_runtime(&paths) {
+        Ok(owner) => Some(owner),
+        Err(error) if !paths.isolated && error.to_string().contains("runtime-instance-active") => None,
+        Err(error) => panic!("could not initialize CloudLink runtime: {error}"),
+    };
     let mut context = tauri::generate_context!();
     desktop::configure(context.config_mut(), &paths).expect("could not prepare CloudLink desktop storage");
     let show_when_ready = window_chrome::prepare(context.config_mut());
@@ -82,7 +89,7 @@ pub fn run() {
             app.manage(window_chrome::WindowChrome::new(show_when_ready));
             let events = Arc::new(ipc::TauriEvents(app.handle().clone()));
             let isolated = paths.isolated;
-            let backend = ipc::Backend::open(paths, events)?;
+            let backend = ipc::Backend::open_with_runtime(paths, events, early_runtime)?;
             backend.start_updates(
                 &app.package_info().version.to_string(),
                 Arc::new(update::PluginSource::new(app.handle().clone(), isolated)),
@@ -97,6 +104,7 @@ pub fn run() {
             }
             app.manage(backend);
             app.manage(Arc::new(tray::TrayState::default()));
+            tray::register_execution_notifications(app.handle())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -122,6 +130,12 @@ pub fn run() {
             ipc::commands::detect_cli_environment,
             ipc::commands::refresh_cli_scope,
             ipc::commands::set_cli_scope,
+            ipc::commands::get_github_scope,
+            ipc::commands::save_github_scope,
+            ipc::commands::get_runtime_status,
+            ipc::commands::list_execution_requests,
+            ipc::commands::respond_execution,
+            ipc::commands::cancel_execution,
             ipc::commands::open_env_terminal,
             ipc::commands::start_probe,
             ipc::commands::cancel_probe,
@@ -197,6 +211,7 @@ pub fn run() {
                 }
         ) && let Some(backend) = handle.try_state::<Arc<ipc::Backend>>()
         {
+            backend.stop_execution();
             backend.cancel_all_jobs();
         }
     });

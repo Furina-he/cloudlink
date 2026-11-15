@@ -3,6 +3,7 @@
 
 mod runner;
 
+pub(crate) use runner::sh_quote;
 pub use runner::{EmptyRunner, SystemRunner};
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -47,6 +48,12 @@ pub enum Query {
         path: String,
         account: String,
     },
+    /// Fixed effective-identity/owner/fully paginated repository metadata query.
+    Github {
+        path: String,
+        host: String,
+        owner: Option<String>,
+    },
 }
 
 pub struct QueryOutput {
@@ -83,6 +90,7 @@ pub trait Runner: Send + Sync {
 struct Cache {
     states: BTreeMap<(CliProvider, EnvId), CliEnvState>,
     catalogs: BTreeMap<(CliProvider, String), Vec<CliScopeItem>>,
+    github: BTreeMap<(String, String), crate::model::github::GithubScopeResult>,
 }
 
 pub struct Service {
@@ -348,6 +356,206 @@ impl Service {
             .collect())
     }
 
+    /// Each environment gets its own effective identity and completeness state. Failure
+    /// envelopes carry no additions; callers merge with their persisted historical snapshot.
+    pub fn github_scope(
+        &self,
+        envs: &[EnvContext],
+        host: &str,
+        owner_login: Option<&str>,
+    ) -> Result<crate::model::github::GithubScopeResult> {
+        use crate::model::github::*;
+        if !valid_github_host(host) || owner_login.is_some_and(|login| !valid_github_owner(login)) {
+            return Err(AppError::ipc(IpcErrorId::CliAccountUnavailable));
+        }
+        let host = host.to_ascii_lowercase();
+        let mut result = GithubScopeResult {
+            asset_id: None,
+            config: GithubConfig {
+                host: host.clone(),
+                owner: None,
+                mode: GithubScopeMode::Auto,
+                selected_repo_ids: Vec::new(),
+                excluded_repo_ids: Vec::new(),
+                revision: 0,
+                env_states: BTreeMap::new(),
+                migration_pending: false,
+            },
+            owners: Vec::new(),
+            scope: Vec::new(),
+            env_states: BTreeMap::new(),
+        };
+        for env in envs.iter().filter(|env| env.available) {
+            let checked_at = crate::time::now_rfc3339();
+            let mut state = CliEnvState {
+                installed: false,
+                version: None,
+                path: None,
+                authenticated: false,
+                expired: false,
+                account: None,
+                accounts: None,
+                checked_at: checked_at.clone(),
+            };
+            let queried = (|| {
+                let discovery = json_output(&self.runner.run(
+                    env,
+                    &Query::Discover {
+                        provider: CliProvider::Github,
+                    },
+                )?)?;
+                if discovery["installed"] != true {
+                    return Err(AppError::ipc(IpcErrorId::CliCommandUnsupported));
+                }
+                let path = discovery["path"]
+                    .as_str()
+                    .filter(|path| valid_path(path, env))
+                    .ok_or_else(|| AppError::ipc(IpcErrorId::CliCommandUnsupported))?
+                    .to_string();
+                state.installed = true;
+                state.path = Some(path.clone());
+                state.version = self
+                    .runner
+                    .run(
+                        env,
+                        &Query::Version {
+                            provider: CliProvider::Github,
+                            path: path.clone(),
+                        },
+                    )
+                    .ok()
+                    .and_then(|output| parse_version(&output.stdout));
+                json_output(&self.runner.run(
+                    env,
+                    &Query::Github {
+                        path,
+                        host: host.clone(),
+                        owner: owner_login.map(String::from),
+                    },
+                )?)
+            })();
+            let (mut snapshot, owners) =
+                match queried.and_then(|value| parse_github_snapshot(&value, &host, &checked_at)) {
+                    Ok(parsed) => parsed,
+                    Err(_) => (
+                        GithubSnapshot {
+                            status: GithubSnapshotStatus::Offline,
+                            identity: None,
+                            owner: None,
+                            repos: Vec::new(),
+                            checked_at,
+                            reason_id: Some(
+                                if state.installed {
+                                    "offline"
+                                } else {
+                                    "cli-not-installed"
+                                }
+                                .into(),
+                            ),
+                        },
+                        Vec::new(),
+                    ),
+                };
+            if let Some(owner) = &snapshot.owner {
+                if owner_login.is_some_and(|login| !owner.login.eq_ignore_ascii_case(login))
+                    || result.config.owner.as_ref().is_some_and(|known| known.id != owner.id)
+                {
+                    snapshot.status = GithubSnapshotStatus::Denied;
+                    snapshot.repos.clear();
+                    snapshot.reason_id = Some("owner-changed".into());
+                } else if snapshot.status == GithubSnapshotStatus::Complete {
+                    result.config.owner = Some(owner.clone());
+                }
+            }
+            state.authenticated = snapshot.identity.is_some()
+                && (owner_login.is_none()
+                    || snapshot.status == GithubSnapshotStatus::Complete && snapshot.owner.is_some());
+            state.account = owner_login
+                .map(String::from)
+                .or_else(|| snapshot.identity.as_ref().map(|identity| identity.login.clone()));
+            state.accounts = Some(owners.iter().map(|owner| owner.login.clone()).collect());
+            for owner in owners {
+                if !result.owners.iter().any(|known| known.id == owner.id) {
+                    result.owners.push(owner);
+                }
+            }
+            result.config.env_states.insert(env.id.clone(), snapshot);
+            result.env_states.insert(env.id.clone(), state);
+        }
+        result.config.canonicalize();
+        let configuration = result.config.clone();
+        for snapshot in result.config.env_states.values_mut() {
+            for repo in &mut snapshot.repos {
+                repo.selected = configuration.includes(repo);
+            }
+        }
+        result.scope = result.config.scope();
+        self.cache
+            .lock()
+            .map_err(|_| AppError::internal("CLI cache lock"))?
+            .github
+            .insert((host, owner_login.unwrap_or("").to_ascii_lowercase()), result.clone());
+        Ok(result)
+    }
+
+    /// New asset input has no authority to describe repositories or the effective login.
+    /// It can only select stable IDs from the just-verified complete metadata receipt.
+    pub fn validate_github_create(
+        &self,
+        input: &crate::model::github::GithubCreateInput,
+    ) -> Result<crate::model::github::GithubScopeResult> {
+        use crate::model::github::*;
+        if !valid_github_host(&input.host)
+            || !valid_github_owner(&input.owner_login)
+            || !valid_github_ids(&input.selected_repo_ids)
+            || !valid_github_ids(&input.excluded_repo_ids)
+        {
+            return Err(AppError::ipc(IpcErrorId::CliScopeFailed));
+        }
+        let mut result = self
+            .cache
+            .lock()
+            .map_err(|_| AppError::internal("CLI cache lock"))?
+            .github
+            .get(&(input.host.to_ascii_lowercase(), input.owner_login.to_ascii_lowercase()))
+            .cloned()
+            .ok_or_else(|| AppError::ipc(IpcErrorId::CliScopeFailed))?;
+        if result.config.owner.is_none()
+            || !result
+                .config
+                .env_states
+                .values()
+                .any(|snapshot| snapshot.status == GithubSnapshotStatus::Complete && snapshot.identity.is_some())
+        {
+            return Err(AppError::ipc(IpcErrorId::CliScopePermission));
+        }
+        let known: BTreeSet<_> = result
+            .config
+            .env_states
+            .values()
+            .filter(|snapshot| snapshot.status == GithubSnapshotStatus::Complete)
+            .flat_map(|snapshot| snapshot.repos.iter().map(|repo| repo.id.as_str()))
+            .collect();
+        if input.mode == GithubScopeMode::Manual
+            && input.selected_repo_ids.iter().any(|id| !known.contains(id.as_str()))
+        {
+            return Err(AppError::ipc(IpcErrorId::CliScopeFailed));
+        }
+        result.config.mode = input.mode;
+        result.config.selected_repo_ids = input.selected_repo_ids.clone();
+        result.config.excluded_repo_ids = input.excluded_repo_ids.clone();
+        result.config.revision = 1;
+        result.config.canonicalize();
+        let config = result.config.clone();
+        for snapshot in result.config.env_states.values_mut() {
+            for repo in &mut snapshot.repos {
+                repo.selected = snapshot.status == GithubSnapshotStatus::Complete && config.includes(repo);
+            }
+        }
+        result.scope = result.config.scope();
+        Ok(result)
+    }
+
     pub fn open_terminal(&self, env: &EnvContext, command: &str) -> Result<()> {
         if !env.available || !terminal_command_allowed(env, command) {
             return Err(AppError::ipc(IpcErrorId::TerminalCommandInvalid));
@@ -404,6 +612,153 @@ pub(crate) fn valid_github_owner(login: &str) -> bool {
         && login.len() <= 39
         && !login.starts_with('-')
         && login.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+pub(crate) fn valid_github_host(host: &str) -> bool {
+    !host.is_empty()
+        && host.len() <= 253
+        && !host.contains("..")
+        && host.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+        && host.as_bytes().last().is_some_and(u8::is_ascii_alphanumeric)
+        && host
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.'))
+}
+
+pub(crate) fn valid_github_ids(ids: &[String]) -> bool {
+    ids.len() <= 500
+        && ids.iter().collect::<BTreeSet<_>>().len() == ids.len()
+        && ids
+            .iter()
+            .all(|id| id.strip_prefix("repo:").is_some_and(valid_github_node))
+}
+
+fn valid_github_node(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'=' | b'-'))
+}
+
+fn parse_github_snapshot(
+    value: &Value,
+    host: &str,
+    checked_at: &str,
+) -> Result<(
+    crate::model::github::GithubSnapshot,
+    Vec<crate::model::github::GithubOwner>,
+)> {
+    use crate::model::github::*;
+    let invalid = || AppError::ipc(IpcErrorId::CliScopeFailed);
+    let status = match value["status"].as_str() {
+        Some("complete") => GithubSnapshotStatus::Complete,
+        Some("partial") => GithubSnapshotStatus::Partial,
+        Some("offline") => GithubSnapshotStatus::Offline,
+        Some("denied") => GithubSnapshotStatus::Denied,
+        _ => return Err(invalid()),
+    };
+    let owner = |value: &Value| -> Result<GithubOwner> {
+        let owner: GithubOwner = serde_json::from_value(value.clone()).map_err(|_| invalid())?;
+        if !valid_github_node(&owner.id) || !valid_github_owner(&owner.login) {
+            return Err(invalid());
+        }
+        Ok(owner)
+    };
+    let identity = value
+        .get("identity")
+        .map(|value| -> Result<GithubIdentity> {
+            let identity: GithubIdentity = serde_json::from_value(value.clone()).map_err(|_| invalid())?;
+            if identity.host != host || !valid_github_node(&identity.id) || !valid_github_owner(&identity.login) {
+                return Err(invalid());
+            }
+            Ok(identity)
+        })
+        .transpose()?;
+    let bound = value.get("owner").map(owner).transpose()?;
+    let owners = value["owners"]
+        .as_array()
+        .filter(|owners| owners.len() <= 100)
+        .ok_or_else(invalid)?
+        .iter()
+        .map(owner)
+        .collect::<Result<Vec<_>>>()?;
+    let items = value["items"]
+        .as_array()
+        .filter(|items| items.len() <= 500)
+        .ok_or_else(invalid)?;
+    let mut repos = Vec::new();
+    let mut seen = BTreeSet::new();
+    for item in items {
+        let repo = GithubRepo {
+            id: item["id"].as_str().ok_or_else(invalid)?.into(),
+            name: item["name"].as_str().ok_or_else(invalid)?.into(),
+            owner_id: item["ownerId"].as_str().ok_or_else(invalid)?.into(),
+            database_id: item
+                .get("databaseId")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty() && id.len() <= 20 && id.bytes().all(|byte| byte.is_ascii_digit()))
+                .map(String::from),
+            default_branch: item
+                .get("defaultBranch")
+                .and_then(Value::as_str)
+                .filter(|branch| valid_branch(branch))
+                .map(String::from),
+            visibility: match item["visibility"].as_str() {
+                Some("public") => Some(RepoVisibility::Public),
+                Some("private") => Some(RepoVisibility::Private),
+                Some("internal") => Some(RepoVisibility::Internal),
+                _ => None,
+            },
+            selected: false,
+        };
+        if !valid_github_ids(std::slice::from_ref(&repo.id))
+            || !valid_repo_name(&repo.name)
+            || bound.as_ref().is_none_or(|owner| {
+                owner.id != repo.owner_id
+                    || !repo
+                        .name
+                        .split('/')
+                        .next()
+                        .is_some_and(|login| login.eq_ignore_ascii_case(&owner.login))
+            })
+            || !seen.insert(repo.id.clone())
+        {
+            return Err(invalid());
+        }
+        repos.push(repo);
+    }
+    if status != GithubSnapshotStatus::Complete && !repos.is_empty() {
+        return Err(invalid());
+    }
+    let reason_id = value
+        .get("reasonId")
+        .and_then(Value::as_str)
+        .filter(|reason| {
+            [
+                "pagination-incomplete",
+                "invalid-metadata",
+                "permission-denied",
+                "rate-limited",
+                "offline",
+                "owner-changed",
+                "identity-changed",
+                "invalid-owner",
+            ]
+            .contains(reason)
+        })
+        .map(String::from);
+    Ok((
+        GithubSnapshot {
+            status,
+            identity,
+            owner: bound,
+            repos,
+            checked_at: checked_at.into(),
+            reason_id,
+        },
+        owners,
+    ))
 }
 
 /// `owner/name`：仓库名是字母、数字和 `.` `_` `-`，最长 100，不能是 `.` 或 `..`
@@ -679,6 +1034,10 @@ fn parse_scope(provider: CliProvider, value: &Value, assets: &[Asset]) -> Result
                 address,
                 default_branch,
                 visibility,
+                repo_source: value
+                    .get("repoSource")
+                    .and_then(|source| serde_json::from_value::<crate::model::asset::RepoSource>(source.clone()).ok())
+                    .filter(crate::model::asset::RepoSource::valid),
             },
         );
     }

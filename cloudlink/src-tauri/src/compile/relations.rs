@@ -232,7 +232,100 @@ pub fn derive(assets: &[Asset]) -> Vec<Relation> {
             }
         }
     }
+    for deployment in deployment_relations(assets) {
+        push(deployment);
+    }
     out.into_values().collect()
+}
+
+fn deployment_relations(assets: &[Asset]) -> Vec<Relation> {
+    use crate::model::asset::RepoSource;
+    let mut out = Vec::new();
+    for source_asset in assets.iter().filter(|asset| {
+        asset
+            .as_cli()
+            .is_some_and(|cli| cli.cli_provider == CliProvider::Github)
+    }) {
+        let github = source_asset.as_cli().unwrap();
+        let Some(config) = github.github.as_ref().filter(|config| !config.migration_pending) else {
+            continue;
+        };
+        let Some(owner) = config.owner.as_ref() else {
+            continue;
+        };
+        let mut add = |target: &Asset, source: &RepoSource, evidence: &str, detail: &str, key: &str, field: &str| {
+            if !source.valid()
+                || !source.host.eq_ignore_ascii_case(&config.host)
+                || !source.owner.eq_ignore_ascii_case(&owner.login)
+                || !target
+                    .agent()
+                    .agents
+                    .iter()
+                    .any(|agent| source_asset.agent().agents.contains(agent))
+            {
+                return;
+            }
+            let name = format!("{}/{}", source.owner, source.repo);
+            let Some(repo) = config
+                .env_states
+                .values()
+                .flat_map(|snapshot| &snapshot.repos)
+                .find(|repo| {
+                    repo.owner_id == owner.id
+                        && config.includes(repo)
+                        && github.cli.scope.iter().any(|item| item.selected && item.id == repo.id)
+                        && source.repo_id.as_ref().map_or_else(
+                            || repo.name.eq_ignore_ascii_case(&name),
+                            |id| id == &repo.id || repo.database_id.as_ref() == Some(id),
+                        )
+                })
+            else {
+                return;
+            };
+            let description = match evidence {
+                "vercel-binding" => format!("Vercel project {} Git binding", code(detail)),
+                "cloudflare-pages" => format!("Cloudflare Pages {} repository source", code(detail)),
+                _ => format!("the origin remote observed in {}", code(detail)),
+            };
+            out.push(relation(
+                RelationKind::Deployment,
+                format!("deploy:{}:{}:{}:{}",github.id,repo.id,target.id(),key),
+                vec![github.id.clone(),target.id().to_string()],
+                vec![("repoId",repo.id.clone()),("repo",repo.name.clone()),("to",target.handle().to_string()),("evidence",evidence.to_string()),(field,detail.to_string())],
+                format!("Repository {} ({}) deploys to {}: evidence is {description}. This relationship is context, not additional authorization.",code(&repo.name),code(&github.handle),code(target.handle())),
+            ));
+        };
+        for target in assets.iter().filter(|asset| asset.id() != github.id) {
+            match target {
+                Asset::Cli(cli) => {
+                    let evidence = match cli.cli_provider {
+                        CliProvider::Vercel => "vercel-binding",
+                        CliProvider::Cloudflare => "cloudflare-pages",
+                        _ => continue,
+                    };
+                    for item in cli.cli.scope.iter().filter(|item| {
+                        item.selected && matches!(item.kind, CliScopeKind::Project | CliScopeKind::Pages)
+                    }) {
+                        if let Some(source) = &item.repo_source {
+                            add(target, source, evidence, &item.name, &item.id, "scope");
+                        }
+                    }
+                }
+                Asset::Vps(server) => {
+                    for path in server
+                        .paths
+                        .iter()
+                        .filter(|path| path.source == crate::model::asset::FieldSource::Manual)
+                    {
+                        if let Some(source) = &path.repo_source {
+                            add(target, source, "server-git-remote", &path.path, &path.key, "path");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 /// 用户隐藏的标上 hidden，供界面列出
@@ -245,7 +338,50 @@ pub fn with_hidden(mut relations: Vec<Relation>, config: &SkillConfig) -> Vec<Re
 
 /// SKILL.md「How they fit together」的各行：涉及的资源都在这份 Skill 里的自动关系（未隐藏），再加用户写的
 pub fn lines(included: &[&Asset], config: &SkillConfig) -> Vec<String> {
-    let owned: Vec<Asset> = included.iter().map(|a| (*a).clone()).collect();
+    let replacements: BTreeMap<_, _> = included
+        .iter()
+        .filter_map(|asset| asset.as_server())
+        .map(|server| {
+            (
+                server.connection.ssh_alias.clone(),
+                super::render::server_handle(server),
+            )
+        })
+        .filter(|(old, current)| old != current)
+        .collect();
+    let jump = |value: &str| {
+        value
+            .split(',')
+            .map(|hop| {
+                let (user, alias) = hop
+                    .trim()
+                    .rsplit_once('@')
+                    .map_or((None, hop.trim()), |(user, alias)| (Some(user), alias));
+                let replacement = replacements
+                    .iter()
+                    .find(|(old, _)| old.eq_ignore_ascii_case(alias))
+                    .map_or(alias, |(_, current)| current.as_str());
+                user.map_or_else(|| replacement.to_string(), |user| format!("{user}@{replacement}"))
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let mut owned: Vec<Asset> = included.iter().map(|a| (*a).clone()).collect();
+    for asset in &mut owned {
+        if let Asset::Vps(server) = asset {
+            // Only generated relationship text gets private internal aliases. The
+            // database, UI derive() parameters and user-authored notes remain untouched.
+            server.connection.ssh_alias = super::render::server_handle(server);
+            if let Some(Some(proxy)) = &mut server.connection.proxy_jump {
+                *proxy = jump(proxy);
+            }
+            if let Some(resolved) = &mut server.connection.resolved
+                && let Some(proxy) = &mut resolved.proxy_jump
+            {
+                *proxy = jump(proxy);
+            }
+        }
+    }
     let present = |id: &String| included.iter().any(|a| a.id() == id);
     derive(&owned)
         .into_iter()
@@ -278,6 +414,7 @@ mod tests {
             address: None,
             default_branch: None,
             visibility: None,
+            repo_source: None,
         }
     }
 
@@ -317,6 +454,7 @@ mod tests {
             address: Some("198.51.100.7".into()),
             default_branch: None,
             visibility: None,
+            repo_source: None,
         }];
 
         let assets = vec![
@@ -358,6 +496,182 @@ mod tests {
         assert_eq!(jump.asset_ids, vec![behind.id.clone(), relay.id.clone()]);
         assert!(jump.text.contains("`jp-relay`"));
         assert_eq!(derive(&assets), relations, "stable order and ids");
+    }
+
+    #[test]
+    fn generated_relationships_use_internal_handles_for_legacy_address_aliases_only() {
+        let mut server = testkit::hk_edge();
+        server.connection.ssh_alias = "edge-203.0.113.10".into();
+        let mut relay = testkit::sg_db();
+        relay.connection.proxy_jump = Some(Some(server.connection.ssh_alias.clone()));
+        relay.connection.resolved.as_mut().unwrap().proxy_jump = None;
+        let assets = [Asset::Vps(server.clone()), Asset::Vps(relay)];
+        let generated = lines(&[&assets[0], &assets[1]], &SkillConfig::default());
+        assert!(generated.iter().all(|line| !line.contains("edge-203.0.113.10")));
+        assert!(
+            generated
+                .iter()
+                .any(|line| line.contains(&super::super::render::server_handle(&server)))
+        );
+        assert!(
+            derive(&assets)
+                .iter()
+                .any(|relation| relation.text.contains("edge-203.0.113.10")),
+            "UI data stays as-is"
+        );
+        let mut config = SkillConfig::default();
+        config.relation_notes.push(RelationNote {
+            id: "user-note".into(),
+            text: "I intentionally wrote edge-203.0.113.10".into(),
+            replaces: None,
+        });
+        assert_eq!(
+            lines(&[&assets[0], &assets[1]], &config).last().unwrap(),
+            "I intentionally wrote edge-203.0.113.10"
+        );
+    }
+
+    #[test]
+    fn deployment_relations_require_real_source_and_selected_stable_owner_repo() {
+        use crate::model::asset::{CliBinary, RepoSource, RepoVisibility};
+        use crate::model::env::EnvId;
+        use crate::model::github::*;
+        let mut gh = testkit::github();
+        gh.github = Some(GithubConfig {
+            host: "github.com".into(),
+            owner: Some(GithubOwner {
+                id: "U1".into(),
+                login: "octo".into(),
+                kind: GithubOwnerKind::User,
+            }),
+            mode: GithubScopeMode::Manual,
+            selected_repo_ids: vec!["repo:R_shop".into()],
+            excluded_repo_ids: Vec::new(),
+            revision: 1,
+            migration_pending: false,
+            env_states: BTreeMap::from([(
+                EnvId::windows(),
+                GithubSnapshot {
+                    status: GithubSnapshotStatus::Complete,
+                    identity: Some(GithubIdentity {
+                        id: "U1".into(),
+                        login: "octo".into(),
+                        host: "github.com".into(),
+                    }),
+                    owner: Some(GithubOwner {
+                        id: "U1".into(),
+                        login: "octo".into(),
+                        kind: GithubOwnerKind::User,
+                    }),
+                    checked_at: "2026-11-15T00:00:00Z".into(),
+                    reason_id: None,
+                    repos: vec![GithubRepo {
+                        id: "repo:R_shop".into(),
+                        name: "octo/shop-web".into(),
+                        owner_id: "U1".into(),
+                        database_id: Some("123".into()),
+                        default_branch: Some("main".into()),
+                        visibility: Some(RepoVisibility::Private),
+                        selected: true,
+                    }],
+                },
+            )]),
+        });
+        let source = RepoSource {
+            host: "github.com".into(),
+            owner: "octo".into(),
+            repo: "shop-web".into(),
+            repo_id: Some("123".into()),
+        };
+        let mut vercel = testkit::cloudflare();
+        vercel.id = "ast_vercel".into();
+        vercel.handle = "vercel".into();
+        vercel.cli_provider = CliProvider::Vercel;
+        vercel.cli.binary = CliBinary::Vercel;
+        vercel.cli.scope = vec![CliScopeItem {
+            id: "prj_web".into(),
+            kind: CliScopeKind::Project,
+            name: "shop".into(),
+            selected: true,
+            linked_asset_id: None,
+            address: None,
+            default_branch: None,
+            visibility: None,
+            repo_source: Some(source.clone()),
+        }];
+        let mut pages = testkit::cloudflare();
+        pages.id = "ast_pages".into();
+        pages.handle = "cloudflare".into();
+        pages.cli.scope = vec![CliScopeItem {
+            id: "pages:web".into(),
+            kind: CliScopeKind::Pages,
+            name: "web".into(),
+            selected: true,
+            linked_asset_id: None,
+            address: None,
+            default_branch: None,
+            visibility: None,
+            repo_source: Some(source.clone()),
+        }];
+        let mut server = testkit::hk_edge();
+        server.paths[0].repo_source = Some(RepoSource {
+            repo_id: None,
+            ..source
+        });
+        let mut assets = vec![
+            Asset::Cli(gh),
+            Asset::Cli(vercel),
+            Asset::Cli(pages),
+            Asset::Vps(server),
+        ];
+        let deployments: Vec<_> = derive(&assets)
+            .into_iter()
+            .filter(|relation| relation.kind == RelationKind::Deployment)
+            .collect();
+        assert_eq!(deployments.len(), 3);
+        assert!(
+            deployments
+                .iter()
+                .all(|relation| relation.params["repoId"] == ParamValue::from("repo:R_shop"))
+        );
+        let selected: Vec<_> = assets.iter().collect();
+        let mut config = SkillConfig::default();
+        config.hidden_relations.push(deployments[0].id.clone());
+        assert_eq!(
+            lines(&selected, &config)
+                .iter()
+                .filter(|line| line.contains("additional authorization"))
+                .count(),
+            2
+        );
+        assert!(
+            lines(&[&assets[0]], &SkillConfig::default())
+                .iter()
+                .all(|line| !line.contains("deploys to"))
+        );
+        if let Asset::Cli(cli) = &mut assets[1] {
+            cli.cli.scope[0].repo_source = None;
+        }
+        if let Asset::Cli(cli) = &mut assets[2] {
+            cli.cli.scope[0].selected = false;
+        }
+        if let Asset::Vps(server) = &mut assets[3] {
+            server.agent.agents.clear();
+        }
+        assert!(
+            derive(&assets)
+                .iter()
+                .all(|relation| relation.kind != RelationKind::Deployment)
+        );
+        // A linkedAssetId or matching name without observed repoSource cannot fabricate evidence.
+        if let Asset::Cli(cli) = &mut assets[1] {
+            cli.cli.scope[0].linked_asset_id = Some("ast_01JB9CLI09".into());
+        }
+        assert!(
+            derive(&assets)
+                .iter()
+                .all(|relation| relation.kind != RelationKind::Deployment)
+        );
     }
 
     #[test]

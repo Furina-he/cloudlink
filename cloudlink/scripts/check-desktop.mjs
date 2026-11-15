@@ -1,5 +1,7 @@
 // Exercise the built WebView2 app and real named IPC. No mockIPC, real user profile, or OS vault.
 // Build with `pnpm build:desktop-test`, then run `pnpm e2e:desktop` on Windows with WSL Docker.
+// Native input additionally requires e2e-desktop/tauri.native.conf.json: let Tauri
+// show the window normally, rather than bypassing Tao visibility state with ShowWindow.
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
@@ -17,10 +19,12 @@ const project = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const workspace = dirname(project)
 const appPath = resolve(project, process.argv[2] ?? "src-tauri/target/debug/cloudlink.exe")
 if (process.platform !== "win32") throw new Error("The desktop integration check requires Windows WebView2")
-const output = join(workspace, "test-results", "desktop")
+const output = resolve(process.env.CLOUDLINK_DESKTOP_EVIDENCE_DIR ?? join(workspace, "test-results", "desktop"))
 await assertTestRoot(output)
 await mkdir(output, { recursive: true })
 await assertTestRoot(output)
+const nativeTools = process.env.CLOUDLINK_DESKTOP_NATIVE_TOOLS ? resolve(process.env.CLOUDLINK_DESKTOP_NATIVE_TOOLS) : null
+if (nativeTools) await assertTestRoot(nativeTools)
 const runRoot = await mkdtemp(join(output, "run-"))
 await assertTestRoot(runRoot)
 const dataRoot = join(runRoot, "应用 数据")
@@ -177,6 +181,43 @@ async function run(executable, args, input, extraEnv = {}) {
   })
 }
 
+async function native(file, args = [], extra = {}) {
+  assert.ok(nativeTools, "Native input tools must be explicitly supplied")
+  assert.ok(["window-tools.ps1", "native-interaction-tools.ps1", "native-input-probe.ps1"].includes(file))
+  const path = join(nativeTools, file)
+  const metadata = await lstat(path)
+  assert.ok(metadata.isFile() && !metadata.isSymbolicLink())
+  const result = await run(join(process.env.SystemRoot || "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe"),
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", path, ...args], "", {
+      CLOUDLINK_P8_PID: String(desktop.pid), CLOUDLINK_P8_EXE: launchPath, CLOUDLINK_P8_EVIDENCE_ROOT: runRoot,
+      PSModuleAnalysisCachePath: "NUL", ...extra,
+    })
+  assert.equal(result.code, 0, result.stderr)
+  return JSON.parse(result.stdout.trim())
+}
+const nativeWindow = (mode, extra) => native("window-tools.ps1", ["-Mode", mode], extra)
+const nativeAction = (action, extra) => native("native-interaction-tools.ps1", ["-Action", action], extra)
+const nativeShot = (name) => nativeWindow("capture", { CLOUDLINK_P8_SHOT: join(runRoot, name) })
+
+function runner(args, timeout = 120_000) {
+  const child = spawn(join(dataRoot, "bin", "cloudlink-guard.exe"), args, { cwd: userRoot, env: childEnvironment(), windowsHide: true, shell: false, stdio: ["ignore", "pipe", "pipe"] })
+  const result = new Promise((done, reject) => {
+    let stdout = "", stderr = ""
+    const timer = setTimeout(() => { child.kill(); reject(new Error("Runner test timed out")) }, timeout)
+    child.stdout.on("data", (bytes) => { stdout += bytes; if (stdout.length > 1024 * 1024) child.kill() })
+    child.stderr.on("data", (bytes) => { stderr += bytes; if (stderr.length > 1024 * 1024) child.kill() })
+    child.once("error", (error) => { clearTimeout(timer); reject(error) })
+    child.once("close", (code) => { clearTimeout(timer); done({ code, stdout, stderr }) })
+  })
+  return { child, result }
+}
+const runnerExec = (command, timeout) => runner(["exec", "--env", "windows", "--asset", saved.id, "--", command], timeout)
+const requests = () => invoke("list_execution_requests")
+const diagnostic = (result) => result.stderr.split(/\r?\n/u).filter((line) => line.startsWith("{")).map((line) => JSON.parse(line))
+async function waitingRequest() {
+  return waitFor(async () => (await requests()).find((request) => request.state === "waiting"), "native pending approval", 15_000)
+}
+
 async function guard(command, expected) {
   const result = await run(join(dataRoot, "bin", "cloudlink-guard.exe"), ["--env", "windows"], JSON.stringify({
     tool_name: "Bash", session_id: "desktop-integration", cwd: runRoot, tool_input: { command },
@@ -276,6 +317,32 @@ try {
       }
     })
     await page.screenshot({ path: join(runRoot, "01-native-empty.png") })
+  })
+
+  if (nativeTools) await check("P8 actual Windows input reaches owned controls and DWM captures the current window", async () => {
+    const probe = await native("native-input-probe.ps1")
+    report.nativeInputProbe = probe
+    assert.equal(probe.ownedForeground, true, JSON.stringify(probe))
+    assert.equal(probe.keyboardText, "J", JSON.stringify(probe))
+    assert.equal(probe.keyboardDelivered, true, JSON.stringify(probe))
+    assert.equal(probe.mouseMoveDelivered, true, JSON.stringify(probe))
+    assert.equal(probe.mouseClickDelivered, true, JSON.stringify(probe))
+    const visible = await nativeWindow("inspect")
+    assert.equal(visible.visible, true, "Native input needs tauri.native.conf.json and Tauri's normal startup show path")
+    const shown = await nativeWindow("restore")
+    assert.equal(shown.visible, true)
+    report.nativeWindow = await nativeShot("08-native-dwm-empty.png")
+    report.nativeInactive = await nativeWindow("inactive", { CLOUDLINK_P8_SHOT: join(runRoot, "09-native-dwm-inactive.png") })
+    const maximized = await nativeAction("caption-double")
+    assert.equal(maximized.after.maximized, true)
+    assert.equal((await nativeAction("caption-double")).after.maximized, false)
+    const moved = await nativeAction("caption-drag", { CLOUDLINK_P8_DX: "20", CLOUDLINK_P8_DY: "10" })
+    assert.equal(moved.after.outer.x - moved.before.outer.x, 20)
+    assert.equal(moved.after.outer.y - moved.before.outer.y, 10)
+    report.nativeCaptionDrag = moved
+    await nativeWindow("resize", { CLOUDLINK_P8_WIDTH: "760", CLOUDLINK_P8_HEIGHT: "520" })
+    report.nativeMinimum = await nativeShot("10-native-dwm-minimum.png")
+    await nativeWindow("resize", { CLOUDLINK_P8_WIDTH: "1000", CLOUDLINK_P8_HEIGHT: "680" })
   })
 
   await check("production CSP blocks external scripts before a request is sent", async () => {
@@ -385,6 +452,55 @@ try {
     assert.equal(saved.name, "Desktop SSH renamed")
     assert.deepEqual(saved.connection, before.connection)
     await page.screenshot({ path: join(runRoot, "04-native-p8-detail.png"), animations: "disabled" })
+    await page.getByRole("button", { name: "资源", exact: true }).click()
+  })
+
+  if (nativeTools) await check("P8 native IME composition does not submit a rename until a separate Enter", async () => {
+    await page.getByRole("button", { name: /^desktop-ssh，/ }).click({ position: { x: 6, y: 6 } })
+    const before = await asset(saved.id)
+    const rename = page.getByRole("button", { name: `重命名 ${before.name}`, exact: true })
+    const point = await rename.boundingBox()
+    assert.ok(point)
+    await nativeAction("click", { CLOUDLINK_P8_X: String(point.x + point.width / 2), CLOUDLINK_P8_Y: String(point.y + point.height / 2) })
+    const title = page.getByRole("textbox", { name: "资源名称", exact: true })
+    await expect(title).toBeFocused()
+    await title.evaluate((input) => {
+      window.__cloudlinkNativeComposition = []
+      for (const type of ["compositionstart", "compositionupdate", "compositionend"]) input.addEventListener(type, (event) => window.__cloudlinkNativeComposition.push({ type, trusted: event.isTrusted }))
+    })
+    await nativeAction("keys", { CLOUDLINK_P8_KEYS: "ctrl+a" })
+    const setup = await nativeAction("ime-setup")
+    report.nativeImeSetup = setup
+    try {
+      await nativeAction("keys", { CLOUDLINK_P8_KEYS: "fuwuqi" })
+      await waitFor(() => page.evaluate(() => window.__cloudlinkNativeComposition.some((event) => event.type === "compositionstart" && event.trusted)), "trusted native IME composition")
+      assert.equal((await asset(saved.id)).name, before.name)
+      report.nativeImeComposing = await nativeAction("ime-capture", { CLOUDLINK_P8_SHOT: join(runRoot, "13-native-ime-composing.png") })
+      await nativeAction("keys", { CLOUDLINK_P8_KEYS: "enter" })
+      await expect(title).toHaveCount(1)
+      assert.equal((await asset(saved.id)).name, before.name, "IME Enter must not save the resource")
+      // Windows Chinese IME Enter commits the raw spelling; Space selects the
+      // highlighted Chinese candidate. Verify both without assuming Enter selects it.
+      await nativeAction("keys", { CLOUDLINK_P8_KEYS: "ctrl+a" })
+      await nativeAction("keys", { CLOUDLINK_P8_KEYS: "fuwuqi" })
+      await nativeAction("keys", { CLOUDLINK_P8_KEYS: "space" })
+      await expect(title).toHaveValue(/\p{Script=Han}/u)
+      assert.equal((await asset(saved.id)).name, before.name, "IME candidate commit must not save the resource")
+      const finalName = await title.inputValue()
+      await nativeAction("keys", { CLOUDLINK_P8_KEYS: "enter" })
+      await expect(title).toHaveCount(0)
+      saved = await asset(saved.id)
+      assert.equal(saved.name, finalName)
+      assert.deepEqual(saved.connection, before.connection)
+      report.nativeImeEvents = await page.evaluate(() => window.__cloudlinkNativeComposition)
+      // This WebView2 reports end events as untrusted even though native start/update
+      // and actual candidate text are delivered. Grade the observed commit boundary,
+      // not an end-event flag absent from the product's acceptance requirements.
+      assert.ok(report.nativeImeEvents.some((event) => event.type === "compositionend"))
+      report.nativeImeCompleted = await nativeShot("14-native-ime-renamed.png")
+    } finally {
+      await nativeAction("ime-restore", { CLOUDLINK_P8_OLD_LAYOUT: String(setup.old.layout), CLOUDLINK_P8_OLD_OPEN: String(setup.old.open), CLOUDLINK_P8_OLD_CONVERSION: String(setup.old.conversion) })
+    }
     await page.getByRole("button", { name: "资源", exact: true }).click()
   })
 
@@ -501,11 +617,11 @@ try {
     const status = await invoke("install_guard", { envId: "windows" })
     assert.equal(status.state, "active")
     assert.equal(await readFile(join(userRoot, ".claude", "settings.json.cloudlink-bak"), "utf8"), originalSettings)
-    await guard("ssh desktop-ssh 'uptime'", "allowed")
+    await guard("ssh desktop-ssh 'uptime'", "denied")
     await guard("ssh desktop-ssh 'docker restart api'", "denied")
     await guard("ssh desktop-ssh 'cat /opt/app/.env'", "denied")
     await invoke("set_mode", { assetId: saved.id, mode: "standard" })
-    await guard("ssh desktop-ssh 'docker restart api'", "allowed")
+    await guard("ssh desktop-ssh 'docker restart api'", "denied")
     await guard("ssh desktop-ssh 'docker compose down -v'", "denied")
     saved = await asset(saved.id)
     const input = inputOf(saved)
@@ -516,7 +632,144 @@ try {
     await guard("ssh desktop-ssh 'docker restart api'", "denied")
     const operations = await invoke("list_operations", { q: { assetId: saved.id, limit: 50 } })
     assert.equal(operations.length, 7)
-    assert.equal(operations.filter((item) => item.decision === "denied").length, 5)
+    assert.equal(operations.filter((item) => item.decision === "denied").length, 7)
+    const path = join(dataRoot, "bin", "cloudlink-guard.exe").replaceAll("\\", "/")
+    await guard(`'${path}' exec --env windows --asset ${saved.id} -- 'uptime'`, "allowed")
+  })
+
+  const scratch = `/home/cloudlink/p8-${createHash("sha256").update(runRoot).digest("hex").slice(0, 16)}`
+  const scratchMarker = JSON.stringify({ managedBy: "cloudlink", kind: "p8-runner", root: scratch })
+  await check("P8 runner checks native queries and refuses readonly writes", async () => {
+    assert.equal((await invoke("get_runtime_status")).state, "active")
+    const query = await runnerExec("uname -s").result
+    assert.equal(query.code, 0, query.stderr)
+    assert.match(query.stdout, /Linux/)
+    const denied = await runnerExec(`touch '${scratch}-denied'`).result
+    assert.equal(denied.code, 125)
+    assert.ok(diagnostic(denied).some((entry) => entry.checked === true && entry.state === "denied"))
+    await target.ssh(`test ! -e '${scratch}' && mkdir '${scratch}' && printf '%s' '${scratchMarker}' > '${scratch}/.cloudlink.json' && mkdir '${scratch}/remove'`)
+  })
+
+  await check("P8 native approval waits beyond 90 seconds, then one original wait starts once", async () => {
+    await invoke("set_mode", { assetId: saved.id, mode: "standard" })
+    await target.ssh(`test ! -L '${scratch}' && test "$(cat '${scratch}/.cloudlink.json')" = '${scratchMarker}'`)
+    const command = `rm -rf -- '${scratch}/remove/../remove'; printf 'x\\n' >> '${scratch}/counter'`
+    const started = Date.now()
+    const pending = runnerExec(command, 140_000)
+    const request = await waitingRequest()
+    assert.equal(request.approvalRequired, true)
+    const waiting = await pending.result
+    assert.equal(waiting.code, 75)
+    assert.ok(Date.now() - started >= 89_000)
+    const ticket = diagnostic(waiting).find((entry) => entry.state === "waiting").requestId
+    assert.ok(ticket.startsWith(`${request.requestId}.`)) // Keep ownerToken in memory, never in the report or GUI.
+    await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^动态/ }).click()
+    const card = page.locator(`#execution-${request.requestId}`)
+    await expect(card.locator("code")).toHaveText(command)
+    await expect(card.getByRole("button", { name: "允许一次", exact: true })).toBeVisible()
+    await page.screenshot({ path: join(runRoot, "06-native-approval-waiting.png"), animations: "disabled" })
+    if (nativeTools) {
+      report.nativeWaiting = await nativeShot("11-native-dwm-approval-waiting.png")
+      const button = await card.getByRole("button", { name: "允许一次", exact: true }).boundingBox()
+      assert.ok(button)
+      report.nativeApprovalInput = await nativeAction("click", { CLOUDLINK_P8_X: String(button.x + button.width / 2), CLOUDLINK_P8_Y: String(button.y + button.height / 2) })
+    } else await card.getByRole("button", { name: "允许一次", exact: true }).click()
+    await expect(card.getByRole("status")).toHaveText("已允许，等 Agent 继续")
+    const wrong = await runner(["wait", "--env", "wsl:Ubuntu-24.04", ticket]).result
+    assert.equal(wrong.code, 125)
+    assert.equal((await requests()).find((entry) => entry.requestId === request.requestId).state, "approved")
+    const completed = await runner(["wait", "--env", "windows", ticket]).result
+    assert.equal(completed.code, 0, completed.stderr)
+    await waitFor(async () => (await requests()).find((entry) => entry.requestId === request.requestId)?.state === "succeeded", "runner completion")
+    await expect(card.getByRole("status")).toHaveText("执行成功")
+    assert.equal((await target.ssh(`cat '${scratch}/counter'`)).stdout, "x\n")
+    const duplicate = await runner(["wait", "--env", "windows", ticket]).result
+    assert.equal(duplicate.code, 125)
+    assert.equal((await target.ssh(`cat '${scratch}/counter'`)).stdout, "x\n")
+    await page.screenshot({ path: join(runRoot, "07-native-approval-succeeded.png"), animations: "disabled" })
+    if (nativeTools) report.nativeSucceeded = await nativeShot("12-native-dwm-approval-succeeded.png")
+    report.approvalRequestId = request.requestId
+    report.approvalWaitMs = Date.now() - started
+  })
+
+  await check("P8 policy narrowing cancels native pending input without starting it", async () => {
+    const pending = runnerExec(`rm -rf -- '${scratch}/remove/../remove'; printf 'y\\n' >> '${scratch}/counter'`)
+    const request = await waitingRequest()
+    await invoke("set_mode", { assetId: saved.id, mode: "read-only" })
+    const result = await pending.result
+    assert.equal(result.code, 125)
+    assert.equal((await requests()).find((entry) => entry.requestId === request.requestId).state, "cancelled")
+    assert.equal((await target.ssh(`cat '${scratch}/counter'`)).stdout, "x\n")
+  })
+
+  await check("P8 native SFTP copies one file to new paths and refuses overwrite", async () => {
+    await invoke("set_mode", { assetId: saved.id, mode: "standard" })
+    const directory = join(userRoot, "transfer [paths]")
+    await mkdir(directory)
+    await writeFile(join(directory, ".cloudlink.json"), JSON.stringify({ managedBy: "cloudlink", kind: "p8-transfer-test" }), { flag: "wx" })
+    const input = join(directory, "transfer [input].txt")
+    const bytes = Buffer.from("CloudLink SFTP fixture — no credentials\n", "utf8")
+    await writeFile(input, bytes, { flag: "wx" })
+    const names = ["transfer [remote].txt", "transfer *?.txt", 'transfer "quoted".txt', `transfer 'single' "double".txt`]
+    for (const [index, name] of names.entries()) {
+      const remote = `${scratch}/${name}`
+      const output = join(directory, `transfer [output-${index}].txt`)
+      const put = await runner(["put", "--env", "windows", "--asset", saved.id, "--", input, remote]).result
+      assert.equal(put.code, 0, put.stderr)
+      const get = await runner(["get", "--env", "windows", "--asset", saved.id, "--", remote, output]).result
+      assert.equal(get.code, 0, get.stderr)
+      assert.deepEqual(await readFile(output), bytes)
+      const repeatedGet = await runner(["get", "--env", "windows", "--asset", saved.id, "--", remote, output]).result
+      assert.equal(repeatedGet.code, 125)
+      assert.deepEqual(await readFile(output), bytes)
+      const repeatedPut = await runner(["put", "--env", "windows", "--asset", saved.id, "--", input, remote]).result
+      assert.equal(repeatedPut.code, 125)
+      assert.ok(diagnostic(repeatedPut).some((entry) => entry.reasonId === "execution-destination-exists"))
+    }
+    const unsupported = `${scratch}/transfer {a,b}.txt`
+    const denied = await runner(["put", "--env", "windows", "--asset", saved.id, "--", input, unsupported]).result
+    assert.equal(denied.code, 125)
+    assert.ok(diagnostic(denied).some((entry) => entry.reasonId === "execution-path-invalid"))
+    await target.exec(["test", "!", "-e", unsupported])
+  })
+
+  await check("P8 occupied sidecar is retired atomically and cleaned only after release", async () => {
+    const executable = join(dataRoot, "bin", "cloudlink-guard.exe")
+    const source = join(dirname(launchPath), "cloudlink-guard.exe")
+    await assertTestRoot(dirname(source), { inspectContents: true })
+    assert.equal(JSON.parse(await readFile(join(dirname(source), ".cloudlink.json"), "utf8")).kind, "desktop-test-binary")
+    const before = await readFile(source)
+    const occupied = spawn(executable, ["--env", "windows"], { cwd: runRoot, env: childEnvironment(), windowsHide: true, stdio: ["pipe", "pipe", "pipe"] })
+    occupied.stdout.on("data", () => {}); occupied.stderr.on("data", () => {})
+    const closed = new Promise((done, reject) => { occupied.once("close", done); occupied.once("error", reject) })
+    await new Promise((done, reject) => { occupied.once("spawn", done); occupied.once("error", reject) })
+    try {
+      await writeFile(source, Buffer.concat([before, Buffer.from("\nCloudLink-P8-owned-test-overlay\n")]))
+      assert.equal((await invoke("install_guard", { envId: "windows" })).state, "active")
+      const receipt = JSON.parse(await readFile(join(dataRoot, "bin", ".cloudlink.json"), "utf8"))
+      assert.ok(Object.keys(receipt.retiredFiles ?? {}).length > 0)
+      assert.deepEqual(await readFile(executable), await readFile(source))
+    } finally { occupied.stdin.end() }
+    await closed
+    assert.equal((await invoke("install_guard", { envId: "windows" })).state, "active")
+    const receipt = JSON.parse(await readFile(join(dataRoot, "bin", ".cloudlink.json"), "utf8"))
+    assert.deepEqual(receipt.retiredFiles ?? {}, {})
+    await invoke("set_mode", { assetId: saved.id, mode: "read-only" })
+  })
+
+  if (nativeTools) await check("P8 native caption close keeps tray runtime active and checked requests working", async () => {
+    await invoke("update_settings", { patch: { closeToTray: true } })
+    const hidden = await nativeAction("caption-close")
+    report.nativeCaptionClose = hidden
+    assert.equal(hidden.after.visible, false)
+    assert.equal((await invoke("get_runtime_status")).state, "active")
+    const tray = await nativeAction("tray-state")
+    assert.equal(tray.tray.result, 0)
+    const query = await runnerExec("uname -s").result
+    assert.equal(query.code, 0, query.stderr)
+    assert.ok(diagnostic(query).some((entry) => entry.checked === true && entry.state === "succeeded"))
+    report.nativeTray = { hidden, tray }
+    assert.equal((await nativeWindow("restore")).visible, true)
   })
 
   await check("notes require review and clean edited text before entering the skill", async () => {

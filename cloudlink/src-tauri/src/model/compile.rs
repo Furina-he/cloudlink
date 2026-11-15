@@ -167,6 +167,8 @@ pub enum RelationKind {
     Instance,
     /// 服务器上的站点属于云平台管理的域名
     Site,
+    /// 已核实的仓库部署来源；不改变任何资源授权。
+    Deployment,
 }
 
 /// CloudLink 从资源数据推出的一条关系

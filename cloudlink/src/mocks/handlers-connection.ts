@@ -1,7 +1,7 @@
 // Mock 命令：测试连接、主机指纹、密码与密钥、托管 ssh 配置（F-106、F-107、F-108）
 import { emit } from "@tauri-apps/api/event"
 
-import type { ConnectionTestedEvent, ConnectionTestRequest, EnvId, HostKeyInfo, KeyCheck, KeyCheckRequest, SshError } from "@/bindings"
+import type { ConnectionDiagnostic, ConnectionTestedEvent, ConnectionTestRequest, EnvId, HostKeyInfo, KeyCheck, KeyCheckRequest, SshError } from "@/bindings"
 import { connectionSignature } from "@/stores/connection"
 import { connInputOf } from "./handlers-servers"
 import { db, fail, logActivity, newId, now, recompile, serverById, sleep } from "./state"
@@ -67,12 +67,25 @@ function keyError(run: Run): SshError | null {
   return null
 }
 
+function safeDiagnostic(error: SshError, envId: EnvId): ConnectionDiagnostic {
+  const summaries: Partial<Record<SshError["id"], ConnectionDiagnostic["summary"][number]>> = {
+    "auth-failed": "check-login-and-auth", "password-rejected": "check-login-and-auth",
+    "key-permissions": "key-permissions", "key-not-found": "key-missing", "key-invalid": "key-format",
+    "host-key-changed": "host-identity-changed", "host-key-unknown": "verify-host-identity",
+    timeout: "network-timeout", "connection-refused": "connection-refused", "resolve-failed": "resolve-failed", "needs-interaction": "interaction-required",
+  }
+  const stage = ["key-permissions", "key-not-found", "key-invalid"].includes(error.id) ? "key-check" : error.id.startsWith("host-key-") ? "host-key" : ["auth-failed", "password-rejected", "needs-interaction"].includes(error.id) ? "authentication" : "connection"
+  const path = db.settings.windowsSshPath.replaceAll("\\", "/").toLowerCase()
+  return { stage, client: envId.startsWith("wsl:") ? "wsl-openssh" : path.includes("/git/") ? "git-openssh" : "windows-openssh", clientVersion: "9.5p1", summary: [summaries[error.id] ?? "unknown-result"] }
+}
+
 function finish(testId: string, e: Omit<ConnectionTestedEvent, "testId">) {
   const run = runs.get(testId)
   if (!run) return
   if (e.status !== "host-key") runs.delete(testId)
   const hostKey = e.status === "ok" || e.status === "failed" ? run.hostKey : e.hostKey
-  void emit("connection://tested", { testId, ...e, hostKey })
+  const diagnostic = e.diagnostic ?? (e.status === "failed" && e.error ? safeDiagnostic(e.error, run.envId) : undefined)
+  void emit("connection://tested", { testId, ...e, hostKey, diagnostic })
   if (e.status !== "ok" && e.status !== "failed") return
   const sig = connectionSignature(run.req.connection)
   if (e.status === "ok") db.passedTests.set(sig, { at: now(), envId: run.envId })

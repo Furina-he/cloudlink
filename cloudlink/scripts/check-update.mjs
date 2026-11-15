@@ -1,808 +1,424 @@
-// 端到端更新实测（EXECUTION-PLAN P6 第 8 项，F-406 AC1–AC6）：静默安装测试版 0.1.0，核对检查节奏、开关、后台下载、
-// 忙碌拦截和签名篡改，再从顶栏提醒更新到 0.1.1，最后卸载。先运行 `pnpm build:update-test`，再运行 `pnpm e2e:update`
-// （需要 WSL Docker 里的 SSH 靶机）。
-// 应用数据全在 test-results/update/data：目录编译进测试安装包，安装程序重新打开的新版本也只认它。
-// 测试包使用独立的 productName、identifier、publisher 和 HKCU 安装键，不卸载或覆盖本机的正式 CloudLink。
-// 前后各记一次真实 Skills、ssh 配置、护栏设置、正式安装、应用数据目录、快捷方式和注册表，必须完全一致。
+// P8-only real updater acceptance. Requires explicit --run --root <fresh built fixture>.
+// No real-profile snapshots, registry, shortcuts, default WSL HOME or recursive cleanup.
+// The signed NSIS fixture has no system integration; this is not an uninstall/release gate.
 import assert from "node:assert/strict"
-import { spawn, spawnSync } from "node:child_process"
-import { createHash } from "node:crypto"
-import { existsSync } from "node:fs"
-import { appendFile, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
+import { spawn } from "node:child_process"
+import { lstat, mkdir, readdir } from "node:fs/promises"
 import { createServer } from "node:http"
-import { homedir } from "node:os"
+import { createServer as portProbe } from "node:net"
 import { join } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { chromium, expect } from "@playwright/test"
 
 import { assertTestRoot, startSshTarget } from "./desktop-ssh-target.mjs"
-import { DATA_HOME, DEBUG_PORT, INSTALL_DIR, ROOT, TEST_IDENTIFIER, TEST_PRODUCT_NAME, TEST_PUBLISHER, UPDATE_PORT, VERSIONS, installerName } from "./update-test-config.mjs"
+import { VERSIONS, installerName } from "./update-test-config.mjs"
+import { builtArtifacts, execute, fileBytes, hash, isolatedEnvironment, isolatedTrayCopy, loadFixture, newFile, nsisPayloadHash, owner, powershell } from "../e2e-update/isolation.mjs"
 
-if (process.platform !== "win32") throw new Error("The update check requires Windows")
-
+const args = process.argv.slice(2)
+assert.ok(args.length === 3 && args[0] === "--run" && args[1] === "--root", "Use --run --root <fresh built P8 fixture>; installation requires separate authorization")
+if (process.platform !== "win32") throw new Error("The updater acceptance requires Windows")
+const fixture = await loadFixture(args[2])
+const artifacts = await builtArtifacts(fixture)
 const [OLD, NEW] = VERSIONS
-const INSTALLER_URL = `/${encodeURIComponent(installerName(NEW))}`
-const system32 = join(process.env.SystemRoot ?? "C:\\Windows", "System32")
-const powershell = join(system32, "WindowsPowerShell", "v1.0", "powershell.exe")
-const regExe = join(system32, "reg.exe")
-const taskkill = join(system32, "taskkill.exe")
-const wslExe = join(system32, "wsl.exe")
-const installedExe = join(INSTALL_DIR, "cloudlink.exe")
-const installedGuard = join(INSTALL_DIR, "cloudlink-guard.exe")
-const uninstaller = join(INSTALL_DIR, "uninstall.exe")
-const userHome = join(DATA_HOME, "home")
-const guardDir = join(DATA_HOME, "bin")
-const copiedGuard = join(guardDir, "cloudlink-guard.exe")
-const UNINSTALL_KEY = `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${TEST_PRODUCT_NAME}`
-// NSIS 模板的 MANUKEY / MANUPRODUCTKEY：只清理独立测试身份留下的键，正式版的键只读快照。
-const MANUFACTURER_KEY = `HKCU\\Software\\${TEST_PUBLISHER}`
-const INSTALL_LOCATION_KEY = `${MANUFACTURER_KEY}\\${TEST_PRODUCT_NAME}`
-const DATA_MARKER = '{"managedBy":"cloudlink","kind":"data"}\n'
+const env = isolatedEnvironment(fixture)
+const trayCopy = await isolatedTrayCopy()
+const installedExe = join(fixture.installDir, "cloudlink.exe")
+const installedGuard = join(fixture.installDir, "cloudlink-guard.exe")
+const copiedGuard = join(fixture.dataHome, "bin/cloudlink-guard.exe")
+const evidence = join(fixture.root, "evidence/acceptance")
+await assertTestRoot(evidence)
+await mkdir(evidence) // A run is never resumed over old evidence or an earlier installation.
+const initialOwner = await owner(fixture, fixture.installDir, "update-test-install")
+assert.equal(initialOwner.version, null, "Prepare a new fixture; do not overwrite an earlier test installation")
+assert.deepEqual(initialOwner.files, {})
+assert.equal(await lstat(join(fixture.dataHome, "data.db")).then(() => true, (error) => { if (error.code !== "ENOENT") throw error; return false }), false, "Prepare a fresh fixture")
 
-const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex")
-const fileHash = async (path) => sha256(await readFile(path))
-const samePath = (a, b) => a?.toLowerCase() === b.toLowerCase()
-
-await assertTestRoot(ROOT)
-const runRoot = await mkdtemp(join(ROOT, "run-"))
-await assertTestRoot(runRoot)
-const tmp = join(runRoot, "tmp")
-const report = { root: runRoot, checks: [] }
+const report = { root: fixture.root, installationIdentity: fixture.identifier, sourceSnapshotHash: artifacts.sourceSnapshotHash, buildProfile: artifacts.buildProfile, systemNotificationBodyOmitted: true, checks: [], screenshots: [], screenshotsReviewedWithAnalyzeImage: false }
+const runners = new Set()
+const apps = []
 const pageErrors = []
-let launchError
-let browser
-let page
-let target
+let browser, page, target, saved, running
 
 async function waitFor(work, description, timeout = 30_000) {
-  const deadline = Date.now() + timeout
-  while (Date.now() < deadline) {
-    const result = await work()
-    if (result) return result
+  const end = Date.now() + timeout
+  while (Date.now() < end) {
+    const value = await work()
+    if (value) return value
     await delay(100)
   }
   throw new Error(`Timed out: ${description}`)
 }
-
 async function check(name, work) {
-  const started = Date.now()
-  try {
-    await work()
-    report.checks.push({ name, passed: true, ms: Date.now() - started })
-    console.log(`PASS ${name}`)
-  } catch (error) {
-    report.checks.push({ name, passed: false, error: String(error), ms: Date.now() - started })
-    throw error
-  }
+  const start = Date.now()
+  try { await work(); report.checks.push({ name, passed: true, ms: Date.now() - start }); console.log(`PASS ${name}`) }
+  catch (error) { report.checks.push({ name, passed: false, error: String(error), ms: Date.now() - start }); throw error }
 }
-
-const shot = (name) => page.screenshot({ path: join(runRoot, `${name}.png`) })
-// 测试驱动直接跨过 WebView 调命令；应用代码仍然只经 src/lib/ipc.ts
+async function shot(name) {
+  const path = join(evidence, `${name}.png`)
+  const bytes = await page.screenshot({ animations: "disabled" })
+  await newFile(fixture, path, bytes)
+  report.screenshots.push(path)
+}
 const invoke = (command, args = {}) => page.evaluate(({ command, args }) => window.__TAURI_INTERNALS__.invoke(command, args), { command, args })
-const invokeError = (command, args = {}) => page.evaluate(({ command, args }) => window.__TAURI_INTERNALS__.invoke(command, args).then(() => null, (error) => error), { command, args })
 const status = () => invoke("get_update_status")
+const runtime = () => invoke("get_runtime_status")
+const requests = () => invoke("list_execution_requests")
+const operations = () => invoke("list_operations", { q: { assetId: saved.id, limit: 200 } })
 
-// ---- 本地更新服务：只认 latest.json 和安装包，记下每一次请求 ----
-
-const server = {
-  requests: [],
-  manifest: null,
-  installer: null,
-  /** 安装包分几块、每块间隔多少毫秒，界面才看得到进度 */
-  chunks: 40,
-  pause: 50,
-  /** 0–1：发到这个比例就停住，直到客户端断开（取消下载用） */
-  stallAt: null,
+// Read only a known PID, then compare image path and creation time before control.
+// No enumeration of production installations or unrelated cloudlink processes.
+function processInfo(pid) {
+  const script = String.raw`
+$ErrorActionPreference='Stop'; $PSModuleAutoLoadingPreference='None'
+try { $process=[Diagnostics.Process]::GetProcessById([int]$env:CLOUDLINK_UPDATE_PID) }
+catch [ArgumentException] { exit 0 }
+try { '{0}|{1}|{2}' -f $process.Id,$process.StartTime.ToUniversalTime().Ticks,$process.MainModule.FileName } finally { $process.Dispose() }`
+  const text = execute(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { fixture, env: { ...env, CLOUDLINK_UPDATE_PID: String(pid) }, capture: true, cwd: fixture.root })
+  if (!text) return null
+  const [id, createdTicks, path] = text.split("|")
+  assert.ok(path.replaceAll("\\", "/").toLowerCase() === installedExe.replaceAll("\\", "/").toLowerCase(), "The PID is not this fixture's executable")
+  return { pid: Number(id), createdTicks }
 }
-const requestsTo = (path) => server.requests.filter((item) => item.url === path).length
-const http = createServer((request, response) => {
-  server.requests.push({ at: Date.now(), method: request.method, url: request.url, userAgent: request.headers["user-agent"] })
-  if (request.method === "GET" && request.url === "/latest.json" && server.manifest) {
-    response.writeHead(200, { "content-type": "application/json" })
-    response.end(JSON.stringify(server.manifest))
-    return
-  }
-  if (request.method === "GET" && request.url === INSTALLER_URL && server.installer) {
-    const bytes = server.installer
-    const size = Math.ceil(bytes.length / server.chunks)
-    const limit = server.stallAt === null ? bytes.length : Math.floor(bytes.length * server.stallAt)
-    const pause = server.pause
-    let offset = 0
-    response.writeHead(200, { "content-type": "application/octet-stream", "content-length": bytes.length })
-    const send = () => {
-      if (response.destroyed) return
-      const end = Math.min(offset + size, limit)
-      if (end > offset) response.write(bytes.subarray(offset, end))
-      offset = end
-      if (offset >= bytes.length) response.end()
-      else if (offset < limit) setTimeout(send, pause)
-    }
-    send()
-    return
-  }
-  response.writeHead(404)
-  response.end()
-})
-
-async function manifestFor(version) {
-  // 测试安装包名字与正式版不同；本地假更新源不复用正式发布脚本，更不改写正式安装包清单。
-  const signature = (await readFile(join(ROOT, version, `${installerName(version)}.sig`), "utf8")).trim()
-  assert.ok(signature, "The test installer must be signed")
-  const manifest = {
-    version,
-    notes: `CloudLink ${version} update test\n- second line`,
-    pub_date: new Date().toISOString(),
-    platforms: {
-      "windows-x86_64": {
-        signature,
-        url: `http://127.0.0.1:${UPDATE_PORT}/${encodeURIComponent(installerName(version))}`,
-      },
-    },
-  }
-  await writeFile(join(runRoot, `latest-${version}.json`), `${JSON.stringify(manifest, null, 2)}\n`)
-  return manifest
+function rememberApp(pid) {
+  const info = processInfo(pid)
+  assert.ok(info, "Fixture process already exited")
+  apps.push(info)
+  return info
 }
-
-// ---- 真实用户环境的快照：实测前后必须一致 ----
-
-async function listing(directory) {
-  let names
-  try { names = await readdir(directory) }
-  catch (error) {
-    if (error.code === "ENOENT") return null
-    throw error
-  }
-  const entries = []
-  for (const name of names.sort()) {
-    const info = await lstat(join(directory, name))
-    entries.push(`${name}:${info.isDirectory() ? "dir" : info.size}:${info.mtimeMs}`)
-  }
-  return entries
+function launch() {
+  const child = spawn(installedExe, [], { cwd: fixture.root, env, shell: false, windowsHide: true, stdio: "ignore" })
+  const started = new Promise((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject) })
+  return started.then(() => rememberApp(child.pid))
 }
-
-const hashIfPresent = async (path) => (existsSync(path) ? fileHash(path) : null)
-
-function wslSkills() {
-  const result = spawnSync(wslExe, ["-d", "Ubuntu-24.04", "--exec", "sh", "-c", "ls -la --time-style=full-iso $HOME/.agents/skills"], { encoding: "utf8", windowsHide: true })
-  return `${result.status}:${result.stdout}`
+const debugEndpoint = () => `http://127.0.0.1:${fixture.debugPort}`
+async function connect() {
+  await waitFor(() => fetch(`${debugEndpoint()}/json/version`).then((r) => r.ok, () => false), "fixture CDP endpoint", 120_000)
+  browser = await chromium.connectOverCDP(debugEndpoint())
+  page = await waitFor(() => browser.contexts().flatMap((context) => context.pages()).find((item) => item.url().startsWith("http://tauri.localhost")), "fixture page")
+  // A per-run compiled HTML title identifies this target before any IPC can read data.
+  await expect(page).toHaveTitle(fixture.productName)
+  page.on("pageerror", (error) => pageErrors.push(error.message))
+  assert.equal((await invoke("get_settings")).dataDir, fixture.dataHome)
+  await waitFor(async () => (await runtime()).state === "active", "execution coordinator is active")
+  await invoke("set_tray_copy", { copy: trayCopy })
 }
-
-/** reg.exe 的输出：值缩进四个空格；默认值的名字随系统语言变化，统一记成 (default) */
-function regKey(key) {
-  const result = spawnSync(regExe, ["query", key], { encoding: "latin1", windowsHide: true })
-  if (result.status !== 0) return null
-  const self = key.replace(/^HKCU\\/i, "HKEY_CURRENT_USER\\").toLowerCase()
-  const values = {}
-  const subkeys = []
-  for (const line of result.stdout.split(/\r?\n/)) {
-    const value = /^ {4}(.+?) {4}(REG_\w+) {4}(.*)$/.exec(line)
-    if (value) values[/^\(.*\)$/.test(value[1]) ? "(default)" : value[1]] = value[3]
-    else if (/^HKEY_/i.test(line) && line.toLowerCase() !== self) subkeys.push(line)
-  }
-  return { values, subkeys }
-}
-
-function regDelete(key) {
-  assert.equal(spawnSync(regExe, ["delete", key, "/f"], { windowsHide: true }).status, 0, `reg delete ${key}`)
-}
-
-function powershellLines(script) {
-  const result = spawnSync(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", windowsHide: true })
-  assert.equal(result.status, 0, result.stderr)
-  return result.stdout.split(/\r?\n/).filter(Boolean)
-}
-
-async function realState() {
-  const home = homedir()
-  const [desktop, programs] = powershellLines("[Environment]::GetFolderPath('Desktop'); [Environment]::GetFolderPath('Programs')")
-  const productionInstall = regKey("HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\CloudLink")
-  const productionLocation = productionInstall?.values.InstallLocation?.replace(/^"|"$/g, "")
-  const productionFiles = {}
-  if (productionLocation) {
-    for (const name of ["cloudlink.exe", "cloudlink-guard.exe", "uninstall.exe"]) {
-      productionFiles[name] = await hashIfPresent(join(productionLocation, name))
-    }
-  }
-  return {
-    productionInstall,
-    productionLocation: regKey("HKCU\\Software\\cloudlink\\CloudLink"),
-    productionFiles,
-    cloudlinkData: await listing(join(home, ".cloudlink")),
-    cloudlinkDatabase: await hashIfPresent(join(home, ".cloudlink", "data.db")),
-    claudeSkills: await listing(join(home, ".claude", "skills")),
-    claudeSettings: await hashIfPresent(join(home, ".claude", "settings.json")),
-    windowsAgentSkills: await listing(join(home, ".agents", "skills")),
-    wslAgentSkills: wslSkills(),
-    ssh: await listing(join(home, ".ssh")),
-    sshConfig: await hashIfPresent(join(home, ".ssh", "config")),
-    knownHosts: await hashIfPresent(join(home, ".ssh", "known_hosts")),
-    localAppData: await listing(join(process.env.LOCALAPPDATA, "com.cloudlink.desktop")),
-    roamingAppData: await listing(join(process.env.APPDATA, "com.cloudlink.desktop")),
-    testLocalAppData: await listing(join(process.env.LOCALAPPDATA, TEST_IDENTIFIER)),
-    testRoamingAppData: await listing(join(process.env.APPDATA, TEST_IDENTIFIER)),
-    shortcuts: ["CloudLink", TEST_PRODUCT_NAME].flatMap((name) => [join(desktop, `${name}.lnk`), join(programs, `${name}.lnk`), join(programs, name)]).filter((path) => existsSync(path)),
-    uninstallKey: regKey(UNINSTALL_KEY),
-    manufacturerKey: regKey(MANUFACTURER_KEY),
-  }
-}
-
-// ---- 进程 ----
-
-/** 只认这次装的那一份 cloudlink.exe：开发中的和用户自己的都不碰 */
-function installedProcesses() {
-  return powershellLines("Get-CimInstance Win32_Process -Filter \"Name='cloudlink.exe'\" | ForEach-Object { '{0}|{1}' -f $_.ProcessId, $_.ExecutablePath }")
-    .map((line) => line.split("|"))
-    .filter(([, path]) => samePath(path, installedExe))
-    .map(([pid]) => Number(pid))
-}
-
-const debugEndpoint = () => fetch(`http://127.0.0.1:${DEBUG_PORT}/json/version`).then((response) => response.ok, () => false)
-
 async function disconnect() {
   await browser?.close().catch(() => {})
   browser = undefined
   page = undefined
 }
-
-async function stopApp() {
-  await disconnect()
-  // 先像用户关窗口一样发 WM_CLOSE，不响应再强制结束
-  for (const pid of installedProcesses()) spawnSync(taskkill, ["/PID", String(pid)], { windowsHide: true })
-  const closed = await waitFor(() => installedProcesses().length === 0, "CloudLink closes its window", 15_000).then(() => true, () => false)
-  if (!closed) {
-    report.forcedStops = (report.forcedStops ?? 0) + 1
-    for (const pid of installedProcesses()) spawnSync(taskkill, ["/PID", String(pid), "/T", "/F"], { windowsHide: true })
-    await waitFor(() => installedProcesses().length === 0, "CloudLink exits")
-  }
-  await waitFor(async () => !(await debugEndpoint()), "WebView2 releases the debugging port", 15_000)
+function stopKnownApp(info) {
+  const current = processInfo(info.pid)
+  if (!current || current.createdTicks !== info.createdTicks) return
+  const script = String.raw`
+$ErrorActionPreference='Stop'; $PSModuleAutoLoadingPreference='None'
+try { $process=[Diagnostics.Process]::GetProcessById([int]$env:CLOUDLINK_UPDATE_PID) } catch [ArgumentException] { exit 0 }
+try {
+  if ($process.StartTime.ToUniversalTime().Ticks.ToString() -ne $env:CLOUDLINK_UPDATE_CREATED) { throw 'PID was reused' }
+  if ([IO.Path]::GetFullPath($process.MainModule.FileName) -ne [IO.Path]::GetFullPath($env:CLOUDLINK_UPDATE_EXE)) { throw 'Image changed' }
+  $process.Kill(); $null=$process.WaitForExit(15000)
+} finally { $process.Dispose() }`
+  execute(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { fixture, env: { ...env, CLOUDLINK_UPDATE_PID: String(info.pid), CLOUDLINK_UPDATE_CREATED: info.createdTicks, CLOUDLINK_UPDATE_EXE: installedExe }, capture: true, cwd: fixture.root })
 }
 
-/**
- * 第一次启动时固定 OpenSSH 会读的环境变量；安装程序重新打开的新版本拿到的是真实环境，只靠编译进来的目录隔离。
- * AppData 放在每轮新建的目录：WinINet 会在 LOCALAPPDATA 里建目录联接（INetCache\Content.IE5），
- * 放进固定的数据目录的话，下一轮清理时会因为里面有链接而拒绝删除
- */
-function launch() {
-  const env = {}
-  for (const key of ["SystemRoot", "WINDIR", "COMSPEC", "SystemDrive", "PATH", "PATHEXT", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"]) {
-    const entry = Object.entries(process.env).find(([name]) => name.toLowerCase() === key.toLowerCase())
-    if (entry) env[entry[0]] = entry[1]
-  }
-  Object.assign(env, {
-    HOME: userHome,
-    USERPROFILE: userHome,
-    APPDATA: join(runRoot, "AppData", "Roaming"),
-    LOCALAPPDATA: join(runRoot, "AppData", "Local"),
-    ProgramData: join(runRoot, "ProgramData"),
-    TEMP: tmp,
-    TMP: tmp,
-  })
-  launchError = undefined
-  const child = spawn(installedExe, [], { cwd: runRoot, env, stdio: "ignore" })
-  child.once("error", (error) => { launchError = error })
+const installerUrl = `/${encodeURIComponent(installerName(fixture, NEW))}`
+const server = { manifest: null, package: null, requests: [] }
+const http = createServer((req, res) => {
+  server.requests.push({ method: req.method, url: req.url })
+  if (req.method === "GET" && req.url === "/latest.json" && server.manifest) { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(server.manifest)); return }
+  if (req.method === "GET" && req.url === installerUrl && server.package) { res.writeHead(200, { "content-type": "application/octet-stream", "content-length": server.package.length }); res.end(server.package); return }
+  res.writeHead(404); res.end()
+})
+async function manifest(signaturePath) {
+  const signature = (await fileBytes(fixture, signaturePath, 64 * 1024)).toString("utf8").trim()
+  assert.ok(signature)
+  return { version: NEW, pub_date: new Date().toISOString(), notes: "Isolated P8 updater acceptance", platforms: { "windows-x86_64": { signature, url: `http://127.0.0.1:${fixture.updatePort}${installerUrl}` } } }
 }
-
-async function connect() {
-  await waitFor(async () => {
-    if (launchError) throw launchError
-    return debugEndpoint()
-  }, "WebView2 debugging endpoint", 120_000)
-  browser = await chromium.connectOverCDP(`http://127.0.0.1:${DEBUG_PORT}`)
-  page = await waitFor(() => browser.contexts().flatMap((context) => context.pages()).find((item) => item.url().startsWith("http://tauri.localhost")), "application page")
-  page.on("pageerror", (error) => pageErrors.push(error.message))
-  await expect(page.getByRole("banner")).toBeVisible({ timeout: 30_000 })
-}
-
-// ---- 界面 ----
-
-const reminder = () => page.getByRole("banner").getByRole("button", { name: /新版本|下载失败|正在安装/ })
-const dialog = () => page.getByRole("dialog", { name: /^新版本 / })
-const dialogButton = (name) => dialog().getByRole("button", { name, exact: true })
-
-/** 关掉再打开检查开关：后端立即重新读清单，并在后台下载。默认等到下好（ready），失败场景等到带着原因的 available */
-async function recheck(version, errorId = null) {
+async function recheck(packageBytes, manifestValue) {
+  server.package = packageBytes
+  server.manifest = manifestValue
   await invoke("update_settings", { patch: { autoCheckUpdates: false } })
   await invoke("update_settings", { patch: { autoCheckUpdates: true } })
-  await waitFor(async () => {
-    const current = await status()
-    if (current.version !== version) return false
-    return errorId === null ? current.state === "ready" && !current.error : current.state === "available" && current.error?.id === errorId
-  }, errorId === null ? `update ${version} is downloaded` : `update ${version} fails with ${errorId}`, 120_000)
+  await waitFor(async () => (await status()).state === "ready", "the real updater downloaded and verified its package", 120_000)
 }
-
-/** 后台下载被拒绝：提醒照样出现（「下载失败，查看详情」），对话框写清原因，什么都没装 */
-async function installFails(version, errorId, text, label) {
-  await recheck(version, errorId)
-  await expect(reminder()).toHaveAccessibleName(`${version} 下载失败，查看详情`)
-  await reminder().click()
-  await expect(dialog().locator("[data-slot=alert]")).toContainText(text)
-  await expect(dialogButton("重试")).toBeEnabled()
-  const current = await status()
-  assert.equal(current.state, "available")
-  assert.equal(current.error?.id, errorId)
-  await shot(`rejected-${label}`)
-  await dialogButton("稍后").click()
-  await expect(dialog()).toHaveCount(0)
-  assert.equal(await fileHash(installedExe), report.oldExe, "A rejected update must not change the installed application")
-  assert.equal((await status()).currentVersion, OLD)
-  assert.deepEqual(installedProcesses(), [report.pid], "A rejected update must not restart CloudLink")
+function diagnostic(stderr) {
+  return stderr.split(/\r?\n/u).flatMap((line) => { try { return [JSON.parse(line)] } catch { return [] } }).filter((value) => value.source === "cloudlink").at(-1)
 }
-
-/**
- * 冷启动计时（PRD 第九章：不超过 1.5 秒）。spawnedAt 是启动进程前记下的时间；页面里的时间都相对 performance.timeOrigin，
- * 换算成相对启动进程的毫秒数。首屏以最后一次 Largest Contentful Paint 为准，同时记下 list_assets 返回的时间作对照
- */
-async function startupTiming(label, spawnedAt) {
-  const timing = await page.evaluate(async () => {
-    const lcp = await new Promise((resolve) => {
-      const entries = []
-      const observer = new PerformanceObserver((list) => entries.push(...list.getEntries()))
-      observer.observe({ type: "largest-contentful-paint", buffered: true })
-      setTimeout(() => {
-        observer.disconnect()
-        resolve(entries)
-      }, 300)
+function runner(args, timeout = 130_000) {
+  const child = spawn(copiedGuard, args, { cwd: fixture.userHome, env, windowsHide: true, shell: false, stdio: ["ignore", "pipe", "pipe"] })
+  runners.add(child)
+  let stdout = "", stderr = "", failure
+  const timer = setTimeout(() => { failure = new Error("Fixture runner exceeded its local harness timeout; remote result is unknown"); child.kill() }, timeout)
+  for (const [stream, name] of [[child.stdout, "stdout"], [child.stderr, "stderr"]]) {
+    stream.setEncoding("utf8")
+    stream.on("data", (chunk) => {
+      if (name === "stdout") stdout += chunk; else stderr += chunk
+      if (stdout.length + stderr.length > 64 * 1024) { failure = new Error("Fixture runner output exceeded the test limit"); child.kill() }
     })
-    const last = lcp.at(-1)
-    const fcp = performance.getEntriesByName("first-contentful-paint")[0]
-    const navigation = performance.getEntriesByType("navigation")[0]
-    const ipc = performance.getEntriesByType("resource").filter((entry) => entry.name.startsWith("http://ipc.localhost/"))
-    const listAssets = ipc.find((entry) => entry.name.startsWith("http://ipc.localhost/list_assets"))
-    return {
-      timeOrigin: performance.timeOrigin,
-      domContentLoaded: navigation ? navigation.domContentLoadedEventEnd : null,
-      fcp: fcp ? fcp.startTime : null,
-      lcp: last ? last.startTime : null,
-      lcpElement: last?.element ? `${last.element.tagName.toLowerCase()} ${(last.element.textContent ?? "").trim().slice(0, 40)}` : null,
-      listAssets: listAssets ? listAssets.responseEnd : null,
-    }
-  })
-  const at = (ms) => (ms === null ? null : Math.round(timing.timeOrigin + ms - spawnedAt))
-  const entry = {
-    label,
-    navigationStartMs: at(0),
-    domContentLoadedMs: at(timing.domContentLoaded),
-    firstContentfulPaintMs: at(timing.fcp),
-    firstScreenMs: at(timing.lcp),
-    firstScreenElement: timing.lcpElement,
-    listAssetsMs: at(timing.listAssets),
   }
-  report.startup = [...(report.startup ?? []), entry]
-  return entry
+  const completed = new Promise((resolve, reject) => {
+    child.once("error", (error) => { clearTimeout(timer); runners.delete(child); reject(error) })
+    child.once("close", (code) => { clearTimeout(timer); runners.delete(child); if (failure) reject(failure); else resolve({ code, stdout, diagnostic: diagnostic(stderr) }) })
+  })
+  // The long-running promise is awaited after installation; attach a rejection
+  // observer now without masking the eventual result or leaving an unhandled rejection.
+  completed.catch(() => {})
+  // Do not persist raw stderr: waiting receipts contain a one-request owner token.
+  return { child, completed }
 }
-
-/** 回路行上点亮的 Agent：两份副本都分发了，行上就是两个按下的开关；冷启动时目标检测完成前什么都不写 */
-async function rowAgentsLit(alias) {
-  const group = page.getByRole("group", { name: `将 ${alias} 分发给哪些 Agent` })
-  await expect(group.locator("[aria-pressed=true]")).toHaveCount(2, { timeout: 15_000 })
-  await expect(page.getByText("没有启用的 Agent")).toHaveCount(0)
+// A parseable custom command is allowed in standard mode; the explicit shell
+// wrapper exercises D14's opaque-command approval without changing guard rules.
+const taskCommand = (name) => `sh -c 'cloudlink-p8-task ${name}'`
+const task = (name, timeout = 130_000) => runner(["exec", "--env", "windows", "--asset", saved.id, "--timeout", "600", "--", taskCommand(name)], timeout)
+const getRequest = async (id) => (await requests()).find((item) => item.requestId === id)
+async function allow(id) {
+  await page.keyboard.press("Control+3")
+  const card = page.locator(`[id="execution-${id}"]`)
+  await expect(card.getByRole("button", { name: "允许一次", exact: true })).toBeVisible()
+  await card.getByRole("button", { name: "允许一次", exact: true }).click()
 }
-
-const activityCount = async (kind) => (await invoke("list_activity", { q: { limit: 100, kinds: [kind] } })).length
-
-/** 托管 ssh 配置、护栏 hook、两份分发副本和用户自己的 Skill：更新前后逐字节比较 */
+async function unstartedPair(label) {
+  // Both real exec calls reach the 90-second waiting boundary before one is
+  // approved. No runner is left to claim that second permit until a later wait.
+  const first = task(`waiting-${label}`), second = task(`approved-${label}`)
+  const outcomes = await Promise.all([first.completed, second.completed])
+  const ids = [], tickets = []
+  for (const outcome of outcomes) {
+    assert.equal(outcome.code, 75, `The opaque SSH sample must reach approval: ${JSON.stringify({ state: outcome.diagnostic?.state, reasonId: outcome.diagnostic?.reasonId })}`)
+    assert.equal(outcome.diagnostic?.state, "waiting")
+    const ticket = outcome.diagnostic.requestId
+    assert.ok(typeof ticket === "string" && /^req_[A-Za-z0-9_-]+\.[0-9a-f]{64}$/u.test(ticket), "Invalid private waiting receipt")
+    const id = ticket.slice(0, ticket.lastIndexOf("."))
+    assert.equal((await getRequest(id)).state, "waiting")
+    ids.push(id); tickets.push(ticket)
+  }
+  await allow(ids[1])
+  await waitFor(async () => (await getRequest(ids[1]))?.state === "approved", "allowed once, not yet claimed")
+  await expect(page.locator(`[id="execution-${ids[1]}"]`)).toContainText("已允许，等 Agent 继续")
+  report[`${label}UnstartedRequests`] = ids // Bare IDs only; never the owner tokens.
+  return { ids, tickets }
+}
+async function cancelled(pair, epoch) {
+  const log = await operations()
+  for (const id of pair.ids) {
+    const item = log.find((entry) => entry.requestId === id)
+    assert.equal(item?.executionState, "cancelled", `Unstarted ${id} was not cancelled`)
+    assert.equal(item.epoch, epoch)
+    assert.equal(item.exitCode, undefined)
+  }
+  assert.equal((await target.ssh(`test ! -e /tmp/cloudlink-p8-${fixture.runId}/unstarted`)).code, 0, "Neither unstarted command may execute")
+}
 async function userFiles() {
-  const files = [
-    join(userHome, ".ssh", "cloudlink.conf"),
-    join(userHome, ".ssh", "config"),
-    join(userHome, ".claude", "settings.json"),
-    join(userHome, ".claude", "skills", "cloudlink-servers", "SKILL.md"),
-    join(userHome, ".agents", "skills", "cloudlink-servers", "SKILL.md"),
-    join(userHome, ".claude", "skills", "existing", "SKILL.md"),
-    join(userHome, ".agents", "skills", "existing", "SKILL.md"),
-  ]
-  const hashes = {}
-  for (const file of files) hashes[file] = await fileHash(file)
-  return hashes
+  const result = {}
+  for (const name of [".ssh/config", ".ssh/cloudlink.conf", ".ssh/known_hosts", ".claude/settings.json", ".claude/skills/existing/SKILL.md", ".agents/skills/existing/SKILL.md", ".claude/skills/cloudlink-servers/SKILL.md", ".agents/skills/cloudlink-servers/SKILL.md"]) result[name] = hash(await fileBytes(fixture, join(fixture.userHome, name)))
+  return result
 }
 
-const originalSettings = '{\n  "theme": "dark"\n}\n'
-const preserved = "Existing user skill fixture — keep these bytes.\n"
-
-/**
- * 只删链接本身、不跟随：对目录联接调 RemoveDirectory、对文件链接调 DeleteFile 都不会碰到链接目标。
- * WinINet 按 %USERPROFILE% 在测试家目录里建 INetCache\Content.IE5 联接；USERPROFILE 又必须指向测试家目录
- * （Windows 版 OpenSSH 不看 HOME），所以每轮清理前先拆掉这些链接
- */
-function unlinkReparsePoints(root) {
-  const script = String.raw`
-$ErrorActionPreference = 'Stop'
-$pending = [Collections.Generic.Stack[string]]::new()
-$pending.Push([IO.Path]::GetFullPath($env:CLOUDLINK_TEST_PATH))
-while ($pending.Count) {
-  foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($pending.Pop())) {
-    $attributes = [IO.File]::GetAttributes($entry)
-    if (($attributes -band 0x400) -ne 0) {
-      if (($attributes -band 0x10) -ne 0) { [IO.Directory]::Delete($entry) } else { [IO.File]::Delete($entry) }
-      $entry
-    } elseif (($attributes -band 0x10) -ne 0) { $pending.Push($entry) }
-  }
-}`
-  const result = spawnSync(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
-    encoding: "utf8", windowsHide: true, env: { SystemRoot: process.env.SystemRoot, CLOUDLINK_TEST_PATH: root },
-  })
-  assert.equal(result.status, 0, result.stderr)
-  return result.stdout.split(/\r?\n/).filter(Boolean)
-}
-
-async function prepareFixtures() {
-  // 目录是编译进安装包的固定路径，上一轮的数据要清掉：只清带 CloudLink 数据标记的目录，拆掉链接后确认已经没有链接
-  if (existsSync(DATA_HOME)) {
-    await assertTestRoot(DATA_HOME)
-    const marker = await readFile(join(DATA_HOME, ".cloudlink.json"), "utf8").catch(() => null)
-    assert.equal(marker, DATA_MARKER, `${DATA_HOME} is not a CloudLink data directory; remove it by hand`)
-    report.unlinked = unlinkReparsePoints(DATA_HOME)
-    await assertTestRoot(DATA_HOME, { inspectContents: true })
-    await rm(DATA_HOME, { recursive: true })
-  }
-  await mkdir(DATA_HOME, { recursive: true })
-  // 和应用第一次启动时写的标记相同；先写好，这一轮中途失败时下一轮也能认出并清掉
-  await writeFile(join(DATA_HOME, ".cloudlink.json"), DATA_MARKER, { flag: "wx" })
-  for (const directory of [join(userHome, ".ssh"), join(userHome, ".claude", "skills", "existing"), join(userHome, ".agents", "skills", "existing"), join(userHome, ".codex"), join(runRoot, "AppData", "Roaming"), join(runRoot, "AppData", "Local"), tmp, join(runRoot, "ProgramData")]) {
-    await mkdir(directory, { recursive: true })
-  }
-  await writeFile(join(userHome, ".claude", "settings.json"), originalSettings)
-  for (const folder of [".claude", ".agents"]) await writeFile(join(userHome, folder, "skills", "existing", "SKILL.md"), preserved)
-  // Windows 版 OpenSSH 找配置时不看 HOME，每一项回退都在这里钉死
-  const knownHosts = join(userHome, ".ssh", "known_hosts").replaceAll("\\", "/")
-  await writeFile(join(userHome, ".ssh", "config"), `# Existing SSH configuration fixture\nHost *\n  UserKnownHostsFile "${knownHosts}"\n  GlobalKnownHostsFile none\n  IdentityAgent none\n  IdentityFile none\n`)
-  await writeFile(join(userHome, ".ssh", "known_hosts"), "")
-}
-
-const tempEnv = () => ({ ...process.env, TEMP: tmp, TMP: tmp })
-
-async function uninstall() {
-  await stopApp()
-  if (existsSync(uninstaller)) {
-    const result = spawnSync(uninstaller, ["/S"], { env: tempEnv(), windowsHide: true })
-    assert.equal(result.status, 0, "uninstaller exit code")
-  }
-  // NSIS 卸载程序先把自己复制到临时目录再运行，这里等文件和卸载项真正删掉
-  await waitFor(() => !existsSync(installedExe) && !existsSync(uninstaller) && !regKey(UNINSTALL_KEY), "uninstaller finishes", 60_000)
-  if (!report.before.manufacturerKey) {
-    const location = regKey(INSTALL_LOCATION_KEY)
-    if (location) {
-      assert.ok(samePath(location.values["(default)"], INSTALL_DIR) && location.subkeys.length === 0, `Only the key this test wrote may be removed: ${JSON.stringify(location)}`)
-      regDelete(INSTALL_LOCATION_KEY)
-    }
-    const manufacturer = regKey(MANUFACTURER_KEY)
-    if (manufacturer) {
-      assert.deepEqual(manufacturer, { values: {}, subkeys: [] }, "The manufacturer key must be empty before removing it")
-      regDelete(MANUFACTURER_KEY)
-    }
-  }
-}
-
-let installed = false
 try {
-  await check("no test edition is installed; the production installation is preserved; isolated fixtures are ready", async () => {
-    report.before = await realState()
-    assert.equal(report.before.uninstallKey, null, "An earlier update-test edition is still installed")
-    assert.equal(report.before.manufacturerKey, null, `${MANUFACTURER_KEY} exists: an earlier test installation is left over`)
-    for (const version of VERSIONS) {
-      const config = JSON.parse(await readFile(join(ROOT, `tauri.update-test-${version}.json`), "utf8"))
-      assert.equal(config.productName, TEST_PRODUCT_NAME)
-      assert.equal(config.identifier, TEST_IDENTIFIER)
-      assert.equal(config.bundle.publisher, TEST_PUBLISHER)
-      assert.deepEqual(config.plugins.updater.endpoints, [`http://127.0.0.1:${UPDATE_PORT}/latest.json`], "Rebuild after changing the test update port")
-      const identity = spawnSync(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "(Get-Item -LiteralPath $env:CLOUDLINK_TEST_INSTALLER).VersionInfo.ProductName"], {
-        encoding: "utf8", windowsHide: true,
-        env: { ...process.env, CLOUDLINK_TEST_INSTALLER: join(ROOT, version, installerName(version)) },
-      })
-      assert.equal(identity.status, 0, identity.stderr)
-      assert.equal(identity.stdout.trim(), TEST_PRODUCT_NAME, "Never run a production installer in the update test")
-    }
-    assert.deepEqual(installedProcesses(), [])
-    assert.ok(!existsSync(INSTALL_DIR), `${INSTALL_DIR} is left over from an earlier run`)
-    assert.equal(await debugEndpoint(), false, `Port ${DEBUG_PORT} is already in use`)
-    await prepareFixtures()
-    await new Promise((done, reject) => { http.once("error", reject); http.listen(UPDATE_PORT, "127.0.0.1", done) })
+  await check("fresh fixture, local source and loopback ports only", async () => {
+    await assertTestRoot(fixture.installDir, { inspectContents: true })
+    await assertTestRoot(fixture.tmp, { inspectContents: true })
+    const probe = portProbe()
+    await new Promise((done, reject) => { probe.once("error", reject); probe.listen(fixture.debugPort, "127.0.0.1", done) })
+    await new Promise((done) => probe.close(done))
+    await new Promise((done, reject) => { http.once("error", reject); http.listen(fixture.updatePort, "127.0.0.1", done) })
+    // Its key must be inside CloudLink's declared isolated roots, not an evidence sibling.
+    target = await startSshTarget({ root: fixture.dataHome }) // Docker HOME/config remain temporary.
+    const remote = `/tmp/cloudlink-p8-${fixture.runId}`
+    const script = [
+      "#!/bin/sh", "set -eu", `root='${remote}'`,
+      `test "$(cat "$root/.cloudlink.json")" = '{"managedBy":"cloudlink","kind":"update-test-ssh","runId":"${fixture.runId}"}'`,
+      'case "$1" in',
+      '  waiting-*|approved-*) printf "%s\\n" "$1" >> "$root/unstarted" ;;',
+      '  running) printf "started\\n" >> "$root/started"; while [ ! -f "$root/release" ]; do sleep 1; done; printf "finished\\n" >> "$root/finished"; printf "cloudlink-p8-running-finished\\n" ;;',
+      '  *) exit 64 ;;', 'esac', "",
+    ].join("\n")
+    const quoted = (value) => `'${value.replaceAll("'", "'\\''")}'`
+    await target.exec(["sh", "-c", `mkdir ${quoted(remote)} && printf '%s' ${quoted(JSON.stringify({ managedBy: "cloudlink", kind: "update-test-ssh", runId: fixture.runId }))} > ${quoted(`${remote}/.cloudlink.json`)} && printf '%s' ${quoted(script)} > /usr/local/bin/cloudlink-p8-task && chmod 755 /usr/local/bin/cloudlink-p8-task && chown -R cloudlink:cloudlink ${quoted(remote)}`], { user: "root" })
   })
 
-  await check(`installer ${OLD} installs for the current user without elevation or shortcuts`, async () => {
-    installed = true
-    const result = spawnSync(join(ROOT, OLD, installerName(OLD)), ["/S", "/NS", `/D=${INSTALL_DIR}`], { env: tempEnv(), windowsHide: true })
-    assert.equal(result.status, 0, "installer exit code")
-    await waitFor(() => existsSync(installedExe) && existsSync(installedGuard) && existsSync(uninstaller), "installed files")
-    const key = await waitFor(() => regKey(UNINSTALL_KEY), "uninstall key")
-    assert.equal(key.values.DisplayVersion, OLD)
-    assert.equal(key.values.DisplayIcon, `"${installedExe}"`)
-    assert.equal(key.values.UninstallString, `"${uninstaller}"`)
-    report.oldExe = await fileHash(installedExe)
-    report.oldGuard = await fileHash(installedGuard)
-    assert.deepEqual((await realState()).shortcuts, report.before.shortcuts, "/NS must not add desktop or Start menu shortcuts")
-  })
-
-  await check("AC6: the first check runs ten seconds after start; no newer version leaves the interface unchanged", async () => {
-    server.manifest = { ...(await manifestFor(NEW)), version: OLD }
-    const started = Date.now()
-    launch()
+  await check(`actual isolated NSIS ${OLD} install and protected startup`, async () => {
+    const installer = join(fixture.root, "artifacts", OLD, installerName(fixture, OLD))
+    execute(installer, ["/S", "/NS", `/D=${fixture.installDir}`], { fixture, env, cwd: fixture.root, capture: true })
+    const marker = await owner(fixture, fixture.installDir, "update-test-install")
+    assert.equal(marker.version, OLD)
+    assert.equal(hash(await fileBytes(fixture, installedExe)), nsisPayloadHash(await fileBytes(fixture, join(fixture.root, "artifacts", OLD, "cloudlink.exe"))))
+    assert.equal(hash(await fileBytes(fixture, installedGuard)), artifacts.files[`${OLD}/cloudlink-guard.exe`])
+    const good = await manifest(join(fixture.root, "artifacts", NEW, `${installerName(fixture, NEW)}.sig`))
+    server.manifest = { ...good, version: OLD }
+    const info = await launch()
+    report.oldPid = info.pid
     await connect()
-    report.pid = installedProcesses()[0]
-    await expect(page.getByRole("heading", { name: "添加第一台服务器" })).toBeVisible()
-    // 装好后的第一次启动要新建 WebView2 的配置目录，只记录，不算进冷启动
-    await startupTiming("first launch after install", started)
-    const settings = await invoke("get_settings")
-    assert.equal(settings.dataDir, DATA_HOME, "The compiled test home must isolate the application")
-    assert.equal(settings.autoCheckUpdates, true)
-    assert.deepEqual(await status(), { state: "idle", currentVersion: OLD })
-    await waitFor(() => requestsTo("/latest.json") > 0, "first update check", 30_000)
-    report.firstCheckMs = server.requests[0].at - started
-    assert.ok(report.firstCheckMs >= 10_000, `first check came ${report.firstCheckMs}ms after launch`)
-    await delay(1_000)
-    assert.equal((await status()).state, "idle")
-    await expect(reminder()).toHaveCount(0)
-    await shot("01-installed-idle")
+    assert.equal((await status()).currentVersion, OLD)
+    await shot("01-isolated-old")
   })
 
-  await check("a verified server, two delivered copies, the managed ssh config and the guard hook exist", async () => {
-    target = await startSshTarget({ root: runRoot })
+  await check("real key-auth SSH, managed copies and hook; no vault or CLI login", async () => {
     await page.getByRole("button", { name: "添加服务器", exact: true }).click()
-    // 同一 region 在开始连接后会改标题，不能把旧标题消失当成流程完成。
-    const form = page.getByRole("region", { name: /^(添加 SSH 服务器|连接 )/ })
+    const form = page.getByRole("region", { name: /^(添加 SSH 服务器|连接 )/u })
     await form.getByLabel("地址").fill(target.host)
     await form.getByLabel("端口", { exact: true }).fill(String(target.port))
     await form.getByLabel("用户").fill(target.user)
-    await expect(form.getByRole("button", { name: "密码", exact: true })).toHaveAttribute("aria-pressed", "true")
-    await form.getByLabel("密码", { exact: true }).fill(target.password)
-    await form.getByLabel(/^名称/).fill("Update SSH")
-    await expect(form.getByRole("textbox", { name: "别名", exact: true })).toHaveValue("update-ssh")
-    await form.getByRole("button", { name: /连接并启用/ }).click()
+    await form.getByLabel(/^名称/u).fill("P8 更新靶机")
+    await form.getByRole("button", { name: "私钥文件", exact: true }).click()
+    await form.getByRole("textbox", { name: /Windows.*私钥路径/u }).fill(target.identityFile)
+    await form.getByRole("button", { name: /^连接并启用/u }).click()
     const trust = form.getByTestId("connect-fingerprint")
     await expect(trust).toBeVisible({ timeout: 30_000 })
     await expect(trust).toContainText(target.hostKeyFingerprint)
-    await expect(page.getByRole("alertdialog")).toHaveCount(0)
     await trust.getByRole("button", { name: "指纹一致，继续", exact: true }).click()
-    const include = form.getByTestId("connect-include")
-    await expect(include).toBeVisible({ timeout: 30_000 })
-    await expect(page.getByRole("alertdialog")).toHaveCount(0)
-    await include.getByRole("button", { name: "加入", exact: true }).click()
+    await expect(form.getByTestId("connect-include")).toBeVisible({ timeout: 30_000 })
+    await form.getByTestId("connect-include").getByRole("button", { name: "加入", exact: true }).click()
     await expect(form).toHaveCount(0, { timeout: 60_000 })
-    // 保存后自动探测；活动记录在发布之后才写，等到它说明这一轮编译和分发都结束了
-    await waitFor(async () => (await activityCount("probe")) > 0, "first probe is published", 120_000)
-    const [saved] = await invoke("list_assets")
+    await waitFor(async () => (await invoke("list_assets"))[0]?.probe?.status === "ok", "first SSH probe finishes", 120_000)
+    saved = (await invoke("list_assets"))[0]
+    assert.equal(saved.production, true)
     assert.equal(saved.connection.auth.method, "key")
     assert.equal(saved.connection.verified.ok, true)
-    assert.equal(saved.probe.status, "ok")
+    await invoke("set_mode", { assetId: saved.id, mode: "standard" })
     const deliveries = await invoke("check_deliveries")
-    assert.equal(deliveries.length, 2)
-    assert.ok(deliveries.every((item) => item.status === "ok"), JSON.stringify(deliveries))
+    assert.equal(deliveries.filter((item) => item.status === "ok").length, 2)
     assert.equal((await invoke("install_guard", { envId: "windows" })).state, "active")
-    assert.equal(await fileHash(copiedGuard), report.oldGuard)
-    await rowAgentsLit(saved.connection.sshAlias)
-    await shot("02-seeded")
+    const routes = JSON.parse((await fileBytes(fixture, join(fixture.dataHome, "routes/manifest.json"))).toString("utf8"))
+    const route = routes.resources.find((item) => item.assetId === saved.id && item.envId === "windows")
+    assert.equal(route?.enabled, true, `Isolated SSH route unavailable: ${route?.reasonId}`)
+    report.assetId = saved.id
+    await shot("02-real-ssh-and-copies")
   })
 
-  await check("AC6: turning checks off stops requests across a restart; turning them on checks at once", async () => {
-    await page.keyboard.press("Control+4")
-    await expect(page.getByText(`当前 v${OLD}`)).toBeVisible()
-    const toggle = page.getByRole("switch", { name: "自动下载更新" })
-    await expect(toggle).toBeChecked()
-    await toggle.click()
-    await expect(toggle).not.toBeChecked()
-    await waitFor(async () => (await invoke("get_settings")).autoCheckUpdates === false, "the switch is saved")
-    await stopApp()
-
-    const since = Date.now()
-    launch()
-    await connect()
-    report.pid = installedProcesses()[0]
-    assert.equal((await invoke("get_settings")).autoCheckUpdates, false)
-    await delay(Math.max(0, since + 20_000 - Date.now()))
-    assert.deepEqual(server.requests.filter((item) => item.at >= since), [], "No request may be sent while checks are off")
-
-    await page.keyboard.press("Control+4")
-    const clicked = Date.now()
-    await page.getByRole("switch", { name: "自动下载更新" }).click()
-    const request = await waitFor(() => server.requests.find((item) => item.at >= clicked), "check right after switching on", 10_000)
-    report.checkAfterSwitchOnMs = request.at - clicked
-    assert.ok(report.checkAfterSwitchOnMs < 3_000, `check came ${report.checkAfterSwitchOnMs}ms after switching on`)
-    await page.keyboard.press("Control+1")
-  })
-
-  await check(`AC1/AC2: ${NEW} downloads in the background with no reminder, then brings a quiet reminder and plain-text notes; switching off mid-download keeps ${OLD}`, async () => {
-    server.manifest = await manifestFor(NEW)
-    server.installer = await readFile(join(ROOT, NEW, installerName(NEW)))
-    server.stallAt = 0.4
-    await invoke("update_settings", { patch: { autoCheckUpdates: false } })
-    await invoke("update_settings", { patch: { autoCheckUpdates: true } })
-    await waitFor(async () => (await status()).downloaded > 0, "background download progress", 60_000)
-    assert.equal((await status()).state, "downloading")
-    // magpie 式：后台下载期间顶栏什么都不显示，进度只在设置里
-    await expect(reminder()).toHaveCount(0)
-    await page.keyboard.press("Control+4")
-    await expect(page.getByText(new RegExp(`^正在下载 ${NEW.replaceAll(".", "\\.")}… \\d+%$`))).toBeVisible()
-    await shot("03-background-download")
-    // 关掉开关取消下载（客户端断开，服务端停住的响应随之结束），什么都没装
-    await page.getByRole("switch", { name: "自动下载更新" }).click()
-    await waitFor(async () => (await status()).state === "idle", "switching off cancels the download")
-    await page.getByRole("switch", { name: "自动下载更新" }).click()
-    assert.equal(await fileHash(installedExe), report.oldExe)
-    assert.deepEqual(installedProcesses(), [report.pid])
-    server.stallAt = null
-    await recheck(NEW)
-    await page.keyboard.press("Control+1")
-
-    await expect(reminder()).toHaveAccessibleName(`有新版本 ${NEW}，查看并更新`)
-    await expect(reminder()).toHaveText("更新")
-    await expect(page.getByRole("banner").locator("[aria-live=polite]")).toHaveText(`有新版本 ${NEW}`)
-    await expect(page.getByRole("dialog")).toHaveCount(0)
-    await shot("04-reminder")
-
-    await reminder().click()
-    await expect(dialog()).toBeVisible()
-    await expect(dialog().getByText(new RegExp(`^当前版本 ${OLD.replaceAll(".", "\\.")} · 发布于 \\d{4}-\\d{2}-\\d{2}$`))).toBeVisible()
-    const notes = dialog().locator("[data-slot=scroll-area] p")
-    assert.equal(await notes.evaluate((element) => element.innerText), `CloudLink ${NEW} update test\n- second line`)
-    await expect(dialogButton("重启以更新")).toBeFocused()
-    await expect(dialog().getByRole("progressbar")).toHaveCount(0)
-    await dialogButton("稍后").click()
-    await expect(dialog()).toHaveCount(0)
-    await expect(reminder()).toBeFocused()
+  await check("real updater install failure restores checks and cancels waiting/approved", async () => {
+    const before = await runtime()
+    const pair = await unstartedPair("failure")
+    await recheck(await fileBytes(fixture, join(fixture.root, "artifacts/invalid-installer.bin")), await manifest(join(fixture.root, "artifacts/invalid-installer.bin.sig")))
+    await assertTestRoot(fixture.tmp, { inspectContents: true })
+    await invoke("install_update") // Signature is genuine; non-EXE format fails only in real install/extract.
+    await waitFor(async () => (await status()).error?.id === "update-install-failed", "genuine installer-format failure")
     assert.equal((await status()).state, "ready")
-    assert.equal(await fileHash(installedExe), report.oldExe)
-    assert.deepEqual(installedProcesses(), [report.pid])
+    assert.equal((await runtime()).state, "active")
+    assert.equal((await runtime()).epoch, before.epoch)
+    assert.equal(processInfo(report.oldPid).pid, report.oldPid)
+    await cancelled(pair, before.epoch)
+    const denied = await runner(["exec", "--env", "windows", "--asset", saved.id, "--", "cat /etc/shadow"]).completed
+    assert.equal(denied.code, 125, "Checks must still reject credentials after install failure")
+    assert.equal(denied.diagnostic?.checked, true)
+    assert.equal(denied.diagnostic?.state, "denied")
+    for (const ticket of pair.tickets) {
+      const result = await runner(["wait", "--env", "windows", ticket]).completed
+      assert.equal(result.code, 125)
+      assert.equal(result.stdout, "")
+    }
+    report.installFailureEpoch = before.epoch
+    await shot("03-install-failure-restored")
   })
 
-  await check("AC4: a running probe blocks installing, even when the interface is bypassed", async () => {
-    // 安装包已在后台下好（ready）；探测要连 SSH，「重启以更新」紧跟在开始探测之后，一定会被挡住
-    await recheck(NEW)
-    const probes = await activityCount("probe")
-    const [saved] = await invoke("list_assets")
-    await invoke("start_probe", { assetId: saved.id })
-    const error = await invokeError("install_update")
-    assert.equal(error?.id, "update-busy", JSON.stringify(error))
-    assert.deepEqual(error.params, { task: "probe", name: saved.connection.sshAlias })
-    assert.equal((await status()).state, "ready")
-    await waitFor(async () => (await activityCount("probe")) > probes, "probe is published", 120_000)
-  })
-
-  await check("AC3: tampered packages, signatures and versions are rejected and nothing is installed", async () => {
-    const good = await manifestFor(NEW)
-    const goodPackage = await readFile(join(ROOT, NEW, installerName(NEW)))
-    const signatureText = "安装包签名校验失败"
-
-    const tampered = Buffer.from(goodPackage)
-    tampered[tampered.length >> 1] ^= 0xff
-    server.manifest = good
-    server.installer = tampered
-    await installFails(NEW, "update-signature-invalid", signatureText, "tampered-package")
-
-    // 格式正确、内容错误的签名
-    const lines = Buffer.from(good.platforms["windows-x86_64"].signature, "base64").toString("utf8").split("\n")
-    const raw = Buffer.from(lines[1], "base64")
-    raw[raw.length - 1] ^= 1
-    lines[1] = raw.toString("base64")
-    server.installer = goodPackage
-    server.manifest = structuredClone(good)
-    server.manifest.platforms["windows-x86_64"].signature = Buffer.from(lines.join("\n")).toString("base64")
-    await installFails(NEW, "update-signature-invalid", signatureText, "wrong-signature")
-
-    // 清单里的版本号不在签名范围内：把合法的 0.1.1 安装包说成 0.1.2 也不能通过（requireSignedVersion）
-    server.manifest = { ...structuredClone(good), version: "0.1.2" }
-    await installFails("0.1.2", "update-signature-invalid", signatureText, "unsigned-version")
-
-    server.manifest = good
-    server.installer = null
-    await installFails(NEW, "update-download-failed", "下载安装包失败", "missing-package")
-  })
-
-  await check(`AC5: updating from the reminder exits, installs passively and reopens ${NEW} with everything intact`, async () => {
-    // 两个测试版的护栏程序出自同一份源码。把数据目录里的副本连同标记改成「旧版写下的样子」，才看得出启动时按哈希同步了新版
-    await appendFile(copiedGuard, Buffer.alloc(16, 0x20))
-    const markerPath = join(guardDir, ".cloudlink.json")
-    const marker = JSON.parse(await readFile(markerPath, "utf8"))
-    assert.equal(marker.kind, "guard-bin")
-    await writeFile(markerPath, JSON.stringify({ ...marker, hash: await fileHash(copiedGuard) }))
-    assert.equal((await invoke("get_guard_status")).find((item) => item.envId === "windows")?.state, "active")
-
-    report.assets = await invoke("list_assets")
-    report.files = await userFiles()
-    const deliveriesBefore = await invoke("check_deliveries")
-    assert.ok(deliveriesBefore.every((item) => item.status === "ok"), JSON.stringify(deliveriesBefore))
-
-    server.manifest = await manifestFor(NEW)
-    server.installer = await readFile(join(ROOT, NEW, installerName(NEW)))
-    await recheck(NEW)
-    const checksBefore = requestsTo("/latest.json")
-    await reminder().click()
-    await dialogButton("重启以更新").click()
-    await expect(dialogButton("正在安装")).toBeDisabled()
-    await shot("05-updating")
+  let pair, oldEpoch, beforeFiles, beforeAssets
+  await check("waiting/approved cancellation and an actual older runner span the update", async () => {
+    pair = await unstartedPair("update")
+    oldEpoch = (await runtime()).epoch
+    beforeFiles = await userFiles()
+    beforeAssets = await invoke("list_assets")
+    running = task("running", 660_000)
+    const request = await waitFor(async () => (await requests()).find((item) => item.command === taskCommand("running") && item.state === "waiting"), "running fixture asks through the original card")
+    await allow(request.requestId)
+    await waitFor(async () => {
+      const current = await getRequest(request.requestId)
+      if (current?.state === "running") return true
+      if (["failed", "unknown", "succeeded", "cancelled", "expired", "denied"].includes(current?.state)) {
+        const outcome = await running.completed
+        report.runningFailure = { code: outcome.code, state: outcome.diagnostic?.state, reasonId: outcome.diagnostic?.reasonId }
+        throw new Error(`Older runner ended before the update: ${JSON.stringify(report.runningFailure)}`)
+      }
+      return false
+    }, "older runner starts exactly once")
+    assert.equal((await target.ssh(`cat /tmp/cloudlink-p8-${fixture.runId}/started`)).stdout.trim(), "started")
+    report.runningRequestId = request.requestId
+    report.oldRunnerPid = running.child.pid
+    report.oldGuardHash = hash(await fileBytes(fixture, copiedGuard))
+    const good = await manifest(join(fixture.root, "artifacts", NEW, `${installerName(fixture, NEW)}.sig`))
+    await recheck(await fileBytes(fixture, join(fixture.root, "artifacts", NEW, installerName(fixture, NEW))), good)
+    await assertTestRoot(fixture.installDir, { inspectContents: true })
+    await assertTestRoot(fixture.tmp, { inspectContents: true })
+    await page.getByRole("banner").getByRole("button", { name: `有新版本 ${NEW}，查看并更新`, exact: true }).click()
+    await page.getByRole("dialog", { name: `新版本 ${NEW}`, exact: true }).getByRole("button", { name: "重启以更新", exact: true }).click()
     await disconnect()
-
-    const oldPid = report.pid
-    await waitFor(() => regKey(UNINSTALL_KEY)?.values.DisplayVersion === NEW, "installer registers the new version", 180_000)
-    report.pid = await waitFor(() => installedProcesses().find((pid) => pid !== oldPid), "installer reopens CloudLink", 120_000)
-    assert.notEqual(await fileHash(installedExe), report.oldExe)
+    const receiptPath = join(fixture.root, "receipts", `reopened-${NEW}.json`)
+    const receipt = await waitFor(async () => {
+      const exists = await lstat(receiptPath).then(() => true, (error) => { if (error.code !== "ENOENT") throw error; return false })
+      return exists ? JSON.parse((await fileBytes(fixture, receiptPath, 64 * 1024)).toString("utf8")) : false
+    }, "actual NSIS installs and directly reopens the new version", 180_000)
+    assert.equal(receipt.managedBy, "cloudlink")
+    assert.equal(receipt.runId, fixture.runId)
+    assert.equal(receipt.kind, "update-test-reopen-receipt")
+    assert.equal(receipt.version, NEW)
+    const newProcess = rememberApp(receipt.pid)
+    assert.notEqual(newProcess.pid, report.oldPid)
+    report.newPid = newProcess.pid
     await connect()
-
-    const settings = await invoke("get_settings")
-    assert.equal(settings.dataDir, DATA_HOME, "The reopened application must stay isolated")
-    assert.equal(settings.autoCheckUpdates, true)
-    assert.deepEqual(await status(), { state: "idle", currentVersion: NEW })
-    await expect(reminder()).toHaveCount(0)
-    await rowAgentsLit(report.assets[0].connection.sshAlias)
-    await shot("06-reopened")
-
-    assert.deepEqual(await invoke("list_assets"), report.assets)
-    assert.deepEqual(await userFiles(), report.files)
-    const deliveries = await invoke("check_deliveries")
-    assert.equal(deliveries.length, 2)
-    assert.ok(deliveries.every((item) => item.status === "ok"), JSON.stringify(deliveries))
-    assert.equal((await invoke("get_guard_status")).find((item) => item.envId === "windows")?.state, "active")
-    assert.equal(await fileHash(copiedGuard), await fileHash(installedGuard), "The guard copy must be synchronized with the new version")
-
-    const activity = await invoke("list_activity", { q: { limit: 10, kinds: ["update"] } })
-    assert.equal(activity.length, 1)
-    assert.equal(activity[0].messageId, "update-installing")
-    assert.deepEqual(activity[0].params, { from: OLD, to: NEW })
-
-    await waitFor(() => requestsTo("/latest.json") > checksBefore, "the new version checks for updates", 30_000)
-    await delay(1_000)
-    assert.deepEqual(await status(), { state: "idle", currentVersion: NEW })
-    await expect(reminder()).toHaveCount(0)
+    assert.equal((await status()).currentVersion, NEW)
+    assert.notEqual((await runtime()).epoch, oldEpoch)
+    const marker = await owner(fixture, fixture.installDir, "update-test-install")
+    assert.equal(marker.version, NEW)
+    assert.equal(hash(await fileBytes(fixture, installedExe)), nsisPayloadHash(await fileBytes(fixture, join(fixture.root, "artifacts", NEW, "cloudlink.exe"))))
+    assert.equal(hash(await fileBytes(fixture, copiedGuard)), artifacts.files[`${NEW}/cloudlink-guard.exe`])
+    assert.notEqual(hash(await fileBytes(fixture, copiedGuard)), report.oldGuardHash)
+    assert.equal(runners.has(running.child), true, "The older already-started runner must survive")
+    report.retainedOldGuardFiles = (await readdir(join(fixture.dataHome, "bin"))).filter((name) => name.startsWith(".cloudlink-guard-old-bin_") && name.endsWith(".exe"))
+    const guardOwner = JSON.parse((await fileBytes(fixture, join(fixture.dataHome, "bin/.cloudlink.json"), 64 * 1024)).toString("utf8"))
+    assert.equal(guardOwner.managedBy, "cloudlink")
+    assert.equal(guardOwner.kind, "guard-bin")
+    const retained = report.retainedOldGuardFiles.find((name) => guardOwner.retiredFiles?.[name] === report.oldGuardHash)
+    assert.ok(retained, "The occupied old executable must have an ownership/hash receipt")
+    assert.equal(hash(await fileBytes(fixture, join(fixture.dataHome, "bin", retained))), report.oldGuardHash)
+    await cancelled(pair, oldEpoch)
+    await shot("04-real-update-reopened")
   })
 
-  await check(`cold start: ${NEW} with a saved server reaches its first screen within 1.5 seconds`, async () => {
-    // 冷启动（PRD 第九章）：已经用过、有数据的安装，关掉再打开，连续三次取中位数
-    const alias = report.assets[0].connection.sshAlias
-    const restarts = []
-    for (let i = 1; i <= 3; i++) {
-      await stopApp()
-      const spawnedAt = Date.now()
-      launch()
-      await connect()
-      report.pid = installedProcesses()[0]
-      await expect(page.getByRole("button", { name: new RegExp(`^${alias}，`) })).toBeVisible()
-      restarts.push(await startupTiming(`restart ${i}`, spawnedAt))
+  await check("late terminal from the real old runner is ingested once, not replayed", async () => {
+    await target.ssh(`set -C; printf release > /tmp/cloudlink-p8-${fixture.runId}/release`)
+    const outcome = await running.completed
+    assert.equal(outcome.code, 0)
+    assert.equal(outcome.stdout.trim(), "cloudlink-p8-running-finished")
+    assert.equal(outcome.diagnostic?.checked, true)
+    assert.equal(outcome.diagnostic?.state, "succeeded")
+    const terminal = await waitFor(async () => (await operations()).find((entry) => entry.requestId === report.runningRequestId && entry.executionState === "succeeded"), "older runner's actual terminal audit is imported")
+    assert.equal(terminal.epoch, oldEpoch)
+    assert.equal(terminal.exitCode, 0)
+    assert.equal(terminal.source, "runner")
+    assert.equal(terminal.checked, true)
+    assert.equal((await operations()).filter((entry) => entry.requestId === report.runningRequestId).length, 1)
+    assert.equal((await target.ssh(`cat /tmp/cloudlink-p8-${fixture.runId}/started; cat /tmp/cloudlink-p8-${fixture.runId}/finished`)).stdout.trim(), "started\nfinished")
+    for (const ticket of pair.tickets) {
+      const result = await runner(["wait", "--env", "windows", ticket]).completed
+      assert.equal(result.code, 125, "Cancelled old permits cannot execute in the new epoch")
+      assert.equal(result.stdout, "")
     }
-    const firstScreens = restarts.map((item) => item.firstScreenMs)
-    assert.ok(firstScreens.every((ms) => typeof ms === "number"), JSON.stringify(restarts))
-    report.coldStartMedianMs = [...firstScreens].sort((a, b) => a - b)[1]
-    assert.ok(report.coldStartMedianMs <= 1_500, `cold start median ${report.coldStartMedianMs}ms: ${JSON.stringify(restarts)}`)
-  })
-
-  await check(`the uninstaller removes ${NEW} and keeps user data`, async () => {
-    await uninstall()
-    installed = false
-    for (const path of [join(DATA_HOME, "data.db"), join(userHome, ".claude", "skills", "cloudlink-servers", "SKILL.md"), copiedGuard]) {
-      assert.ok(existsSync(path), `Uninstalling must keep ${path}`)
-    }
-  })
-
-  await check("real user files, shortcuts and registry are exactly as before", async () => {
-    report.after = await realState()
-    assert.deepEqual(report.after, report.before)
+    assert.equal((await requests()).some((item) => pair.ids.includes(item.requestId)), false)
+    await cancelled(pair, oldEpoch)
+    assert.deepEqual(await invoke("list_assets"), beforeAssets)
+    assert.deepEqual(await userFiles(), beforeFiles)
     assert.deepEqual(pageErrors, [])
-    report.requests = server.requests.map(({ method, url, userAgent }) => `${method} ${url} (${userAgent})`)
-    assert.ok(server.requests.every((item) => item.url === "/latest.json" || item.url === INSTALLER_URL))
+    assert.ok(server.requests.every((item) => item.url === "/latest.json" || item.url === installerUrl))
+    report.httpRequests = server.requests
+    await shot("05-late-terminal-no-replay")
   })
 } catch (error) {
   report.error = String(error)
-  report.errorStack = error instanceof Error ? error.stack : undefined
-  if (page) await page.screenshot({ path: join(runRoot, "failure.png") }).catch(() => {})
   process.exitCode = 1
+  if (page) await shot("failure").catch((failure) => { report.screenshotError = String(failure) })
 } finally {
   await disconnect()
-  if (installed) {
-    await uninstall().catch((error) => {
-      report.cleanupError = String(error)
-      process.exitCode = 1
-    })
+  // These are local test-owned handles, not a taskkill by executable name. A
+  // harness failure cannot claim it rolled back a remote command's side effects.
+  for (const child of runners) child.kill()
+  for (const info of apps) {
+    try { stopKnownApp(info) } catch (error) { report.cleanupError = String(error); process.exitCode = 1 }
   }
   http.closeAllConnections()
-  await new Promise((done) => http.close(done))
+  if (http.listening) await new Promise((done) => http.close(done))
   if (target) await target.dispose().catch((error) => { report.targetCleanupError = String(error); process.exitCode = 1 })
-  if (report.before && !report.after) {
-    report.after = await realState()
-    if (JSON.stringify(report.after) !== JSON.stringify(report.before)) {
-      report.realStateChanged = true
-      console.error("REAL USER STATE CHANGED: compare report.before and report.after")
-    }
-  }
-  await writeFile(join(runRoot, "report.json"), `${JSON.stringify(report, null, 2)}\n`)
-  console.log(`Update report: ${join(runRoot, "report.json")}`)
+  report.retainedFixture = true // No uninstaller, unlink of cache Junctions, or directory deletion.
+  await newFile(fixture, join(evidence, "report.json"), `${JSON.stringify(report, null, 2)}\n`)
+  console.log(`P8 updater evidence: ${evidence}`)
+  console.log("All captured screenshots still require analyze_image; this script does not claim visual approval.")
   if (report.error) console.error(report.error)
-  if (report.cleanupError) console.error(`CLEANUP FAILED: ${report.cleanupError}`)
 }

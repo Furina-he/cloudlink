@@ -3,7 +3,19 @@
 > {% if env_title %}{{ env_title }} | {% endif %}Mode: {{ mode }}{% if snapshot %} | Snapshot: {{ snapshot }}{% endif +%}
 
 ## Connect
+{% if execution %}
+Pass exactly one quoted remote command after `--`; the stable ID maps to the private SSH configuration. Do not replace this entry with a direct alias:
+
+    {{ execution }}
+{% if execution_ps %}
+
+PowerShell:
+
+    {{ execution_ps }}
+{% endif %}
+{% else %}
 - `ssh {{ alias }} '<command>'`
+{% endif %}
 {% if system %}
 - System: {{ system }}
 {% endif %}
@@ -49,6 +61,23 @@
 {% for p in ports %}
 - {{ p }}
 {% endfor %}
+{% endif %}
+{% if put %}
+
+## Single-file transfer
+Only new destination paths, never overwrite, recurse, glob or resume. Upload is a write and binds the source digest; a changed source invalidates approval. Download refuses credential paths and follows no local links. Failure may leave remote partial data; do not delete user directories. The remote existence check is not an exclusive safe-publication guarantee.
+
+    {{ put }}
+    {{ get }}
+{% if put_ps %}
+
+Windows SFTP rejects remote braces (`{`, `}`) and backslashes before transfer because its batch parser cannot safely quote them. Choose a different new path, not a different execution tool.
+
+PowerShell:
+
+    {{ put_ps }}
+    {{ get_ps }}
+{% endif %}
 {% endif %}
 {% if notes %}
 

@@ -7,6 +7,8 @@ import type {
   CompileStatus,
   ConnectionTestedEvent,
   Delivery,
+  ExecutionChangedEvent,
+  RuntimeStatus,
   GuardStatus,
   Inclusion,
   ProbeFinishedEvent,
@@ -20,6 +22,8 @@ import { onBackedUp, onTrayConfirmMode } from "@/stores/backups"
 import { useConnectionStore } from "@/stores/connection"
 import { useDeliveryStore } from "@/stores/deliveries"
 import { useGuardStore } from "@/stores/guard"
+import { useExecutionStore } from "@/stores/execution"
+import { useUIStore } from "@/stores/ui"
 import { useNotesStore } from "@/stores/notes"
 import { useOperationStore } from "@/stores/operations"
 import { useProbeStore } from "@/stores/probe"
@@ -67,6 +71,12 @@ export async function subscribeBackendEvents(): Promise<UnlistenFn> {
     listen<TrayConfirmMode>("tray://confirm-mode", (e) =>
       onTrayConfirmMode(e.payload.assetId)
     ),
+    listen<ExecutionChangedEvent>("execution://changed", (e) => useExecutionStore.getState()._onChanged(e.payload)),
+    listen<{ status: RuntimeStatus }>("runtime://changed", (e) => useExecutionStore.getState()._onRuntime(e.payload.status)),
+    listen<{ requestId: string }>("execution://focus", (e) => {
+      useExecutionStore.getState().focus(e.payload.requestId)
+      useUIStore.getState().setView("activity")
+    }),
     listen<{ status: UpdateStatus }>("update://changed", (e) =>
       useUpdateStore.getState()._onChanged(e.payload.status)
     ),

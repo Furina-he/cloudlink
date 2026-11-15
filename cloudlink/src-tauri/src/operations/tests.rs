@@ -36,6 +36,13 @@ fn operation(id: &str, at: &str) -> Operation {
         command: "ssh hk-edge uptime".into(),
         decision: OperationDecision::Allowed,
         reason_id: None,
+        source: None,
+        checked: None,
+        execution_state: None,
+        request_id: None,
+        epoch: None,
+        exit_code: None,
+        duration_ms: None,
     }
 }
 
@@ -89,6 +96,30 @@ fn operation_and_activity_are_imported_once_and_both_are_fully_redacted() {
     assert_eq!(denied_today(&db, &EnvId::windows(), now).unwrap(), 1);
     assert!(ingest(&paths, &db, &[EnvId::windows()], now).unwrap().is_empty());
     assert!(db.ingest_claims("operation").unwrap().is_empty());
+}
+
+#[test]
+fn p8_sidecar_reason_ids_are_imported_without_dropping_records() {
+    let (_temp, paths, db, now) = setup();
+    let assets = [Asset::Vps(crate::testkit::hk_edge())];
+    for reason in ["runtime-protected", "github-default-force", "github-dangerous"] {
+        let mut value = serde_json::to_value(operation("op_p8_reason", &time::format_rfc3339(now))).unwrap();
+        value["decision"] = serde_json::json!("denied");
+        value["reasonId"] = serde_json::json!(reason);
+        let bytes = serde_json::to_vec(&value).unwrap();
+        let (parsed, _) = parse_operation(&bytes, &assets, &[EnvId::windows()], now)
+            .unwrap_or_else(|| panic!("sidecar reason {reason} must not discard the operation"));
+        assert_eq!(serde_json::to_value(parsed).unwrap()["reasonId"], reason);
+    }
+    for (legacy, current) in [
+        ("runtime-protection", "runtime-protected"),
+        ("github-default-branch", "github-default-force"),
+    ] {
+        let reason: GuardReasonId = serde_json::from_value(serde_json::json!(legacy)).unwrap();
+        assert_eq!(serde_json::to_value(reason).unwrap(), current);
+    }
+    assert!(all(&db).is_empty());
+    assert!(source_names(&paths).unwrap().is_empty());
 }
 
 #[test]
@@ -153,9 +184,11 @@ fn thirty_day_retention_prunes_both_existing_tables_and_old_incoming_rows() {
     })
     .unwrap();
     append(&paths, &old);
-    let kept = operation("op_boundary", &time::format_rfc3339(now - RETENTION_SECS));
-    append(&paths, &kept);
+    let mut kept = operation("op_boundary", &time::format_rfc3339(now - RETENTION_SECS));
+    append(&paths, &kept); // Legacy bytes have no execution fields.
     ingest(&paths, &db, &[EnvId::windows()], now).unwrap();
+    kept.source = Some(crate::model::guard::OperationSource::Hook);
+    kept.checked = Some(true);
     assert_eq!(all(&db), [kept]);
     assert_eq!(activity(&db).len(), 1);
     assert_eq!(activity(&db)[0].id, "act_op_boundary");
