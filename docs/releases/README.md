@@ -28,7 +28,7 @@
 
 ## 本地更新验收
 
-P8 分支的更新验收分为准备、构建、运行三个显式步骤。没有参数时不会自动构建或安装；构建与运行安装器须分别获得授权，并与其他 Rust、Vitest、Playwright 全套检查串行执行。
+更新验收分为准备、构建、运行三个显式步骤。没有参数时不会自动构建或安装；构建与运行安装器须分别获得授权，并与其他 Rust、Vitest、Playwright 全套检查串行执行。
 
 ```bash
 node scripts/build-update-test.mjs --prepare
