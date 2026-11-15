@@ -1,0 +1,909 @@
+// Exercise the built WebView2 app and real named IPC. No mockIPC, real user profile, or OS vault.
+// Build with `pnpm build:desktop-test`, then run `pnpm e2e:desktop` on Windows with WSL Docker.
+// Native input additionally requires e2e-desktop/tauri.native.conf.json: let Tauri
+// show the window normally, rather than bypassing Tao visibility state with ShowWindow.
+import assert from "node:assert/strict"
+import { spawn } from "node:child_process"
+import { createHash } from "node:crypto"
+import { constants } from "node:fs"
+import { createServer as httpServer } from "node:http"
+import { createConnection, createServer as tcpServer } from "node:net"
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rename, writeFile } from "node:fs/promises"
+import { dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
+import { chromium, expect } from "@playwright/test"
+
+import { assertTestRoot, startSshTarget } from "./desktop-ssh-target.mjs"
+
+const project = resolve(dirname(fileURLToPath(import.meta.url)), "..")
+const appPath = resolve(project, process.argv[2] ?? "src-tauri/target/debug/cloudlink.exe")
+if (process.platform !== "win32") throw new Error("The desktop integration check requires Windows WebView2")
+const output = resolve(process.env.CLOUDLINK_DESKTOP_EVIDENCE_DIR ?? join(project, "test-results", "desktop"))
+await assertTestRoot(output)
+await mkdir(output, { recursive: true })
+await assertTestRoot(output)
+const nativeTools = process.env.CLOUDLINK_DESKTOP_NATIVE_TOOLS ? resolve(process.env.CLOUDLINK_DESKTOP_NATIVE_TOOLS) : null
+if (nativeTools) await assertTestRoot(nativeTools)
+const runRoot = await mkdtemp(join(output, "run-"))
+await assertTestRoot(runRoot)
+const dataRoot = join(runRoot, "应用 数据")
+const userRoot = join(runRoot, "home 测试")
+const launchPath = join(runRoot, "程序 测试", "cloudlink.exe")
+const report = { app: appPath, root: runRoot, checks: [], coverage: "WebView2, native IPC, isolated Windows SSH, managed copies and packaged guard" }
+let desktop
+let browser
+let page
+let target
+const consoleErrors = []
+
+function childEnvironment() {
+  const env = {}
+  for (const key of ["SystemRoot", "WINDIR", "COMSPEC", "SystemDrive", "PATH", "PATHEXT", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"]) {
+    const entry = Object.entries(process.env).find(([name]) => name.toLowerCase() === key.toLowerCase())
+    if (entry) env[entry[0]] = entry[1]
+  }
+  return {
+    ...env,
+    CLOUDLINK_HOME: dataRoot,
+    CLOUDLINK_USER_HOME: userRoot,
+    CLOUDLINK_WSL_ROOT: join(runRoot, "wsl"),
+    CLOUDLINK_FAKE_WSL: "",
+    HOME: userRoot,
+    USERPROFILE: userRoot,
+    APPDATA: join(userRoot, "AppData", "Roaming"),
+    LOCALAPPDATA: join(userRoot, "AppData", "Local"),
+    ProgramData: join(runRoot, "ProgramData"),
+    TEMP: join(runRoot, "tmp"),
+    TMP: join(runRoot, "tmp"),
+  }
+}
+
+async function port() {
+  const server = tcpServer()
+  await new Promise((done, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", done) })
+  const value = server.address().port
+  await new Promise((done) => server.close(done))
+  return value
+}
+
+async function silentSsh(work) {
+  const sockets = new Set()
+  let accepted = false
+  const server = tcpServer((socket) => {
+    accepted = true
+    sockets.add(socket)
+    socket.on("error", () => {})
+    socket.once("close", () => sockets.delete(socket))
+    socket.resume()
+  })
+  await new Promise((done, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", done) })
+  try {
+    await work({
+      port: server.address().port,
+      connected: () => waitFor(() => accepted, "SSH process reaches the silent fixture", 10_000),
+      closed: () => waitFor(() => sockets.size === 0, "SSH process releases its socket", 5_000),
+    })
+  } finally {
+    for (const socket of sockets) socket.destroy()
+    await new Promise((done) => server.close(done))
+  }
+}
+
+const connectionRefused = (port) => new Promise((done) => {
+  const socket = createConnection({ host: "127.0.0.1", port })
+  socket.once("connect", () => { socket.destroy(); done(false) })
+  socket.once("error", (error) => done(error.code === "ECONNREFUSED"))
+  socket.setTimeout(1_000, () => { socket.destroy(); done(false) })
+})
+
+async function statIfPresent(path) {
+  try { return await lstat(path) }
+  catch (error) {
+    if (error.code === "ENOENT") return null
+    throw error
+  }
+}
+
+async function waitFor(work, description, timeout = 30_000) {
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    const result = await work()
+    if (result) return result
+    await new Promise((done) => setTimeout(done, 100))
+  }
+  throw new Error(`Timed out: ${description}`)
+}
+
+async function check(name, work) {
+  const started = Date.now()
+  try {
+    await work()
+    report.checks.push({ name, passed: true, ms: Date.now() - started })
+    console.log(`PASS ${name}`)
+  } catch (error) {
+    report.checks.push({ name, passed: false, error: String(error), ms: Date.now() - started })
+    throw error
+  }
+}
+
+// This test driver crosses the real WebView boundary; application code still uses src/lib/ipc.ts.
+const invoke = (command, args = {}) => page.evaluate(({ command, args }) => window.__TAURI_INTERNALS__.invoke(command, args), { command, args })
+const rejected = async (command, args, id) => {
+  const result = await page.evaluate(async ({ command, args }) => {
+    try { await window.__TAURI_INTERNALS__.invoke(command, args); return null }
+    catch (error) { return error }
+  }, { command, args })
+  assert.equal(result?.id, id, `${command} must reject with ${id}`)
+}
+const asset = async (id) => (await invoke("list_assets")).find((item) => item.id === id)
+const event = (name, predicate) => waitFor(async () => {
+  const events = await page.evaluate(() => window.__cloudlinkDesktopEvents)
+  return events.filter((entry) => entry.event === name).map((entry) => entry.payload).findLast(predicate)
+}, name)
+
+function inputOf(saved) {
+  const { source, sshAlias, host, port, user, auth, proxyJump, definedIn } = saved.connection
+  const editable = { ...saved }
+  for (const key of ["agent", "createdAt", "updatedAt", "probe"]) delete editable[key]
+  return {
+    ...editable,
+    connection: source === "imported" ? { source, sshAlias } : {
+      source, sshAlias, host, port, user, proxyJump, definedIn,
+      auth: { method: auth.method, identityFile: auth.identityFile },
+    },
+  }
+}
+
+async function failedConnection(overrides, expected, password) {
+  const { testId } = await invoke("test_connection", { req: {
+    envId: "windows",
+    connection: { ...inputOf(saved).connection, ...overrides },
+    ...(password === undefined ? {} : { password }),
+  } })
+  const result = await event("connection://tested", (entry) => entry.testId === testId)
+  assert.equal(result.status, "failed")
+  assert.equal(result.error?.id, expected)
+}
+
+async function run(executable, args, input, extraEnv = {}) {
+  return new Promise((done, reject) => {
+    const child = spawn(executable, args, { cwd: runRoot, env: { ...childEnvironment(), ...extraEnv }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] })
+    let stdout = ""
+    let stderr = ""
+    const timer = setTimeout(() => { child.kill(); reject(new Error("Test subprocess timed out")) }, 30_000)
+    child.stdout.on("data", (bytes) => { stdout += bytes })
+    child.stderr.on("data", (bytes) => { stderr += bytes })
+    child.once("error", (error) => { clearTimeout(timer); reject(error) })
+    child.once("close", (code) => { clearTimeout(timer); done({ code, stdout, stderr }) })
+    child.stdin.on("error", () => {})
+    child.stdin.end(input)
+  })
+}
+
+async function native(file, args = [], extra = {}) {
+  assert.ok(nativeTools, "Native input tools must be explicitly supplied")
+  assert.ok(["window-tools.ps1", "native-interaction-tools.ps1", "native-input-probe.ps1"].includes(file))
+  const path = join(nativeTools, file)
+  const metadata = await lstat(path)
+  assert.ok(metadata.isFile() && !metadata.isSymbolicLink())
+  const result = await run(join(process.env.SystemRoot || "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe"),
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", path, ...args], "", {
+      CLOUDLINK_P8_PID: String(desktop.pid), CLOUDLINK_P8_EXE: launchPath, CLOUDLINK_P8_EVIDENCE_ROOT: runRoot,
+      PSModuleAnalysisCachePath: "NUL", ...extra,
+    })
+  assert.equal(result.code, 0, result.stderr)
+  return JSON.parse(result.stdout.trim())
+}
+const nativeWindow = (mode, extra) => native("window-tools.ps1", ["-Mode", mode], extra)
+const nativeAction = (action, extra) => native("native-interaction-tools.ps1", ["-Action", action], extra)
+const nativeShot = (name) => nativeWindow("capture", { CLOUDLINK_P8_SHOT: join(runRoot, name) })
+
+function runner(args, timeout = 120_000) {
+  const child = spawn(join(dataRoot, "bin", "cloudlink-guard.exe"), args, { cwd: userRoot, env: childEnvironment(), windowsHide: true, shell: false, stdio: ["ignore", "pipe", "pipe"] })
+  const result = new Promise((done, reject) => {
+    let stdout = "", stderr = ""
+    const timer = setTimeout(() => { child.kill(); reject(new Error("Runner test timed out")) }, timeout)
+    child.stdout.on("data", (bytes) => { stdout += bytes; if (stdout.length > 1024 * 1024) child.kill() })
+    child.stderr.on("data", (bytes) => { stderr += bytes; if (stderr.length > 1024 * 1024) child.kill() })
+    child.once("error", (error) => { clearTimeout(timer); reject(error) })
+    child.once("close", (code) => { clearTimeout(timer); done({ code, stdout, stderr }) })
+  })
+  return { child, result }
+}
+const runnerExec = (command, timeout) => runner(["exec", "--env", "windows", "--asset", saved.id, "--", command], timeout)
+const requests = () => invoke("list_execution_requests")
+const diagnostic = (result) => result.stderr.split(/\r?\n/u).filter((line) => line.startsWith("{")).map((line) => JSON.parse(line))
+async function waitingRequest() {
+  return waitFor(async () => (await requests()).find((request) => request.state === "waiting"), "native pending approval", 15_000)
+}
+
+async function guard(command, expected) {
+  const result = await run(join(dataRoot, "bin", "cloudlink-guard.exe"), ["--env", "windows"], JSON.stringify({
+    tool_name: "Bash", session_id: "desktop-integration", cwd: runRoot, tool_input: { command },
+  }))
+  assert.equal(result.code, 0)
+  if (expected === "denied") assert.equal(JSON.parse(result.stdout).hookSpecificOutput.permissionDecision, "deny")
+  else assert.equal(result.stdout, "")
+  assert.equal(result.stderr, "")
+}
+
+let saved
+let originalConfig
+const originalSettings = '{\n  "theme": "dark",\n  "permissions": { "deny": ["Read(./private)"] }\n}\n'
+const preserved = "Existing user skill fixture — keep these bytes.\n"
+
+function insideUserRoot(path) {
+  const suffix = relative(userRoot, resolve(path))
+  assert.ok(suffix && !suffix.startsWith("..") && !isAbsolute(suffix), "Test writes must stay in the isolated user root")
+}
+
+async function ownedCopy(path, expectedTarget) {
+  insideUserRoot(path)
+  assert.ok(expectedTarget, "Managed copy must match a detected target")
+  assert.equal(resolve(path), resolve(expectedTarget.path, "cloudlink-servers"))
+  await assertTestRoot(path, { inspectContents: true })
+  for (const name of [".cloudlink.json", "SKILL.md"]) {
+    const info = await lstat(join(path, name))
+    assert.ok(info.isFile() && !info.isSymbolicLink(), "Managed copy metadata and content must be regular files")
+  }
+  const marker = JSON.parse(await readFile(join(path, ".cloudlink.json"), "utf8"))
+  assert.equal(marker.managedBy, "cloudlink")
+  assert.equal(marker.envId, expectedTarget.envId)
+  assert.equal(marker.agentKey, expectedTarget.agentKey)
+}
+
+try {
+  await check("isolated test roots and packaged application", async () => {
+    assert.ok((await lstat(appPath)).isFile())
+    report.appSha256 = createHash("sha256").update(await readFile(appPath)).digest("hex")
+    await mkdir(dirname(launchPath))
+    await writeFile(join(dirname(launchPath), ".cloudlink.json"), JSON.stringify({ managedBy: "cloudlink", kind: "desktop-test-binary" }), { flag: "wx" })
+    await copyFile(appPath, launchPath, constants.COPYFILE_EXCL)
+    await copyFile(join(dirname(appPath), "cloudlink-guard.exe"), join(dirname(launchPath), "cloudlink-guard.exe"), constants.COPYFILE_EXCL)
+    for (const directory of [dataRoot, join(userRoot, ".ssh"), join(userRoot, ".claude", "skills", "existing"), join(userRoot, ".agents", "skills", "existing"), join(userRoot, ".codex"), join(runRoot, "tmp"), join(runRoot, "ProgramData"), join(userRoot, "AppData", "Roaming"), join(userRoot, "AppData", "Local")]) {
+      await mkdir(directory, { recursive: true })
+    }
+    await writeFile(join(runRoot, ".cloudlink.json"), JSON.stringify({ managedBy: "cloudlink", kind: "desktop-test" }))
+    await writeFile(join(userRoot, ".claude", "settings.json"), originalSettings)
+    for (const folder of [".claude", ".agents"]) await writeFile(join(userRoot, folder, "skills", "existing", "SKILL.md"), preserved)
+    // OpenSSH's OS profile lookup is independent of HOME on Windows. Pin every fallback explicitly.
+    const knownHosts = join(userRoot, ".ssh", "known_hosts").replaceAll("\\", "/")
+    originalConfig = `# Existing SSH configuration fixture\nHost *\n  UserKnownHostsFile "${knownHosts}"\n  GlobalKnownHostsFile none\n  IdentityAgent none\n  IdentityFile none\n`
+    await writeFile(join(userRoot, ".ssh", "config"), originalConfig)
+    await writeFile(join(userRoot, ".ssh", "known_hosts"), "")
+    target = await startSshTarget({ root: runRoot })
+  })
+
+  await check("built WebView2 starts with native IPC and isolated plugin storage", async () => {
+    const debugPort = await port()
+    desktop = spawn(launchPath, [], { cwd: runRoot, windowsHide: true, env: {
+      ...childEnvironment(),
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort} --remote-debugging-address=127.0.0.1`,
+    }, stdio: ["ignore", "pipe", "pipe"] })
+    desktop.stdout.on("data", () => {})
+    let errors = ""
+    desktop.stderr.on("data", (bytes) => { errors += bytes })
+    desktop.once("error", (error) => { errors += String(error) })
+    await waitFor(async () => {
+      if (desktop.exitCode !== null) throw new Error(`Desktop exited (${desktop.exitCode}): ${errors}`)
+      return fetch(`http://127.0.0.1:${debugPort}/json/version`).then((response) => response.ok).catch(() => false)
+    }, "WebView2 debugging endpoint", 60_000)
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`)
+    page = await waitFor(() => browser.contexts().flatMap((context) => context.pages()).find((item) => item.url().startsWith("http://tauri.localhost")), "application page")
+    page.on("pageerror", (error) => consoleErrors.push(error.message))
+    await expect(page.getByRole("heading", { name: "添加第一台服务器", exact: true })).toBeVisible({ timeout: 30_000 })
+    const settings = await invoke("get_settings")
+    assert.equal(settings.dataDir, dataRoot)
+    assert.equal(settings.logDir, join(dataRoot, "logs"))
+    assert.deepEqual(await invoke("list_assets"), [])
+    assert.deepEqual((await invoke("detect_environments")).map((item) => item.id), ["windows"])
+    assert.equal((await invoke("list_targets")).filter((item) => item.enabled).length, 2)
+    assert.ok((await readdir(join(dataRoot, "desktop"))).length > 0)
+    await page.evaluate(async () => {
+      window.__cloudlinkDesktopEvents = []
+      window.__cloudlinkDesktopFailures = []
+      const nativeInvoke = window.__TAURI_INTERNALS__.invoke
+      window.__TAURI_INTERNALS__.invoke = async (command, args, options) => {
+        try { return await nativeInvoke(command, args, options) }
+        catch (error) {
+          window.__cloudlinkDesktopFailures.push({ command, error })
+          throw error
+        }
+      }
+      for (const name of ["connection://tested", "probe://finished", "compile://finished", "deliveries://changed", "deliveries://backed-up", "guard://changed", "notes://new", "operations://new"]) {
+        const callback = window.__TAURI_INTERNALS__.transformCallback((entry) => window.__cloudlinkDesktopEvents.push(entry))
+        await window.__TAURI_INTERNALS__.invoke("plugin:event|listen", { event: name, target: { kind: "Any" }, handler: callback })
+      }
+    })
+    await page.screenshot({ path: join(runRoot, "01-native-empty.png") })
+  })
+
+  if (nativeTools) await check("P8 actual Windows input reaches owned controls and DWM captures the current window", async () => {
+    const probe = await native("native-input-probe.ps1")
+    report.nativeInputProbe = probe
+    assert.equal(probe.ownedForeground, true, JSON.stringify(probe))
+    assert.equal(probe.keyboardText, "J", JSON.stringify(probe))
+    assert.equal(probe.keyboardDelivered, true, JSON.stringify(probe))
+    assert.equal(probe.mouseMoveDelivered, true, JSON.stringify(probe))
+    assert.equal(probe.mouseClickDelivered, true, JSON.stringify(probe))
+    const visible = await nativeWindow("inspect")
+    assert.equal(visible.visible, true, "Native input needs tauri.native.conf.json and Tauri's normal startup show path")
+    const shown = await nativeWindow("restore")
+    assert.equal(shown.visible, true)
+    report.nativeWindow = await nativeShot("08-native-dwm-empty.png")
+    report.nativeInactive = await nativeWindow("inactive", { CLOUDLINK_P8_SHOT: join(runRoot, "09-native-dwm-inactive.png") })
+    const maximized = await nativeAction("caption-double")
+    assert.equal(maximized.after.maximized, true)
+    assert.equal((await nativeAction("caption-double")).after.maximized, false)
+    const moved = await nativeAction("caption-drag", { CLOUDLINK_P8_DX: "20", CLOUDLINK_P8_DY: "10" })
+    assert.equal(moved.after.outer.x - moved.before.outer.x, 20)
+    assert.equal(moved.after.outer.y - moved.before.outer.y, 10)
+    report.nativeCaptionDrag = moved
+    await nativeWindow("resize", { CLOUDLINK_P8_WIDTH: "760", CLOUDLINK_P8_HEIGHT: "520" })
+    report.nativeMinimum = await nativeShot("10-native-dwm-minimum.png")
+    await nativeWindow("resize", { CLOUDLINK_P8_WIDTH: "1000", CLOUDLINK_P8_HEIGHT: "680" })
+  })
+
+  await check("production CSP blocks external scripts before a request is sent", async () => {
+    let requests = 0
+    const server = httpServer((_request, response) => { requests++; response.end("window.remoteExecuted = true") })
+    await new Promise((done) => server.listen(0, "127.0.0.1", done))
+    try {
+      const src = `http://127.0.0.1:${server.address().port}/forbidden.js`
+      const result = await page.evaluate(async (src) => {
+        const response = await fetch(location.href)
+        const csp = response.headers.get("content-security-policy") ?? document.querySelector('meta[http-equiv="Content-Security-Policy"]')?.content
+        const blocked = await new Promise((done) => {
+          const script = document.createElement("script")
+          script.src = src
+          script.onerror = () => { script.remove(); done(true) }
+          script.onload = () => { script.remove(); done(false) }
+          document.head.append(script)
+        })
+        return { csp, blocked }
+      }, src)
+      assert.ok(result.csp?.includes("script-src"))
+      assert.ok(result.blocked)
+      assert.equal(requests, 0)
+    } finally { await new Promise((done) => server.close(done)) }
+  })
+
+  await check("password onboarding trusts fingerprint, converts key, probes and distributes", async () => {
+    await page.getByRole("button", { name: "添加服务器", exact: true }).click()
+    // The same region changes its title during connection; wait for its removal,
+    // not for the old form title to disappear before key conversion has finished.
+    const form = page.getByRole("region", { name: /^(添加 SSH 服务器|连接 )/ })
+    await form.getByLabel("地址").fill(target.host)
+    await form.getByLabel("端口", { exact: true }).fill(String(target.port))
+    await form.getByLabel("用户").fill(target.user)
+    await expect(form.getByRole("button", { name: "密码", exact: true })).toHaveAttribute("aria-pressed", "true")
+    await form.getByLabel("密码", { exact: true }).fill(target.password)
+    await form.getByLabel(/^名称/).fill("Desktop SSH")
+    await expect(form.getByRole("switch", { name: "生产环境", exact: true })).toBeChecked()
+    await expect(form.getByRole("textbox", { name: /^SSH 别名/ })).toHaveCount(0)
+    await form.getByRole("button", { name: /^高级/ }).click()
+    const alias = form.getByRole("textbox", { name: /^SSH 别名/ })
+    await expect(alias).toHaveValue("cloudlink-1")
+    // 既有 SSH/Guard 夹具继续使用显式的路由标识；新默认别名不再跟随显示名称。
+    await alias.fill("desktop-ssh")
+    await form.getByRole("button", { name: /^高级/ }).click()
+    await form.getByRole("button", { name: /^连接并启用/ }).click()
+    const trust = form.getByTestId("connect-fingerprint")
+    await expect(trust).toBeVisible({ timeout: 30_000 })
+    await expect(trust.getByTestId("connect-fingerprint-value")).toHaveText(target.hostKeyFingerprint)
+    await expect(page.getByRole("alertdialog")).toHaveCount(0)
+    await trust.getByRole("button", { name: "指纹一致，继续", exact: true }).click()
+    const include = form.getByTestId("connect-include")
+    await expect(include).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByRole("alertdialog")).toHaveCount(0)
+    await include.getByRole("button", { name: "加入", exact: true }).click()
+    await expect(form).toHaveCount(0, { timeout: 60_000 })
+    saved = (await invoke("list_assets"))[0]
+    assert.equal(saved.connection.sshAlias, "desktop-ssh")
+    assert.equal(saved.connection.auth.method, "key")
+    assert.equal(saved.connection.auth.passwordSaved, false)
+    assert.equal(saved.connection.verified.ok, true)
+    assert.equal(saved.production, true)
+    assert.equal(saved.agent.mode, "read-only")
+    assert.deepEqual([...saved.agent.agents].sort(), ["claude-code", "universal"])
+    const probed = await event("probe://finished", (entry) => entry.assetId === saved.id)
+    assert.equal(probed.status, "ok", JSON.stringify(probed.error))
+    saved = await asset(saved.id)
+    assert.match(saved.facts.os, /Alpine/)
+    const compilation = await invoke("get_compile_status")
+    assert.ok(compilation.every((item) => !item.blocked), JSON.stringify(compilation))
+    const deliveries = await invoke("list_deliveries")
+    assert.equal(deliveries.length, 2)
+    assert.ok(deliveries.every((item) => item.status === "ok"), JSON.stringify(deliveries))
+    for (const folder of [".claude", ".agents"]) {
+      const content = await readFile(join(userRoot, folder, "skills", "cloudlink-servers", "SKILL.md"), "utf8")
+      assert.ok(content.includes("desktop-ssh"))
+      assert.ok(!content.includes(target.password))
+      assert.ok(!content.includes(target.host))
+    }
+    assert.equal(await readFile(join(userRoot, ".ssh", "config.cloudlink-bak"), "utf8"), originalConfig)
+    const includePath = join(userRoot, ".ssh", "cloudlink.conf").replaceAll("\\", "/")
+    assert.ok((await readFile(join(userRoot, ".ssh", "config"), "utf8")).startsWith(`Include "${includePath}"`))
+    await page.screenshot({ path: join(runRoot, "02-native-server.png") })
+  })
+
+  await check("P8 native detail edits and title rename preserve connection, trust and facts", async () => {
+    await page.getByRole("button", { name: /^desktop-ssh，/ }).click({ position: { x: 6, y: 6 } })
+    const before = await asset(saved.id)
+    await page.getByRole("button", { name: "更多操作", exact: true }).click()
+    await page.getByRole("menuitem", { name: "编辑资料", exact: true }).click()
+    const editor = page.getByRole("dialog", { name: "编辑资料", exact: true })
+    await expect(editor.getByRole("button", { name: "保存修改", exact: true })).toBeDisabled()
+    await editor.locator("#editor-summary").fill("Native P8 metadata edit")
+    await expect(page.locator("h2#detail-title")).toHaveText("Desktop SSH")
+    await editor.getByRole("button", { name: "保存修改", exact: true }).click()
+    await expect(editor).toHaveCount(0)
+    const updated = await asset(saved.id)
+    assert.equal(updated.summary, "Native P8 metadata edit")
+    assert.deepEqual(updated.connection, before.connection)
+    assert.deepEqual(updated.facts, before.facts)
+    await page.getByRole("button", { name: "重命名 Desktop SSH", exact: true }).click()
+    const title = page.getByRole("textbox", { name: "资源名称", exact: true })
+    await title.fill("Desktop SSH renamed")
+    await page.keyboard.press("Enter")
+    await expect(title).toHaveCount(0)
+    saved = await asset(saved.id)
+    assert.equal(saved.name, "Desktop SSH renamed")
+    assert.deepEqual(saved.connection, before.connection)
+    await page.screenshot({ path: join(runRoot, "04-native-p8-detail.png"), animations: "disabled" })
+    await page.getByRole("button", { name: "资源", exact: true }).click()
+  })
+
+  if (nativeTools) await check("P8 native IME composition does not submit a rename until a separate Enter", async () => {
+    await page.getByRole("button", { name: /^desktop-ssh，/ }).click({ position: { x: 6, y: 6 } })
+    const before = await asset(saved.id)
+    const rename = page.getByRole("button", { name: `重命名 ${before.name}`, exact: true })
+    const point = await rename.boundingBox()
+    assert.ok(point)
+    await nativeAction("click", { CLOUDLINK_P8_X: String(point.x + point.width / 2), CLOUDLINK_P8_Y: String(point.y + point.height / 2) })
+    const title = page.getByRole("textbox", { name: "资源名称", exact: true })
+    await expect(title).toBeFocused()
+    await title.evaluate((input) => {
+      window.__cloudlinkNativeComposition = []
+      for (const type of ["compositionstart", "compositionupdate", "compositionend"]) input.addEventListener(type, (event) => window.__cloudlinkNativeComposition.push({ type, trusted: event.isTrusted }))
+    })
+    await nativeAction("keys", { CLOUDLINK_P8_KEYS: "ctrl+a" })
+    const setup = await nativeAction("ime-setup")
+    report.nativeImeSetup = setup
+    try {
+      await nativeAction("keys", { CLOUDLINK_P8_KEYS: "fuwuqi" })
+      await waitFor(() => page.evaluate(() => window.__cloudlinkNativeComposition.some((event) => event.type === "compositionstart" && event.trusted)), "trusted native IME composition")
+      assert.equal((await asset(saved.id)).name, before.name)
+      report.nativeImeComposing = await nativeAction("ime-capture", { CLOUDLINK_P8_SHOT: join(runRoot, "13-native-ime-composing.png") })
+      await nativeAction("keys", { CLOUDLINK_P8_KEYS: "enter" })
+      await expect(title).toHaveCount(1)
+      assert.equal((await asset(saved.id)).name, before.name, "IME Enter must not save the resource")
+      // Windows Chinese IME Enter commits the raw spelling; Space selects the
+      // highlighted Chinese candidate. Verify both without assuming Enter selects it.
+      await nativeAction("keys", { CLOUDLINK_P8_KEYS: "ctrl+a" })
+      await nativeAction("keys", { CLOUDLINK_P8_KEYS: "fuwuqi" })
+      await nativeAction("keys", { CLOUDLINK_P8_KEYS: "space" })
+      await expect(title).toHaveValue(/\p{Script=Han}/u)
+      assert.equal((await asset(saved.id)).name, before.name, "IME candidate commit must not save the resource")
+      const finalName = await title.inputValue()
+      await nativeAction("keys", { CLOUDLINK_P8_KEYS: "enter" })
+      await expect(title).toHaveCount(0)
+      saved = await asset(saved.id)
+      assert.equal(saved.name, finalName)
+      assert.deepEqual(saved.connection, before.connection)
+      report.nativeImeEvents = await page.evaluate(() => window.__cloudlinkNativeComposition)
+      // This WebView2 reports end events as untrusted even though native start/update
+      // and actual candidate text are delivered. Grade the observed commit boundary,
+      // not an end-event flag absent from the product's acceptance requirements.
+      assert.ok(report.nativeImeEvents.some((event) => event.type === "compositionend"))
+      report.nativeImeCompleted = await nativeShot("14-native-ime-renamed.png")
+    } finally {
+      await nativeAction("ime-restore", { CLOUDLINK_P8_OLD_LAYOUT: String(setup.old.layout), CLOUDLINK_P8_OLD_OPEN: String(setup.old.open), CLOUDLINK_P8_OLD_CONVERSION: String(setup.old.conversion) })
+    }
+    await page.getByRole("button", { name: "资源", exact: true }).click()
+  })
+
+  await check("P8 native blank name uses stable neutral identity and actually delivers", async () => {
+    await page.keyboard.press("Control+n")
+    await page.getByRole("button", { name: /^SSH 服务器/ }).click()
+    const form = page.getByRole("region", { name: /^(添加 SSH 服务器|连接 )/ })
+    await expect(form.getByLabel(/^名称/)).toHaveValue("")
+    await expect(form.getByLabel(/^名称/)).toHaveAttribute("placeholder", "留空将使用“服务器 1”")
+    await form.getByLabel("地址").fill(target.host)
+    await form.getByLabel("端口", { exact: true }).fill(String(target.port))
+    await form.getByLabel("用户").fill(target.user)
+    await form.getByLabel("密码", { exact: true }).fill(target.password)
+    await form.getByRole("button", { name: /^连接并启用/ }).click()
+    await expect(page.getByRole("region", { name: "连接 服务器 1", exact: true })).toBeVisible()
+    const trust = form.getByTestId("connect-fingerprint")
+    await expect(trust).toBeVisible({ timeout: 30_000 })
+    await expect(trust.getByTestId("connect-fingerprint-value")).toHaveText(target.hostKeyFingerprint)
+    await trust.getByRole("button", { name: "指纹一致，继续", exact: true }).click()
+    await expect(form).toHaveCount(0, { timeout: 60_000 })
+    const created = (await invoke("list_assets")).find((item) => item.name === "服务器 1")
+    assert.equal(created?.connection.sshAlias, "cloudlink-1")
+    assert.equal(created.connection.auth.method, "key")
+    const inclusion = (await invoke("list_inclusions")).filter((item) => item.assetId === created.id)
+    assert.equal(inclusion.length, 2)
+    assert.ok(inclusion.every((item) => item.included))
+    assert.ok((await invoke("get_compile_status")).every((item) => !item.blocked))
+    assert.ok((await invoke("list_deliveries")).every((item) => item.status === "ok"))
+    for (const folder of [".claude", ".agents"]) {
+      const content = await readFile(join(userRoot, folder, "skills", "cloudlink-servers", "SKILL.md"), "utf8")
+      assert.ok(content.includes("cloudlink-1"))
+      assert.ok(!content.includes(target.host))
+      assert.ok(!content.includes(target.password))
+    }
+    await page.screenshot({ path: join(runRoot, "05-native-p8-blank-name.png"), animations: "disabled" })
+    // 从真实 UI 清理新资源，保留这次 WebView 会话里的事件观察器供后续 SSH 回归使用。
+    await page.getByRole("button", { name: /^cloudlink-1，/ }).click({ position: { x: 6, y: 6 } })
+    await page.getByRole("button", { name: "更多操作", exact: true }).click()
+    await page.getByRole("menuitem", { name: "删除服务器", exact: true }).click()
+    const deletion = page.getByRole("alertdialog")
+    await deletion.getByRole("button", { name: "删除服务器", exact: true }).click()
+    await expect(deletion).toHaveCount(0)
+    await expect(page.getByRole("button", { name: /^desktop-ssh，/ })).toBeVisible()
+  })
+
+  await check("Windows OpenSSH and Git OpenSSH use the generated key", async () => {
+    const nativeConfig = join(userRoot, ".ssh", "config")
+    const nativeInclude = join(userRoot, ".ssh", "cloudlink.conf").replaceAll("\\", "/")
+    // MSYS treats D:/... in Include as relative. Use its absolute path spelling for
+    // this isolated entry point, while both clients read the same managed Host/key.
+    // Production uses the shared ~/.ssh/cloudlink.conf Include, not this override.
+    const msysInclude = nativeInclude.replace(/^([A-Za-z]):\//, (_match, drive) => `/${drive.toLowerCase()}/`)
+    const gitConfig = join(runRoot, "git-ssh.config")
+    const nativeText = await readFile(nativeConfig, "utf8")
+    assert.ok(nativeText.startsWith(`Include "${nativeInclude}"`))
+    await assertTestRoot(gitConfig)
+    await writeFile(gitConfig, nativeText.replace(`Include "${nativeInclude}"`, `Include "${msysInclude}"`), { flag: "wx" })
+    report.sshClients = []
+    for (const [executable, config] of [
+      ["C:/Windows/System32/OpenSSH/ssh.exe", nativeConfig],
+      ["D:/Git/usr/bin/ssh.exe", gitConfig],
+    ]) {
+      const result = await run(executable, ["-F", config, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "--", "desktop-ssh", "true"])
+      assert.equal(result.code, 0, `${executable}: ${result.stderr}`)
+      report.sshClients.push({ executable, config })
+    }
+  })
+
+  await check("native SSH classifies rejected credentials and refused ports without changing saved verification", async () => {
+    const before = (await asset(saved.id)).connection
+    await failedConnection({ auth: { method: "password", identityFile: {} } }, "password-rejected", "incorrect-fixture-password")
+    const wrongKey = join(runRoot, "unauthorized_ed25519")
+    const generated = await run("C:/Windows/System32/OpenSSH/ssh-keygen.exe", ["-q", "-t", "ed25519", "-N", "", "-C", "cloudlink-negative-fixture", "-f", wrongKey])
+    assert.equal(generated.code, 0, generated.stderr)
+    await failedConnection({ auth: { method: "key", identityFile: { windows: wrongKey } } }, "auth-failed")
+    await failedConnection({ auth: { method: "key", identityFile: { windows: join(runRoot, "missing-key") } } }, "key-not-found")
+    await failedConnection({ port: await port() }, "connection-refused")
+    assert.deepEqual((await asset(saved.id)).connection, before)
+  })
+
+  await check("native SSH handshake timeout and cancellation release their sockets", async () => {
+    await silentSsh(async (fixture) => {
+      await failedConnection({ port: fixture.port }, "timeout")
+      await fixture.closed()
+    })
+    await silentSsh(async (fixture) => {
+      const { testId } = await invoke("test_connection", { req: {
+        envId: "windows", connection: { ...inputOf(saved).connection, port: fixture.port },
+      } })
+      await fixture.connected()
+      await invoke("cancel_connection_test", { testId })
+      const result = await event("connection://tested", (entry) => entry.testId === testId)
+      assert.equal(result.status, "cancelled")
+      assert.equal(result.error, undefined)
+      assert.equal(result.hostKey, undefined)
+      await fixture.closed()
+    })
+    assert.equal((await asset(saved.id)).connection.verified.ok, true)
+  })
+
+  await check("real IPC validation rejects malformed requests and unverified authorization", async () => {
+    await rejected("set_mode", { assetId: "missing", mode: "read-only" }, "not-found")
+    await rejected("update_settings", { patch: { dataDir: join(runRoot, "elsewhere") } }, "settings-invalid")
+    const input = inputOf(saved)
+    delete input.id
+    input.name = "Unverified fixture"
+    input.connection.sshAlias = "unverified-fixture"
+    const result = await invoke("save_asset", { input })
+    await rejected("set_distribute", { assetId: result.asset.id, agentKey: "claude-code", on: true }, "cannot-distribute")
+    await invoke("delete_asset", { id: result.asset.id, opts: { removeGeneratedKey: false } })
+  })
+
+  await check("packaged guard installs, enforces modes and imports operation records", async () => {
+    const status = await invoke("install_guard", { envId: "windows" })
+    assert.equal(status.state, "active")
+    assert.equal(await readFile(join(userRoot, ".claude", "settings.json.cloudlink-bak"), "utf8"), originalSettings)
+    await guard("ssh desktop-ssh 'uptime'", "denied")
+    await guard("ssh desktop-ssh 'docker restart api'", "denied")
+    await guard("ssh desktop-ssh 'cat /opt/app/.env'", "denied")
+    await invoke("set_mode", { assetId: saved.id, mode: "standard" })
+    await guard("ssh desktop-ssh 'docker restart api'", "denied")
+    await guard("ssh desktop-ssh 'docker compose down -v'", "denied")
+    saved = await asset(saved.id)
+    const input = inputOf(saved)
+    input.services.push({ kind: "docker", name: "nginx", ports: [], critical: true, source: "manual", missing: false })
+    await invoke("save_asset", { input })
+    await guard("ssh desktop-ssh 'docker stop nginx'", "denied")
+    await invoke("set_mode", { assetId: saved.id, mode: "read-only" })
+    await guard("ssh desktop-ssh 'docker restart api'", "denied")
+    const operations = await invoke("list_operations", { q: { assetId: saved.id, limit: 50 } })
+    assert.equal(operations.length, 7)
+    assert.equal(operations.filter((item) => item.decision === "denied").length, 7)
+    const path = join(dataRoot, "bin", "cloudlink-guard.exe").replaceAll("\\", "/")
+    await guard(`'${path}' exec --env windows --asset ${saved.id} -- 'uptime'`, "allowed")
+  })
+
+  const scratch = `/home/cloudlink/p8-${createHash("sha256").update(runRoot).digest("hex").slice(0, 16)}`
+  const scratchMarker = JSON.stringify({ managedBy: "cloudlink", kind: "p8-runner", root: scratch })
+  await check("P8 runner checks native queries and refuses readonly writes", async () => {
+    assert.equal((await invoke("get_runtime_status")).state, "active")
+    const query = await runnerExec("uname -s").result
+    assert.equal(query.code, 0, query.stderr)
+    assert.match(query.stdout, /Linux/)
+    const denied = await runnerExec(`touch '${scratch}-denied'`).result
+    assert.equal(denied.code, 125)
+    assert.ok(diagnostic(denied).some((entry) => entry.checked === true && entry.state === "denied"))
+    await target.ssh(`test ! -e '${scratch}' && mkdir '${scratch}' && printf '%s' '${scratchMarker}' > '${scratch}/.cloudlink.json' && mkdir '${scratch}/remove'`)
+  })
+
+  await check("P8 native approval waits beyond 90 seconds, then one original wait starts once", async () => {
+    await invoke("set_mode", { assetId: saved.id, mode: "standard" })
+    await target.ssh(`test ! -L '${scratch}' && test "$(cat '${scratch}/.cloudlink.json')" = '${scratchMarker}'`)
+    const command = `rm -rf -- '${scratch}/remove/../remove'; printf 'x\\n' >> '${scratch}/counter'`
+    const started = Date.now()
+    const pending = runnerExec(command, 140_000)
+    const request = await waitingRequest()
+    assert.equal(request.approvalRequired, true)
+    const waiting = await pending.result
+    assert.equal(waiting.code, 75)
+    assert.ok(Date.now() - started >= 89_000)
+    const ticket = diagnostic(waiting).find((entry) => entry.state === "waiting").requestId
+    assert.ok(ticket.startsWith(`${request.requestId}.`)) // Keep ownerToken in memory, never in the report or GUI.
+    await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^动态/ }).click()
+    const card = page.locator(`#execution-${request.requestId}`)
+    await expect(card.locator("code")).toHaveText(command)
+    await expect(card.getByRole("button", { name: "允许一次", exact: true })).toBeVisible()
+    await page.screenshot({ path: join(runRoot, "06-native-approval-waiting.png"), animations: "disabled" })
+    if (nativeTools) {
+      report.nativeWaiting = await nativeShot("11-native-dwm-approval-waiting.png")
+      const button = await card.getByRole("button", { name: "允许一次", exact: true }).boundingBox()
+      assert.ok(button)
+      report.nativeApprovalInput = await nativeAction("click", { CLOUDLINK_P8_X: String(button.x + button.width / 2), CLOUDLINK_P8_Y: String(button.y + button.height / 2) })
+    } else await card.getByRole("button", { name: "允许一次", exact: true }).click()
+    await expect(card.getByRole("status")).toHaveText("已允许，等 Agent 继续")
+    const wrong = await runner(["wait", "--env", "wsl:Ubuntu-24.04", ticket]).result
+    assert.equal(wrong.code, 125)
+    assert.equal((await requests()).find((entry) => entry.requestId === request.requestId).state, "approved")
+    const completed = await runner(["wait", "--env", "windows", ticket]).result
+    assert.equal(completed.code, 0, completed.stderr)
+    await waitFor(async () => (await requests()).find((entry) => entry.requestId === request.requestId)?.state === "succeeded", "runner completion")
+    await expect(card.getByRole("status")).toHaveText("执行成功")
+    assert.equal((await target.ssh(`cat '${scratch}/counter'`)).stdout, "x\n")
+    const duplicate = await runner(["wait", "--env", "windows", ticket]).result
+    assert.equal(duplicate.code, 125)
+    assert.equal((await target.ssh(`cat '${scratch}/counter'`)).stdout, "x\n")
+    await page.screenshot({ path: join(runRoot, "07-native-approval-succeeded.png"), animations: "disabled" })
+    if (nativeTools) report.nativeSucceeded = await nativeShot("12-native-dwm-approval-succeeded.png")
+    report.approvalRequestId = request.requestId
+    report.approvalWaitMs = Date.now() - started
+  })
+
+  await check("P8 policy narrowing cancels native pending input without starting it", async () => {
+    const pending = runnerExec(`rm -rf -- '${scratch}/remove/../remove'; printf 'y\\n' >> '${scratch}/counter'`)
+    const request = await waitingRequest()
+    await invoke("set_mode", { assetId: saved.id, mode: "read-only" })
+    const result = await pending.result
+    assert.equal(result.code, 125)
+    assert.equal((await requests()).find((entry) => entry.requestId === request.requestId).state, "cancelled")
+    assert.equal((await target.ssh(`cat '${scratch}/counter'`)).stdout, "x\n")
+  })
+
+  await check("P8 native SFTP copies one file to new paths and refuses overwrite", async () => {
+    await invoke("set_mode", { assetId: saved.id, mode: "standard" })
+    const directory = join(userRoot, "transfer [paths]")
+    await mkdir(directory)
+    await writeFile(join(directory, ".cloudlink.json"), JSON.stringify({ managedBy: "cloudlink", kind: "p8-transfer-test" }), { flag: "wx" })
+    const input = join(directory, "transfer [input].txt")
+    const bytes = Buffer.from("CloudLink SFTP fixture — no credentials\n", "utf8")
+    await writeFile(input, bytes, { flag: "wx" })
+    const names = ["transfer [remote].txt", "transfer *?.txt", 'transfer "quoted".txt', `transfer 'single' "double".txt`]
+    for (const [index, name] of names.entries()) {
+      const remote = `${scratch}/${name}`
+      const output = join(directory, `transfer [output-${index}].txt`)
+      const put = await runner(["put", "--env", "windows", "--asset", saved.id, "--", input, remote]).result
+      assert.equal(put.code, 0, put.stderr)
+      const get = await runner(["get", "--env", "windows", "--asset", saved.id, "--", remote, output]).result
+      assert.equal(get.code, 0, get.stderr)
+      assert.deepEqual(await readFile(output), bytes)
+      const repeatedGet = await runner(["get", "--env", "windows", "--asset", saved.id, "--", remote, output]).result
+      assert.equal(repeatedGet.code, 125)
+      assert.deepEqual(await readFile(output), bytes)
+      const repeatedPut = await runner(["put", "--env", "windows", "--asset", saved.id, "--", input, remote]).result
+      assert.equal(repeatedPut.code, 125)
+      assert.ok(diagnostic(repeatedPut).some((entry) => entry.reasonId === "execution-destination-exists"))
+    }
+    const unsupported = `${scratch}/transfer {a,b}.txt`
+    const denied = await runner(["put", "--env", "windows", "--asset", saved.id, "--", input, unsupported]).result
+    assert.equal(denied.code, 125)
+    assert.ok(diagnostic(denied).some((entry) => entry.reasonId === "execution-path-invalid"))
+    await target.exec(["test", "!", "-e", unsupported])
+  })
+
+  await check("P8 occupied sidecar is retired atomically and cleaned only after release", async () => {
+    const executable = join(dataRoot, "bin", "cloudlink-guard.exe")
+    const source = join(dirname(launchPath), "cloudlink-guard.exe")
+    await assertTestRoot(dirname(source), { inspectContents: true })
+    assert.equal(JSON.parse(await readFile(join(dirname(source), ".cloudlink.json"), "utf8")).kind, "desktop-test-binary")
+    const before = await readFile(source)
+    const occupied = spawn(executable, ["--env", "windows"], { cwd: runRoot, env: childEnvironment(), windowsHide: true, stdio: ["pipe", "pipe", "pipe"] })
+    occupied.stdout.on("data", () => {}); occupied.stderr.on("data", () => {})
+    const closed = new Promise((done, reject) => { occupied.once("close", done); occupied.once("error", reject) })
+    await new Promise((done, reject) => { occupied.once("spawn", done); occupied.once("error", reject) })
+    try {
+      await writeFile(source, Buffer.concat([before, Buffer.from("\nCloudLink-P8-owned-test-overlay\n")]))
+      assert.equal((await invoke("install_guard", { envId: "windows" })).state, "active")
+      const receipt = JSON.parse(await readFile(join(dataRoot, "bin", ".cloudlink.json"), "utf8"))
+      assert.ok(Object.keys(receipt.retiredFiles ?? {}).length > 0)
+      assert.deepEqual(await readFile(executable), await readFile(source))
+    } finally { occupied.stdin.end() }
+    await closed
+    assert.equal((await invoke("install_guard", { envId: "windows" })).state, "active")
+    const receipt = JSON.parse(await readFile(join(dataRoot, "bin", ".cloudlink.json"), "utf8"))
+    assert.deepEqual(receipt.retiredFiles ?? {}, {})
+    await invoke("set_mode", { assetId: saved.id, mode: "read-only" })
+  })
+
+  if (nativeTools) await check("P8 native caption close keeps tray runtime active and checked requests working", async () => {
+    await invoke("update_settings", { patch: { closeToTray: true } })
+    const hidden = await nativeAction("caption-close")
+    report.nativeCaptionClose = hidden
+    assert.equal(hidden.after.visible, false)
+    assert.equal((await invoke("get_runtime_status")).state, "active")
+    const tray = await nativeAction("tray-state")
+    assert.equal(tray.tray.result, 0)
+    const query = await runnerExec("uname -s").result
+    assert.equal(query.code, 0, query.stderr)
+    assert.ok(diagnostic(query).some((entry) => entry.checked === true && entry.state === "succeeded"))
+    report.nativeTray = { hidden, tray }
+    assert.equal((await nativeWindow("restore")).visible, true)
+  })
+
+  await check("notes require review and clean edited text before entering the skill", async () => {
+    const inbox = join(dataRoot, "inbox", "desktop-ssh.md")
+    const day = new Date().toISOString().slice(0, 10)
+    await writeFile(inbox, `- ${day}: Deploy from /opt/apps/api using compose.\n- ${day}: password=fixture-password-only\n`)
+    const notes = await invoke("list_notes", { assetId: saved.id })
+    assert.equal(notes.length, 2)
+    const sensitive = notes.find((item) => item.flags.includes("secret"))
+    const clean = notes.find((item) => !item.flags.includes("secret"))
+    assert.ok(sensitive)
+    await rejected("merge_notes", { items: [{ id: sensitive.id }] }, "note-has-secret")
+    await invoke("merge_notes", { items: [{ id: clean.id }, { id: sensitive.id, text: "Keep deployment credentials in the local vault." }] })
+    assert.equal((await invoke("list_notes", { assetId: saved.id })).length, 0)
+    saved = await asset(saved.id)
+    assert.ok(saved.notes.includes("Deploy from /opt/apps/api"))
+    assert.ok(!saved.notes.includes("fixture-password-only"))
+  })
+
+  await check("blocked compilation cannot restore revoked copies; automatic repair backs up edits and undo pauses synchronization", async () => {
+    saved = await asset(saved.id)
+    const input = inputOf(saved)
+    input.summary = "password=fixture-compile-block"
+    assert.ok((await invoke("save_asset", { input })).statuses.some((item) => item.blocked))
+    await invoke("set_distribute", { assetId: saved.id, agentKey: "claude-code", on: false })
+    assert.equal(await statIfPresent(join(userRoot, ".claude", "skills", "cloudlink-servers")), null)
+    saved = await asset(saved.id)
+    const fixed = inputOf(saved)
+    fixed.summary = "Local SSH integration fixture"
+    await invoke("save_asset", { input: fixed })
+    await invoke("set_distribute", { assetId: saved.id, agentKey: "claude-code", on: true })
+    let deliveries = await invoke("list_deliveries")
+    const targets = await invoke("list_targets")
+    const claude = deliveries.find((item) => item.path.includes(".claude"))
+    const universal = deliveries.find((item) => item.path.includes(".agents"))
+    await ownedCopy(claude.path, targets.find((item) => item.id === claude.targetId))
+    const original = await readFile(join(claude.path, "SKILL.md"), "utf8")
+    await writeFile(join(claude.path, "SKILL.md"), `${original}\nExternal fixture edit\n`)
+    await ownedCopy(universal.path, targets.find((item) => item.id === universal.targetId))
+    const moved = join(dirname(universal.path), "moved-test-copy")
+    insideUserRoot(moved)
+    await assertTestRoot(moved)
+    const existing = await lstat(moved).catch((error) => { if (error.code !== "ENOENT") throw error })
+    assert.equal(existing, undefined, "Test move destination must not already exist")
+    await rename(universal.path, moved)
+    deliveries = await invoke("check_deliveries")
+    assert.equal(deliveries.find((item) => item.id === claude.id).status, "ok")
+    assert.equal(deliveries.find((item) => item.id === universal.id).status, "ok")
+    assert.equal(await readFile(join(claude.path, "SKILL.md"), "utf8"), original)
+    assert.equal(await readFile(join(universal.path, "SKILL.md"), "utf8"), await readFile(join(moved, "SKILL.md"), "utf8"))
+    const backup = await event("deliveries://backed-up", (entry) => entry.targetId === claude.targetId && entry.reason === "modified")
+    assert.match(backup.backupId, /^[A-Za-z0-9-]{1,64}$/u)
+    const backupEntry = join(dataRoot, "backups", backup.backupId, claude.targetId)
+    await assertTestRoot(backupEntry, { inspectContents: true })
+    const backupMarker = JSON.parse(await readFile(join(backupEntry, ".cloudlink-backup.json"), "utf8"))
+    assert.equal(backupMarker.managedBy, "cloudlink")
+    assert.equal(backupMarker.targetId, claude.targetId)
+    assert.equal(backupMarker.backupId, backup.backupId)
+    const edited = `${original}\nExternal fixture edit\n`
+    assert.equal(await readFile(join(backupEntry, "cloudlink-servers", "SKILL.md"), "utf8"), edited)
+    const paused = await invoke("undo_backup", { backupId: backup.backupId })
+    assert.equal(paused.id, claude.targetId)
+    assert.equal(paused.enabled, false)
+    assert.equal(await readFile(join(claude.path, "SKILL.md"), "utf8"), edited)
+    await invoke("check_deliveries")
+    assert.equal(await readFile(join(claude.path, "SKILL.md"), "utf8"), edited)
+    assert.ok((await invoke("list_deliveries")).every((item) => item.targetId !== claude.targetId))
+    await invoke("set_target_enabled", { id: claude.targetId, enabled: true })
+    assert.equal(await readFile(join(claude.path, "SKILL.md"), "utf8"), original)
+    for (const folder of [".claude", ".agents"]) assert.equal(await readFile(join(userRoot, folder, "skills", "existing", "SKILL.md"), "utf8"), preserved)
+  })
+
+  await check("failed live probe retains the last successful facts and invalidates verification", async () => {
+    const before = await asset(saved.id)
+    await target.stop()
+    await waitFor(() => connectionRefused(target.port), "stopped SSH target refuses connections", 15_000)
+    const { runId } = await invoke("start_probe", { assetId: saved.id })
+    const result = await event("probe://finished", (entry) => entry.runId === runId)
+    assert.equal(result.status, "failed")
+    assert.equal(result.error?.id, "connection-refused")
+    assert.equal(result.applied, undefined)
+    assert.equal(result.held, undefined)
+    const after = await asset(saved.id)
+    assert.equal(after.probe.status, "failed")
+    assert.equal(after.probe.lastRunId, runId)
+    assert.equal(after.connection.verified.ok, false)
+    for (const field of ["facts", "services", "listeningPorts"]) assert.deepEqual(after[field], before[field])
+    assert.equal(after.probe.lastSuccessAt, before.probe.lastSuccessAt)
+  })
+
+  await check("reset removes managed resources and preserves user configuration", async () => {
+    await invoke("remove_guard", { envId: "windows" })
+    assert.equal(await readFile(join(userRoot, ".claude", "settings.json"), "utf8"), originalSettings)
+    assert.equal((await invoke("install_guard", { envId: "windows" })).state, "active")
+    const managedFiles = [
+      join(userRoot, ".ssh", "cloudlink.conf"),
+      join(dataRoot, "bin", "cloudlink-guard.exe"),
+      join(dataRoot, "guard", "policy.json"),
+    ]
+    for (const path of managedFiles) assert.ok((await lstat(path)).isFile(), path)
+    const keyPath = (await asset(saved.id)).connection.auth.identityFile.windows
+    insideUserRoot(keyPath)
+    const keyHash = createHash("sha256").update(await readFile(keyPath)).digest("hex")
+    await invoke("reset_data")
+    for (const path of managedFiles) assert.equal(await statIfPresent(path), null, path)
+    assert.equal(await readFile(join(userRoot, ".claude", "settings.json"), "utf8"), originalSettings)
+    assert.equal(createHash("sha256").update(await readFile(keyPath)).digest("hex"), keyHash)
+    assert.deepEqual(await invoke("list_assets"), [])
+    assert.deepEqual(await invoke("list_operations", { q: { limit: 50 } }), [])
+    assert.deepEqual(await invoke("list_notes"), [])
+    for (const folder of [".claude", ".agents"]) {
+      assert.equal(await readFile(join(userRoot, folder, "skills", "existing", "SKILL.md"), "utf8"), preserved)
+      assert.equal(await statIfPresent(join(userRoot, folder, "skills", "cloudlink-servers")), null)
+    }
+    assert.ok((await readFile(join(userRoot, ".ssh", "config"), "utf8")).endsWith(originalConfig))
+    await page.reload()
+    await expect(page.getByRole("heading", { name: "添加第一台服务器", exact: true })).toBeVisible({ timeout: 30_000 })
+    await page.screenshot({ path: join(runRoot, "03-native-reset.png") })
+    assert.deepEqual(consoleErrors, [])
+  })
+} catch (error) {
+  report.error = String(error)
+  report.errorStack = error instanceof Error ? error.stack : undefined
+  if (page) {
+    report.ipcFailures = await page.evaluate(() => window.__cloudlinkDesktopFailures).catch(() => [])
+    report.connectionAndProbeEvents = await page.evaluate(() => window.__cloudlinkDesktopEvents?.filter((entry) => ["connection://tested", "probe://finished"].includes(entry.event))).catch(() => [])
+    report.compilation = await invoke("get_compile_status").catch(() => [])
+    await page.screenshot({ path: join(runRoot, "failure.png") }).catch(() => {})
+  }
+  process.exitCode = 1
+} finally {
+  if (browser) await browser.close().catch(() => {})
+  if (desktop?.pid && desktop.exitCode === null) await run("taskkill.exe", ["/PID", String(desktop.pid), "/T", "/F"]).catch(() => {})
+  if (target) await target.dispose().catch((error) => { report.cleanupError = String(error); process.exitCode = 1 })
+  await writeFile(join(runRoot, "report.json"), `${JSON.stringify(report, null, 2)}\n`)
+  console.log(`Desktop report: ${join(runRoot, "report.json")}`)
+  if (report.error) console.error(report.error)
+}

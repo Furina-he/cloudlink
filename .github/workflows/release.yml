@@ -18,7 +18,7 @@ concurrency:
 defaults:
   run:
     shell: bash
-    working-directory: cloudlink
+    working-directory: .
 
 jobs:
   check:
@@ -45,7 +45,7 @@ jobs:
               echo "::error::标签 $GITHUB_REF_NAME 和 tauri.conf.json 的版本 $VERSION 对不上"
               exit 1
             fi
-            if [ ! -s "../docs/releases/v$VERSION.md" ]; then
+            if [ ! -s "docs/releases/v$VERSION.md" ]; then
               echo "::error::缺少更新说明 docs/releases/v$VERSION.md"
               exit 1
             fi
@@ -70,7 +70,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          NOTES="../docs/releases/v$VERSION.md"
+          NOTES="docs/releases/v$VERSION.md"
           if [ -s "$NOTES" ]; then
             node scripts/release-manifest.mjs --notes-file "$NOTES"
           else
@@ -80,9 +80,9 @@ jobs:
         with:
           name: cloudlink-${{ steps.version.outputs.version }}
           path: |
-            cloudlink/src-tauri/target/release/bundle/nsis/CloudLink_${{ steps.version.outputs.version }}_x64-setup.exe
-            cloudlink/src-tauri/target/release/bundle/nsis/CloudLink_${{ steps.version.outputs.version }}_x64-setup.exe.sig
-            cloudlink/src-tauri/target/release/bundle/nsis/latest.json
+            src-tauri/target/release/bundle/nsis/CloudLink_${{ steps.version.outputs.version }}_x64-setup.exe
+            src-tauri/target/release/bundle/nsis/CloudLink_${{ steps.version.outputs.version }}_x64-setup.exe.sig
+            src-tauri/target/release/bundle/nsis/latest.json
           if-no-files-found: error
           retention-days: 7
 

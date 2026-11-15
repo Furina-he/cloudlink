@@ -2,31 +2,43 @@
 node_modules/
 
 # Build outputs
-dist/
-target/
-cloudlink/src-tauri/binaries/
+/dist/
+/dist-ssr/
+/src-tauri/target/
+/src-tauri/binaries/
+*.tsbuildinfo
 
-# Environment files (keep .env.mock, which only contains VITE_MOCK=1)
-.env.local
-.env.*.local
+# Local environment (mock mode and example templates are public)
+.env
+.env.*
+!.env.mock
+!.env.example
+*.local
 
-# Test & tooling output
-test-results/
-playwright-report/
-.playwright-mcp/
-coverage/
+# Test and tooling output
+/test-results/
+/playwright-report/
+/.playwright-mcp/
+/coverage/
+logs/
 *.log
 
-# Updater signing private keys (tauri signer generate) never enter the repository
+# Updater signing private keys must never enter the repository
 *.key
 
-# Local agent / editor settings
-.claude/settings.local.json
-.impeccable/config.local.json
+# Locally installed development skills and private tool settings
+/.claude/skills/
+/.claude/settings.local.json
+/.impeccable/
+
+# Editor and OS files
 .vscode/*
 !.vscode/extensions.json
 .idea/
-
-# OS
 .DS_Store
 Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
