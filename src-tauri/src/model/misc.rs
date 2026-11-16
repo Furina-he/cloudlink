@@ -171,7 +171,7 @@ impl Settings {
             environments: Vec::new(),
             body_line_limit: 100,
             write_snapshot_time: true,
-            default_mode: Mode::Standard,
+            default_mode: Mode::ConfirmChanges,
             probe_timeout_sec: 30,
             windows_ssh_path: DEFAULT_WINDOWS_SSH.to_string(),
             data_dir,
@@ -221,6 +221,7 @@ pub enum DistributeBlockReason {
     Failed,
     PasswordOnly,
     CliNotReady,
+    GithubScopeUnverified,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

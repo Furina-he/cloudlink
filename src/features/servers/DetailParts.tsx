@@ -1,7 +1,6 @@
 // 全宽资源详情的公共部分：资料以查看为主，权限仍独立即时控制（P8 D6）。
 import { ChevronLeftIcon, ChevronRightIcon, InfoIcon } from "lucide-react"
 import { useEffect, type ReactNode, type RefObject } from "react"
-import { Controller, useFormContext } from "react-hook-form"
 import { useShallow } from "zustand/react/shallow"
 import type { Asset, Operation } from "@/bindings"
 import { ListGroup, ListNote, PrefRow } from "@/components/app/SettingsList"
@@ -13,7 +12,6 @@ import { Switch } from "@/components/ui/switch"
 import { Trace } from "@/components/ui/trace"
 import { useAgentOptions } from "@/features/agents/agentKeys"
 import { copy } from "@/lib/copy"
-import type { ProfileFormValues } from "@/lib/schemas"
 import { countDeliveredForAsset, useDeliveryStore } from "@/stores/deliveries"
 import { useNotesStore } from "@/stores/notes"
 import { useOperationStore } from "@/stores/operations"
@@ -21,6 +19,7 @@ import { useTargetStore } from "@/stores/targets"
 import { useSkillStore } from "@/stores/skills"
 import { useUIStore } from "@/stores/ui"
 import { AgentPicker } from "./AgentPicker"
+import { serverActions } from "./actions"
 import { ModeToggle } from "./ModeSwitch"
 import { OperationLine } from "./sections/OperationsSection"
 
@@ -66,16 +65,27 @@ function useSyncedCount(asset: Asset): number {
 }
 
 export function PermissionGroup({ asset, problems }: { asset: Asset; problems?: ReactNode }) {
-  const { control } = useFormContext<ProfileFormValues>()
   const { known, agents } = useAgentOptions()
   const synced = useSyncedCount(asset)
+  const targets = useTargetStore((state) => state.targets)
+  const deliveries = useDeliveryStore((state) => state.byId)
+  const sharedProblems = new Map<string, string>()
+  for (const delivery of Object.values(deliveries)) {
+    if (delivery.statusDetail?.id !== "shared-selection-mismatch" || delivery.assetIds?.includes(asset.id)) continue
+    const target = targets.find((item) => item.id === delivery.targetId && item.enabled && asset.agent.agents.includes(item.agentKey))
+    if (!target) continue
+    const names = targets.filter((item) => item.enabled && item.envId === target.envId && delivery.sharedAgentKeys?.includes(item.agentKey)).map((item) => item.agent === "custom" ? item.label : copy.agent[item.agent]).join("、")
+    sharedProblems.set(`${delivery.envId}|${delivery.unitId ?? delivery.targetId}`, copy.deliveryFeedback.envReason(copy.env.long(delivery.envId), copy.detail.rows.sharedUnavailableHint(names)))
+  }
+  const selected = agents.some((agent) => asset.agent.agents.includes(agent.key))
   return (
     <ListGroup id="detail-permission" title={copy.detail.groups.permission}>
-      <Controller name="production" control={control} render={({ field }) => <PrefRow label={copy.detail.rows.production} labelFor="asset-production" hint={copy.detail.rows.productionHint}><Switch id="asset-production" checked={field.value} onCheckedChange={field.onChange} /></PrefRow>} />
+      <PrefRow label={copy.detail.rows.production} labelFor="asset-production" hint={copy.detail.rows.productionHint}><Switch id="asset-production" checked={asset.production} onCheckedChange={(on) => serverActions.requestProduction(asset, on)} /></PrefRow>
       <PrefRow label={copy.detail.rows.mode} labelId="detail-mode-label" hint={copy.row.modeShort[asset.agent.mode]}><ModeToggle asset={asset} labelledBy="detail-mode-label" /></PrefRow>
-      <PrefRow label={copy.detail.rows.agents} labelId="detail-agents-label" hint={copy.detail.rows.agentsSynced(synced)}>
+      <PrefRow label={copy.detail.rows.agents} labelId="detail-agents-label" hint={selected && synced === 0 ? copy.detail.rows.selectedNotSynced : copy.detail.rows.agentsSynced(synced)}>
         {agents.length > 0 ? <AgentPicker asset={asset} agents={agents} compact labelledBy="detail-agents-label" /> : known ? <Button variant="link" size="xs" className="h-auto p-0" onClick={() => useUIStore.getState().setView("agents")}>{copy.agentSection.goAgents}</Button> : null}
       </PrefRow>
+      {[...sharedProblems].map(([key, reason]) => <ProblemRow key={key} title={copy.detail.rows.sharedUnavailable} reason={reason} />)}
       {problems}
     </ListGroup>
   )

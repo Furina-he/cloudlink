@@ -154,11 +154,12 @@ impl Backend {
         let installation = runtime::installation_id(&self.paths.data_dir)?;
         let directory = self.paths.data_dir.join("routes");
         let mut receipt = ensure_directory(&self.paths)?;
-        let roots = vec![
-            self.paths.data_dir.clone(),
-            self.paths.user_home.clone(),
-            self.paths.wsl_root.clone(),
-        ];
+        let mut roots = vec![self.paths.data_dir.clone(), self.paths.user_home.clone()];
+        if self.paths.isolated {
+            // Only the override is a directory. The real WSL root is a bare UNC server prefix,
+            // not an absolute filesystem path; it is never an isolation boundary for native runs.
+            roots.push(self.paths.wsl_root.clone());
+        }
         let policies = crate::guard::project_runtime_policy(&self.paths, assets);
         let by_id: BTreeMap<_, _> = policies["resources"]
             .as_array()
@@ -440,5 +441,107 @@ impl Backend {
         }
         save_marker(&directory, &json!({"managedBy":"cloudlink","kind":KIND,"files":{}}))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::cli;
+    use crate::env::{FakeSystem, WslInfo};
+    use crate::secret::store::MemoryCredentialStore;
+
+    struct NoEvents;
+
+    impl super::super::EventSink for NoEvents {
+        fn emit(&self, _event: &str, _payload: Value) {}
+    }
+
+    fn project(paths: &Paths) -> Arc<Backend> {
+        // Even the production-shaped path fixture injects every external service and never starts detection.
+        let backend = Backend::assemble(
+            paths.clone(),
+            Arc::new(FakeSystem::default()),
+            Arc::new(MemoryCredentialStore::default()),
+            cli::Service::new(Arc::new(cli::EmptyRunner)),
+            Arc::new(NoEvents),
+            Arc::new(super::super::feedback::NoProcessSelfTest),
+            None,
+        )
+        .unwrap();
+        let envs = vec![
+            EnvContext::windows(paths),
+            EnvContext::wsl(
+                paths,
+                "Fixture-Distro",
+                WslInfo {
+                    home: "/home/fixture".into(),
+                    interop: true,
+                    ..Default::default()
+                },
+            ),
+        ];
+        crate::guard::write_policy(paths, &[]).unwrap();
+        backend.project_execution_routes_locked(&[], &envs, &[], &[]).unwrap();
+        backend
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_windows_manifest_does_not_treat_the_wsl_server_prefix_as_a_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut paths = Paths::isolated_in(temp.path());
+        paths.isolated = false;
+        paths.wsl_root = PathBuf::from(r"\\wsl.localhost");
+        assert!(!paths.wsl_root.is_absolute());
+        let _backend = project(&paths);
+        let mut manifest = guard_rules::routes::load(&paths.data_dir).unwrap();
+        assert_eq!(
+            manifest["allowedRoots"],
+            json!([
+                crate::fsx::ssh_path(&paths.data_dir.to_string_lossy()),
+                crate::fsx::ssh_path(&paths.user_home.to_string_lossy()),
+            ])
+        );
+        // The fix is in generation: the unchanged reader must still reject a malformed UNC root.
+        manifest["allowedRoots"]
+            .as_array_mut()
+            .unwrap()
+            .push("//wsl.localhost".into());
+        let directory = paths.data_dir.join("routes");
+        assert_eq!(marker(&directory).unwrap()["manifestOwned"], true);
+        runtime::write_atomic(
+            &directory.join("manifest.json"),
+            &serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            guard_rules::routes::load(&paths.data_dir).unwrap_err().to_string(),
+            "execution-route-invalid"
+        );
+    }
+
+    #[test]
+    fn isolated_manifest_keeps_all_override_roots_and_rejects_escape_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = Paths::isolated_in(temp.path());
+        let _backend = project(&paths);
+        let manifest = guard_rules::routes::load(&paths.data_dir).unwrap();
+        for root in [&paths.data_dir, &paths.user_home, &paths.wsl_root] {
+            assert!(guard_rules::routes::path_allowed(
+                &manifest,
+                &root.join("fixture/new-file")
+            ));
+        }
+        assert!(!guard_rules::routes::path_allowed(
+            &manifest,
+            &temp.path().join("outside")
+        ));
+        assert!(!guard_rules::routes::path_allowed(
+            &manifest,
+            &paths.wsl_root.join("..").join("outside")
+        ));
     }
 }

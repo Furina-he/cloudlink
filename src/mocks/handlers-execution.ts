@@ -11,9 +11,9 @@ function record(request: ExecutionRequest, emitEvent = true) {
   if (!db.assets.some((asset) => asset.id === request.assetId)) return
   const operation: Operation = {
     id: `exec_${request.requestId}`, assetId: request.assetId, envId: request.envId,
-    at: request.createdAt, sessionId: "", cwd: request.cwd, command: request.command,
+    at: request.createdAt, sessionId: request.sessionId ?? "", caller: request.caller, cwd: request.cwd, command: request.command,
     decision: ["waiting", "approved", "dispatching", "running", "succeeded", "failed", "unknown"].includes(request.state) ? "allowed" : "denied",
-    source: "runner", checked: true, executionState: request.state, requestId: request.requestId,
+    source: "runner", checked: request.checked, executionState: request.state, requestId: request.requestId,
     epoch: request.epoch, exitCode: request.exitCode, durationMs: request.durationMs,
   }
   const index = db.operations.findIndex((op) => op.id === operation.id)
@@ -57,6 +57,8 @@ if (scenario === "approval" || requestedState && fixtureStates.has(requestedStat
     const request: ExecutionRequest = {
       requestId: `req_mock_${index}`, epoch: db.runtime.epoch, revision: ++db.runtime.revision,
       policyRevision: 1, assetId: "ast_sg_db", envId: "windows", kind: "exec", source: "unidentified",
+      caller: index === 0 ? { agent: "codex", provenance: "self-reported" } : index === 1 ? { agent: "claude-code", provenance: "self-reported" } : undefined,
+      sessionId: index === 0 ? "codex-mock-thread" : undefined,
       command: ["docker compose down -v", "kubectl apply -f /opt/apps/api/deployment.yaml", "sh -c 'cd /opt/apps/api && ./deploy.sh --production'"][index],
       cwd: "D:/fixture/workspace", state, checked: true, approvalRequired: true,
       createdAt: now(), expiresAt: new Date(Date.now() + (state === "expired" ? -1 : 300_000)).toISOString(),

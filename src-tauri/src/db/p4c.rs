@@ -97,6 +97,8 @@ impl Db {
             after.at = old.at;
             after.command = old.command;
             after.cwd = old.cwd;
+            after.caller = old.caller;
+            after.session_id = old.session_id;
             if before == super::to_json(&after)? {
                 return Ok(false);
             }
@@ -348,6 +350,7 @@ mod tests {
             decision: OperationDecision::Allowed,
             reason_id: None,
             source: None,
+            caller: None,
             checked: None,
             execution_state: None,
             request_id: None,

@@ -86,7 +86,7 @@ export interface Settings {
   /** 正文行数上限，默认 100（5.4） */
   bodyLineLimit: number
   writeSnapshotTime: boolean
-  /** 新建非生产服务器的默认档位；生产服务器固定为只读巡检（F-202 AC2） */
+  /** 兼容设置字段；新资源始终从确认变更开始，不因此提升到自动运维。 */
   defaultMode: Mode
   probeTimeoutSec: number
   /** 默认是系统 OpenSSH 的绝对路径（PRD 8.3） */
@@ -147,8 +147,7 @@ export interface DeleteResult {
 }
 
 /** 分发开关打不开的原因（F-303 AC1） */
-export type DistributeBlockReason =
-  "unverified" | "failed" | "password-only" | "cli-not-ready"
+export type { DistributeBlockReason } from "./generated/misc"
 
 export type IpcErrorId =
   | "not-found"

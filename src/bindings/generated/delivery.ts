@@ -21,7 +21,7 @@ export type BackupEvent = { backupId: string, targetId: string, reason: BackupRe
  */
 export type BackupReason = "modified" | "takeover";
 
-export type Delivery = { id: string, targetId: string, envId: EnvId, path: string, status: DeliveryStatus, statusDetail?: Detail<string>, checkedAt: string, unitId?: string, sharedAgentKeys?: Array<string>, };
+export type Delivery = { id: string, targetId: string, envId: EnvId, path: string, status: DeliveryStatus, statusDetail?: Detail<string>, checkedAt: string, unitId?: string, sharedAgentKeys?: Array<string>, assetIds?: Array<string>, };
 
 export type DeliveryStatus = "ok" | "pending" | "missing" | "modified" | "outdated" | "conflict" | "broken" | "shared";
 
@@ -32,6 +32,6 @@ export type DetectedAgent = { brand: AgentBrand, reads: Array<AgentId>, };
 
 export type Inclusion = { assetId: string, envId: EnvId, agentKey: string, included: boolean, reason?: Detail<InclusionReasonId>, };
 
-export type InclusionReasonId = "agent-off" | "unverified" | "env-unavailable" | "password-only" | "not-defined" | "not-written" | "include-missing" | "no-key-in-env" | "cli-not-installed" | "cli-not-logged-in";
+export type InclusionReasonId = "agent-off" | "unverified" | "env-unavailable" | "password-only" | "not-defined" | "not-written" | "include-missing" | "no-key-in-env" | "cli-not-installed" | "cli-not-logged-in" | "github-scope-unverified";
 
 export type Target = { id: string, envId: EnvId, agent: AgentId, agentKey: string, label: string, path: string, enabled: boolean, detected: boolean, };

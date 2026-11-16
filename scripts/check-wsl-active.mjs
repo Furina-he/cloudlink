@@ -149,20 +149,26 @@ try {
     await writeFile(configPath, nativeConfig, { flag: "wx" })
     await bindNativeRoute()
   })
-  await check("real WSL queries pass and readonly writes are denied before SSH", async () => {
+  await check("real WSL queries pass and writes wait for confirmation before SSH", async () => {
     const query = await exec("uname -s | head -n 1").result
     assert.equal(query.code, 0, query.stderr); assert.equal(query.stdout.trim(), "Linux")
     assert.ok(diagnostics(query).some((row) => row.checked === true && row.state === "succeeded"))
     const remote = `/home/cloudlink/p8-wsl-denied-${token}`
-    const denied = await exec(`touch '${remote}'`).result
+    const command = `touch '${remote}'`
+    const pending = exec(command)
+    const request = await waitFor(async () => (await requests()).find((row) => row.command === command && row.state === "waiting"), "WSL write confirmation")
+    assert.equal(request.approvalRequired, true)
+    await target.exec(["test", "!", "-e", remote])
+    await invoke("respond_execution", { req: { requestId: request.requestId, expectedRevision: request.revision, decision: "deny" } })
+    const denied = await pending.result
     assert.equal(denied.code, 125); await target.exec(["test", "!", "-e", remote])
-    assert.ok(diagnostics(denied).some((row) => row.state === "denied"))
+    assert.ok(diagnostics(denied).some((row) => row.checked === true && row.state === "rejected"))
   })
   const scratch = `/home/cloudlink/p8-wsl-active-${token}`
   await target.exec(["mkdir", "--", scratch])
   await target.ssh(`printf '%s' '{"managedBy":"cloudlink","kind":"p8-wsl-active"}' > '${scratch}/.cloudlink.json'; mkdir '${scratch}/never'`)
   await check("WSL waits beyond 90 seconds then original GUI approval starts one execution and imports its real audit", async () => {
-    await invoke("set_mode", { assetId: saved.id, mode: "standard" }); await bindNativeRoute()
+    await invoke("set_mode", { assetId: saved.id, mode: "auto-ops" }); await bindNativeRoute()
     const command = `rm -rf -- '${scratch}/never/../never'; printf 'x\\n' >> '${scratch}/counter'`
     const pending = exec(command)
     const request = await waitFor(async () => (await requests()).find((row) => row.command === command && row.state === "waiting"), "original WSL approval")
@@ -191,7 +197,7 @@ try {
     const command = `rm -rf -- '${scratch}/never/../never'; touch '${scratch}/must-not-run'`
     const pending = exec(command)
     const request = await waitFor(async () => (await requests()).find((row) => row.command === command && row.state === "waiting"), "WSL narrowing approval")
-    await invoke("set_mode", { assetId: saved.id, mode: "read-only" })
+    await invoke("set_mode", { assetId: saved.id, mode: "confirm-changes" })
     const cancelled = await pending.result
     assert.equal(cancelled.code, 125, cancelled.stderr)
     assert.equal((await requests()).find((row) => row.requestId === request.requestId).state, "cancelled")

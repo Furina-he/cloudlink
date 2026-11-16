@@ -135,7 +135,7 @@ const SCREENS: { name: string; query?: string; open: (page: Page) => Promise<voi
     open: async (page) => {
       await page.keyboard.press("Control+2")
       await page.getByRole("button", { name: /^护栏规则/ }).click()
-      await expect(page.getByRole("heading", { name: "标准运维的高风险操作" })).toBeVisible()
+      await expect(page.getByRole("heading", { name: "两档都需确认的高风险操作" })).toBeVisible()
     },
   },
   {
@@ -143,7 +143,7 @@ const SCREENS: { name: string; query?: string; open: (page: Page) => Promise<voi
     open: async (page) => {
       await page.keyboard.press("Control+2")
       await page.getByRole("button", { name: /^护栏规则/ }).click()
-      await page.getByRole("button", { name: /^只放行查看类命令/ }).click()
+      await page.getByRole("button", { name: /^已识别、非敏感的查看类命令/ }).click()
       await expect(page.getByRole("list", { name: "云平台", exact: true })).toBeVisible()
       await page.waitForTimeout(500)
     },

@@ -80,16 +80,16 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     await expect(alert).toBeHidden()
   })
 
-  test("首屏：两组两行资源行；生产标准运维琥珀色；异常就地给出修复按钮；正常即隐身", async ({ page }) => {
+  test("首屏：两组两行资源行；生产自动运维琥珀色；异常就地给出修复按钮；正常即隐身", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
     await expect(page.locator("#detail-title")).toHaveCount(0)
     await expect(page.getByRole("heading", { level: 2, name: /^服务器/ })).toBeVisible()
     await expect(page.getByRole("heading", { level: 2, name: /^云平台/ })).toBeVisible()
     await expect(page.getByText("权限档位")).toHaveCount(0)
-    // sg-db 是生产服务器，开着标准运维：档位文字带提醒文案（状态不只靠颜色）
-    await expect(page.getByRole("button", { name: /^sg-db 的档位：标准运维.*生产环境已开启写权限/ })).toHaveClass(/text-warning/)
-    await expect(page.getByRole("button", { name: /^hk-edge 的档位：只读巡检$/ })).toBeVisible()
+    // sg-db 是生产服务器，开着自动运维：档位文字带提醒文案（状态不只靠颜色）
+    await expect(page.getByRole("button", { name: /^sg-db 的档位：自动运维.*生产环境已启用自动运维/ })).toHaveClass(/text-warning/)
+    await expect(page.getByRole("button", { name: /^hk-edge 的档位：确认变更$/ })).toBeVisible()
     // dev-box 只用密码；vercel 在 WSL 未登录
     const list = page.locator("#server-list")
     await expect(list.getByRole("button", { name: "改用密钥登录" })).toBeVisible()
@@ -99,7 +99,7 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     await expect(list.getByText(/me@example.com|2 个域名/)).toHaveCount(0)
     await expect(list.getByText("生产", { exact: true })).toHaveCount(4)
     // 正常连接不写「已连接 · Ubuntu …」，云平台不写「vercel Vercel · vercel」
-    await expect(list.getByText(/已连接|Ubuntu|已就绪|生产环境已开启写权限/)).toHaveCount(0)
+    await expect(list.getByText(/已连接|Ubuntu|已就绪|生产环境已启用自动运维/)).toHaveCount(0)
     await expect(list.getByText("wrangler")).toHaveCount(0)
     await shot(page, "state-05-panel")
     expect(errors).toEqual([])
@@ -131,7 +131,7 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     const panel = inspector(page)
     await expect(panel.getByText("WSL Ubuntu-24.04 里的 Claude Code 还用不了这台服务器")).toBeVisible()
     await expect(panel.getByRole("button", { name: "配置私钥" })).toBeVisible()
-    await expect(panel.getByText("这里的红线写给 Agent 看。CloudLink 运行中，生产资源经执行入口按档位检查；Claude Code 护栏也会引导可识别直连。能防手滑，不是安全沙箱。")).toBeVisible()
+    await expect(panel.getByText("这里的红线写给 Agent 看。CloudLink 运行中，所有资源经执行入口按模式检查；Claude Code 护栏也会引导可识别直连。能防手滑，不是安全沙箱。")).toBeVisible()
     await shot(page, "state-06-detail-hk-edge")
     await expect(panel.getByRole("button", { name: /条 Agent 笔记等你确认/ })).toBeVisible()
     await expect(panel.getByRole("list", { name: "最近的操作记录" })).toBeVisible()
@@ -200,26 +200,26 @@ test.describe("资源视图：PRD 6.10 状态", () => {
 })
 
 test.describe("资源行右侧的档位与 Agent（PRD 6.4）", () => {
-  test("档位菜单：生产资源切到标准运维在菜单底部确认，变成琥珀色，提示条可撤销；切回只读不确认", async ({ page }) => {
+  test("档位菜单：生产资源切到自动运维在菜单底部确认，变成琥珀色，提示条可撤销；切回只读不确认", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
-    await page.getByRole("button", { name: /^hk-edge 的档位：只读巡检/ }).click()
+    await page.getByRole("button", { name: /^hk-edge 的档位：确认变更/ }).click()
     const menu = page.getByRole("menu")
-    await menu.getByRole("menuitemradio", { name: /^标准运维/ }).click()
+    await menu.getByRole("menuitemradio", { name: /^自动运维/ }).click()
     await expect(menu.getByRole("alert")).toHaveText(/hk-edge 是生产环境/)
     await shot(page, "mode-01-confirm")
     await menu.getByRole("button", { name: "切换" }).click()
-    const amber = page.getByRole("button", { name: /^hk-edge 的档位：标准运维.*生产环境已开启写权限/ })
+    const amber = page.getByRole("button", { name: /^hk-edge 的档位：自动运维.*生产环境已启用自动运维/ })
     await expect(amber).toHaveClass(/text-warning/)
     await expect(page.locator("#detail-title")).toHaveCount(0)
     await shot(page, "mode-02-amber")
-    // 提示条「撤销」回到只读巡检
+    // 提示条「撤销」回到确认变更
     await page.locator("[data-slot=toast]").getByRole("button", { name: "撤销" }).click()
-    await expect(page.getByRole("button", { name: /^hk-edge 的档位：只读巡检/ })).toBeVisible()
-    // 非生产资源切到标准运维不用确认
-    await page.getByRole("button", { name: /^dev-box 的档位：标准运维/ }).click()
-    await page.getByRole("menu").getByRole("menuitemradio", { name: /^只读巡检/ }).click()
-    await expect(page.getByRole("button", { name: /^dev-box 的档位：只读巡检/ })).toBeVisible()
+    await expect(page.getByRole("button", { name: /^hk-edge 的档位：确认变更/ })).toBeVisible()
+    // 非生产资源切到自动运维不用确认
+    await page.getByRole("button", { name: /^dev-box 的档位：自动运维/ }).click()
+    await page.getByRole("menu").getByRole("menuitemradio", { name: /^确认变更/ }).click()
+    await expect(page.getByRole("button", { name: /^dev-box 的档位：确认变更/ })).toBeVisible()
     expect(errors).toEqual([])
   })
 
@@ -259,7 +259,7 @@ test.describe("添加 SSH 服务器：连接并启用（PRD 6.5、F-106、F-108�
     await form.getByRole("button", { name: /^高级/ }).click()
     await expect(form.getByRole("textbox", { name: /^SSH 别名/ })).toHaveValue("cloudlink-1")
     await setSshAlias(form, "edge-copy")
-    await expect(sshForm(page).getByText("添加后先是只读巡检，并同步给全部 Agent")).toBeVisible()
+    await expect(sshForm(page).getByText("添加后先是确认变更，并同步给全部 Agent")).toBeVisible()
     // 表单里不选 Agent、不选档位
     await expect(sshForm(page).getByText(/授权给|默认档位/)).toHaveCount(0)
     await shot(page, "ssh-01-form")
@@ -643,10 +643,10 @@ test.describe("纯键盘流程", () => {
     await ready(page)
     await openServer(page, "dev-box")
     await page.keyboard.press("Control+k")
-    await page.keyboard.type("切换为「只读巡检」")
+    await page.keyboard.type("切换为「确认变更」")
     await page.keyboard.press("Enter")
-    await expect(toastText(page, "dev-box 已切换为「只读巡检」")).toBeVisible()
+    await expect(toastText(page, "dev-box 已切换为「确认变更」")).toBeVisible()
     await back(page)
-    await expect(page.getByRole("button", { name: /^dev-box 的档位：只读巡检/ })).toBeVisible()
+    await expect(page.getByRole("button", { name: /^dev-box 的档位：确认变更/ })).toBeVisible()
   })
 })

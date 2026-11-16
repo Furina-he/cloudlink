@@ -467,12 +467,9 @@ impl Service {
                     result.config.owner = Some(owner.clone());
                 }
             }
-            state.authenticated = snapshot.identity.is_some()
-                && (owner_login.is_none()
-                    || snapshot.status == GithubSnapshotStatus::Complete && snapshot.owner.is_some());
-            state.account = owner_login
-                .map(String::from)
-                .or_else(|| snapshot.identity.as_ref().map(|identity| identity.login.clone()));
+            // Login validity and owner-scope completeness are independent facts.
+            state.authenticated = snapshot.identity.is_some();
+            state.account = snapshot.identity.as_ref().map(|identity| identity.login.clone());
             state.accounts = Some(owners.iter().map(|owner| owner.login.clone()).collect());
             for owner in owners {
                 if !result.owners.iter().any(|known| known.id == owner.id) {

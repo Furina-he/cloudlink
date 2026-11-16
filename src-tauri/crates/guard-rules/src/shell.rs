@@ -62,6 +62,43 @@ fn substitution(chars: &[char], start: usize, backtick: bool) -> Option<(usize, 
     None
 }
 
+/// A routine rule must explicitly know every option. Unknown switches are not
+/// guessed to be harmless; return the literal operands only after validating them.
+pub(crate) fn checked_arguments<'a>(args: &'a [String], flags: &[&str], options: &[&str]) -> Option<Vec<&'a str>> {
+    let mut operands = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let word = args[index].as_str();
+        if word == "--" {
+            operands.extend(args[index + 1..].iter().map(String::as_str));
+            break;
+        }
+        if flags.contains(&word) {
+            index += 1;
+            continue;
+        }
+        if options.contains(&word) {
+            index += 1;
+            let value = args.get(index)?;
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+        } else if let Some((name, value)) = word.split_once('=')
+            && options.contains(&name)
+        {
+            if value.is_empty() {
+                return None;
+            }
+        } else if word.starts_with('-') {
+            return None;
+        } else {
+            operands.push(word);
+        }
+        index += 1;
+    }
+    Some(operands)
+}
+
 pub(crate) fn parse(input: &str) -> Parsed {
     let mut result = Parsed::default();
     if input.len() > 65_536 || input.contains('\0') {

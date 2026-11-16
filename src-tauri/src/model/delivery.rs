@@ -141,6 +141,7 @@ pub enum InclusionReasonId {
     NoKeyInEnv,
     CliNotInstalled,
     CliNotLoggedIn,
+    GithubScopeUnverified,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -193,6 +194,10 @@ pub struct Delivery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub shared_agent_keys: Option<Vec<String>>,
+    // Resources in the current successful physical copy, distinct from user choices/readiness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub asset_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

@@ -103,6 +103,19 @@ const MIGRATIONS: &[&str] = &[
     "#,
     // v6: F-110 owner/identity separation; legacy selections remain manual and pending.
     github::MIGRATION,
+    // v7: both legacy modes require confirmation. Historical probe rollback must not restore them.
+    r#"
+    UPDATE assets SET json = json_set(json, '$.agent.mode', 'confirm-changes')
+    WHERE json_extract(json, '$.agent.mode') IN ('read-only', 'standard');
+    UPDATE settings SET json = json_set(json, '$.defaultMode', 'confirm-changes')
+    WHERE key = 'settings' AND json_extract(json, '$.defaultMode') IN ('read-only', 'standard');
+    UPDATE probe_snapshots SET json = json_set(json, '$.agent.mode', 'confirm-changes')
+    WHERE json_extract(json, '$.agent.mode') IN ('read-only', 'standard');
+    UPDATE probe_results SET after_json = json_set(after_json, '$.agent.mode', 'confirm-changes')
+    WHERE json_extract(after_json, '$.agent.mode') IN ('read-only', 'standard');
+    UPDATE probe_results SET merged_json = json_set(merged_json, '$.asset.agent.mode', 'confirm-changes')
+    WHERE json_extract(merged_json, '$.asset.agent.mode') IN ('read-only', 'standard');
+    "#,
 ];
 
 pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;

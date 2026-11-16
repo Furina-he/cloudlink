@@ -2,7 +2,7 @@
 import { emit } from "@tauri-apps/api/event"
 
 import type {
-  TrayCopy, ActivityItem, AgentId, Asset, AssetInput, CliAsset, CompileStatus, EnvId, ExecutionRequest, RuntimeStatus, Inclusion, IpcError, SaveResult, ServerAsset, Target } from "@/bindings"
+  TrayCopy, ActivityItem, AgentId, Asset, AssetInput, CliAsset, CompileStatus, Delivery, EnvId, ExecutionRequest, RuntimeStatus, Inclusion, IpcError, SaveResult, ServerAsset, Target } from "@/bindings"
 import { cliEnvStatus, handleOf } from "@/stores/assets"
 import * as fx from "./fixtures"
 import { compileSkill, toStatus } from "./lint"
@@ -127,7 +127,7 @@ export function logActivity(item: Omit<ActivityItem, "id" | "at">) {
 }
 
 /** 同一个 Agent 在各运行环境的目录共用一个 AgentKey：内置取 AgentId，自定义目录取 `custom:<名称>` */
-export const agentKeyOf = (agent: AgentId, label: string) => (agent === "custom" ? `custom:${label.trim().toLowerCase()}` : agent)
+export const agentKeyOf = (agent: AgentId, label: string) => (agent === "custom" ? `custom:${label.trim()}` : agent)
 
 const AGENT_ORDER: Record<AgentId, number> = { "claude-code": 0, universal: 1, trae: 2, "trae-cn": 3, kiro: 4, continue: 5, custom: 6 }
 
@@ -142,21 +142,6 @@ function deliveryGroups(): Target[][] {
     groups.set(key, [...(groups.get(key) ?? []), t])
   }
   return [...groups.values()]
-}
-
-export function sharedAgentKeys(key: string): string[] {
-  const keys = new Set([key])
-  const groups = deliveryGroups()
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const group of groups) {
-      if (!group.some((t) => keys.has(t.agentKey))) continue
-      db.sharedMismatches.delete(physicalUnit(group[0]))
-      for (const t of group) if (!keys.has(t.agentKey)) { keys.add(t.agentKey); changed = true }
-    }
-  }
-  return [...keys]
 }
 
 /** 编译单元：已启用目标里不同的「运行环境 × Agent」，每个编译一份总 Skill */
@@ -186,7 +171,12 @@ export function inclusionFor(a: Asset, envId: EnvId, agentKey: string): Inclusio
     const state = a.cli.envStates[envId]
     const status = state ? cliEnvStatus(state) : "not-installed"
     if (status === "not-installed") return out("cli-not-installed")
-    return status === "ready" ? { ...base, included: true } : out("cli-not-logged-in")
+    if (status !== "ready") return out("cli-not-logged-in")
+    if (a.cliProvider === "github") {
+      const snapshot = a.github?.envStates[envId]
+      if (!a.github?.owner || a.github.migrationPending || snapshot?.status !== "complete" || !snapshot.identity || snapshot.owner?.id !== a.github.owner.id) return out("github-scope-unverified")
+    }
+    return { ...base, included: true }
   }
   const c = a.connection
   if (c.source === "imported") return c.definedIn.includes(envId) ? { ...base, included: true } : out("not-defined")
@@ -216,32 +206,23 @@ export function emitDeliveries() {
  */
 export function recompile(opts: { silent?: boolean } = {}): CompileStatus[] {
   const groups = deliveryGroups()
-  // 首次发现不同选择只收窄，跨环境共用的 AgentKey 链也要收敛到相同选择。
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const group of groups) {
-      const keys = [...new Set(group.map((t) => t.agentKey))]
-      if (keys.length < 2) continue
-      for (const a of db.assets) {
-        const selected = keys.filter((key) => a.agent.agents.includes(key))
-        if (selected.length && selected.length !== keys.length) {
-          db.sharedMismatches.add(physicalUnit(group[0]))
-          a.agent.agents = a.agent.agents.filter((key) => !keys.includes(key))
-          changed = true
-        }
-      }
-    }
+  db.sharedMismatches.clear()
+  for (const group of groups) {
+    const keys = [...new Set(group.map((target) => target.agentKey))]
+    if (keys.length > 1 && db.assets.some((asset) => {
+      const chosen = keys.filter((key) => asset.agent.agents.includes(key)).length
+      return chosen > 0 && chosen < keys.length
+    })) db.sharedMismatches.add(physicalUnit(group[0]))
   }
   const units = compileUnits()
   db.inclusions = db.assets.flatMap((a) => units.map((u) => inclusionFor(a, u.envId, u.agentKey)))
   const previous = db.compile
   db.compile = {}
-  const statuses = units.map((u) => {
+  const statuses = groups.flatMap((members) => {
+    const u = { envId: members[0].envId, agentKey: members[0].agentKey, targets: members }
     const key = `${u.envId}|${u.agentKey}`
-    const list = includedIn(u.envId, u.agentKey)
+    const list = includedIn(u.envId, u.agentKey).filter((asset) => members.every((member) => inclusionFor(asset, member.envId, member.agentKey).included))
     const status = toStatus(compileSkill(u.envId, u.agentKey, list, db.skillConfig, db.settings), previous[key])
-    db.compile[key] = status
     if (!status.blocked) {
       for (const t of u.targets) {
         const d = db.deliveries.find((x) => x.targetId === t.id)
@@ -255,7 +236,7 @@ export function recompile(opts: { silent?: boolean } = {}): CompileStatus[] {
           } else if (d && !["conflict", "modified", "broken", "shared"].includes(d.status)) db.deliveries = db.deliveries.filter((x) => x !== d)
         } else if (!d) {
           db.deliveries.push({ id: newId("dlv"), targetId: t.id, envId: u.envId, path: `${t.path}${u.envId === "windows" ? "\\" : "/"}cloudlink-servers`, status: "ok", checkedAt: now() })
-        } else if (d.status === "ok" || d.status === "outdated" || d.status === "pending" || (d.status === "missing" && d.statusDetail?.id === "shared-selection-mismatch")) {
+        } else if (d.status === "ok" || d.status === "outdated" || d.status === "pending" || (d.status === "shared" && d.statusDetail?.id === "shared-agent") || (d.status === "missing" && d.statusDetail?.id === "shared-selection-mismatch")) {
           // 空交集的占位记录不是被用户删除的副本；有共同资源可写时走正常发布，随后更新共用说明。
           d.status = "ok"
           d.checkedAt = now()
@@ -263,6 +244,7 @@ export function recompile(opts: { silent?: boolean } = {}): CompileStatus[] {
         const written = db.deliveries.find((d) => d.targetId === t.id)
         const group = directoryMembers(t)
         if (written) {
+          written.assetIds = written.status === "ok" ? list.map((asset) => asset.id) : undefined
           written.unitId = physicalUnit(t)
           written.sharedAgentKeys = group.length > 1 ? [...new Set(group.map((member) => member.agentKey))] : undefined
           if ((written.status === "ok" || written.status === "missing") && db.sharedMismatches.has(physicalUnit(t))) written.statusDetail = { id: "shared-selection-mismatch" }
@@ -279,8 +261,27 @@ export function recompile(opts: { silent?: boolean } = {}): CompileStatus[] {
         ok: !status.blocked,
       })
     }
-    return status
+    return [...new Set(members.map((member) => member.agentKey))].map((agentKey) => {
+      const memberStatus = { ...status, agentKey }
+      db.compile[`${u.envId}|${agentKey}`] = memberStatus
+      return memberStatus
+    })
   })
+  // A disabled reader can still physically see a copy kept by another reader; show that fact without enabling it.
+  for (const target of db.targets.filter((target) => !target.enabled && !db.crossEnvironmentTargets.has(target.id))) {
+    const members = directoryMembers(target)
+    const keys = [...new Set(members.map((member) => member.agentKey))]
+    if (keys.length < 2) continue
+    const active = db.deliveries.find((delivery) => delivery.status === "ok" && members.some((member) => member.enabled && member.id === delivery.targetId))
+    const existing = db.deliveries.find((delivery) => delivery.targetId === target.id)
+    if (!active) {
+      if (existing?.statusDetail?.id === "shared-agent" && !db.deliveries.some((delivery) => delivery.status !== "missing" && members.some((member) => member.enabled && member.id === delivery.targetId))) db.deliveries = db.deliveries.filter((delivery) => delivery !== existing)
+      continue
+    }
+    const shared: Delivery = { ...active, id: existing?.id ?? newId("dlv"), targetId: target.id, path: `${target.path}${target.envId === "windows" ? "\\" : "/"}cloudlink-servers`, status: "shared", assetIds: undefined, unitId: physicalUnit(target), sharedAgentKeys: keys, statusDetail: { id: "shared-agent", params: { agents: keys.join(",") } } }
+    if (existing) Object.assign(existing, shared)
+    else db.deliveries.push(shared)
+  }
   if (!opts.silent) {
     emitCompiled()
     emitDeliveries()
@@ -300,7 +301,7 @@ export function emitCompiled() {
 /** 预览草稿（F-204）：用已保存的探测信息、档位补全表单之外的字段 */
 export function draftToAsset(input: AssetInput): Asset {
   const saved = input.id ? db.assets.find((a) => a.id === input.id) : undefined
-  const agent = saved?.agent ?? { agents: [], mode: input.production ? "read-only" : db.settings.defaultMode }
+  const agent = saved?.agent ?? { agents: [], mode: "confirm-changes" }
   if (input.type === "cli") {
     const rest = { ...input }
     delete rest.scope

@@ -93,6 +93,7 @@ export function ServerActionDialogs() {
   const shown = pending ?? last
   const close = () => usePendingAction.getState().set(null)
   const alias = asset ? handleOf(asset) : ""
+  const markingProduction = shown?.kind === "production"
 
   return (
     <AlertDialog open={!!pending && !!asset} onOpenChange={(open) => !open && close()}>
@@ -105,18 +106,21 @@ export function ServerActionDialogs() {
               <AlertDialogMedia>
                 <WrenchIcon className="text-warning" />
               </AlertDialogMedia>
-              <AlertDialogTitle>{copy.modeConfirm.title(alias)}</AlertDialogTitle>
-              <AlertDialogDescription>{copy.modeConfirm.description}</AlertDialogDescription>
+              <AlertDialogTitle className="text-balance">{markingProduction ? copy.modeConfirm.productionTitle(asset?.name ?? alias) : copy.modeConfirm.title(alias)}</AlertDialogTitle>
+              <AlertDialogDescription>{markingProduction ? copy.modeConfirm.productionDescription : copy.modeConfirm.description}</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>{copy.common.cancel}</AlertDialogCancel>
               <AlertDialogAction
                 onClick={() => {
                   close()
-                  if (asset) void serverActions.setMode(asset, "standard")
+                  if (asset) {
+                    if (markingProduction) void serverActions.setProduction(asset, true, true)
+                    else void serverActions.setMode(asset, "auto-ops", true)
+                  }
                 }}
               >
-                {copy.modeConfirm.confirm}
+                {markingProduction ? copy.modeConfirm.productionConfirm : copy.modeConfirm.confirm}
               </AlertDialogAction>
             </AlertDialogFooter>
           </>

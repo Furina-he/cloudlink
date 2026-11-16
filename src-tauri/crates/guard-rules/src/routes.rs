@@ -103,7 +103,7 @@ pub fn load(root: &Path) -> io::Result<Value> {
             || route["enabled"].as_bool().is_none()
             || route["production"].as_bool().is_none()
             || !matches!(route["kind"].as_str(), Some("vps" | "cli"))
-            || !matches!(route["mode"].as_str(), Some("read-only" | "standard"))
+            || !matches!(route["mode"].as_str(), Some("confirm-changes" | "auto-ops"))
         {
             return Err(invalid());
         }

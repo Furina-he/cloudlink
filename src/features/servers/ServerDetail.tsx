@@ -1,34 +1,25 @@
 import { PencilIcon, RadarIcon } from "lucide-react"
 import { useRef, useState } from "react"
-import { FormProvider, useWatch, type FieldPath } from "react-hook-form"
-import { useHotkeys } from "react-hotkeys-hook"
+import { FormProvider } from "react-hook-form"
 import type { ServerAsset } from "@/bindings"
 import { CommandChip } from "@/components/app/CommandChip"
 import { CopyValue, FoldRow, ListGroup, PrefRow } from "@/components/app/SettingsList"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { copy } from "@/lib/copy"
-import { HOTKEY_OPTIONS, HOTKEYS, isModalOpen } from "@/lib/hotkeys"
-import type { ServerFormValues } from "@/lib/schemas"
-import { useAssetStore } from "@/stores/assets"
 import { isProbing, useProbeStore } from "@/stores/probe"
 import { serverActions } from "./actions"
 import { ConnectionDialog } from "./ConnectionDialog"
 import { TestResult, useConnectionTest } from "./ConnectionTest"
 import { DetailHeader, ServerProblems } from "./DetailHeader"
 import { DetailPage, NotesRow, PermissionGroup, RecentActivityGroup, RulesGroup, SummaryRow } from "./DetailParts"
-import { DraftPreview, SaveErrorAlert } from "./DraftPreview"
+import { DraftPreview } from "./DraftPreview"
 import { CompileSummary } from "./InspectorParts"
 import { ProfileDialog } from "./ProfileDialog"
 import { ListeningPorts } from "./sections/ConnectionSection"
 import { ServiceInventory } from "./sections/ServicesSection"
-import { renameInputOf } from "./profileForm"
 import { sortEnvs } from "./serverForm"
-import { useAutoSave } from "./useAutoSave"
 import { useAliasContext, useServerForm } from "./useServerForm"
-
-// 普通资料集中保存；生产标记仍为独立即时控制（P8 D6）。
-const PAGE_FIELDS: FieldPath<ServerFormValues>[] = ["production"]
 
 function ProbeButton({ asset }: { asset: ServerAsset }) {
   const probing = useProbeStore((s) => isProbing(s, asset.id))
@@ -91,25 +82,15 @@ export function ServerDetail({ asset }: { asset: ServerAsset }) {
   const titleRef = useRef<HTMLHeadingElement>(null)
   const conn = useConnectionTest(form, asset.id, asset.id)
   const [editor, setEditor] = useState<"connection" | "profile" | null>(null)
-  const auto = useAutoSave({
-    form,
-    fields: PAGE_FIELDS,
-    save: async ({ production }) => {
-      await useAssetStore.getState().update(asset.id, (latest) => ({ ...renameInputOf(latest, latest.name), production }))
-    },
-  })
-  const production = useWatch({ control: form.control, name: "production" })
-  useHotkeys(HOTKEYS.save, () => !isModalOpen() && void auto.flush(), HOTKEY_OPTIONS)
-  const edit = () => { void auto.flush(); setEditor("connection") }
+  const edit = () => setEditor("connection")
   const runTest = () => void conn.run()
-  const convert = () => void auto.flush().then(() => serverActions.convertToKey(asset.id))
+  const convert = () => void serverActions.convertToKey(asset.id)
   return (
     <FormProvider {...form}>
-      <DetailPage onBlurCapture={auto.onBlurCapture}>
-        <DetailHeader asset={asset} name={asset.name} production={production} titleRef={titleRef} conn={conn} onTest={runTest} onEditConnection={edit} onEditProfile={() => setEditor("profile")} />
+      <DetailPage>
+        <DetailHeader asset={asset} name={asset.name} production={asset.production} titleRef={titleRef} conn={conn} onTest={runTest} onEditConnection={edit} onEditProfile={() => setEditor("profile")} />
         <TestResult className="empty:hidden" test={conn.test} current={conn.current} method={conn.method} assetId={asset.id} onConvert={convert} />
         <div className="empty:hidden"><CompileSummary asset={asset} dirty={form.formState.isDirty} /></div>
-        {auto.error && <SaveErrorAlert error={auto.error} onRetry={() => void auto.flush()} />}
         <PermissionGroup asset={asset} problems={<ServerProblems asset={asset} onTest={runTest} onConvert={convert} onEdit={edit} />} />
         <ConnectionGroup asset={asset} onEdit={edit} />
         <KnowledgeGroup asset={asset} />

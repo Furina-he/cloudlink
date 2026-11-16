@@ -33,7 +33,7 @@ async function verifiedGithub(page: Page) {
     .poll(async () => (await github(page)).github?.migrationPending)
     .toBe(false)
   await expect(
-    page.getByText("归属 octo-dev · 登录 octo-dev", { exact: true })
+    page.getByText("登录有效", { exact: true })
   ).toBeVisible()
 }
 async function fixture(
@@ -76,6 +76,27 @@ const scopeCheckbox = (page: Page, name: string) =>
     .getByRole("checkbox", { name: `提供 ${name} 给 Agent`, exact: true })
 
 test.describe("P8c GitHub 归属与范围", () => {
+  for (const status of ["partial", "offline", "denied"] as const) {
+    test(`${status}范围异常不冒称未登录，只有一个重新核对入口且不扩围`, async ({ page }) => {
+      await ready(page)
+      await openServer(page, "github")
+      await verifiedGithub(page)
+      const before = await github(page)
+      await fixture(page, { status })
+      await page.getByRole("button", { name: "重新核对", exact: true }).click()
+      await expect.poll(async () => (await github(page)).github?.envStates.windows?.status).toBe(status)
+      await expect(page.getByText("登录有效", { exact: true })).toBeVisible()
+      await expect(page.getByRole("button", { name: "重新核对", exact: true })).toHaveCount(1)
+      await expect(page.getByRole("button", { name: "去登录", exact: true })).toHaveCount(0)
+      await expect(page.getByRole("button", { name: "将 github 分发给 通用目录", exact: true })).toBeDisabled()
+      const after = await github(page)
+      expect(after.cli.envStates.windows?.authenticated).toBe(true)
+      expect(after.agent.agents).toEqual(before.agent.agents)
+      expect(after.github?.mode).toBe("manual")
+      expect(after.cli.scope.filter((repo) => repo.selected).map((repo) => repo.id)).toEqual(before.cli.scope.filter((repo) => repo.selected).map((repo) => repo.id))
+    })
+  }
+
   test("旧手选核实owner后仍manual，四列表区分登录身份且不扩第三个仓库", async ({
     page,
   }) => {
@@ -163,7 +184,7 @@ test.describe("P8c GitHub 归属与范围", () => {
     await dialog.getByRole("button", { name: "保存范围", exact: true }).click()
     await expect(dialog).toHaveCount(0)
     await fixture(page, { extra: true, renamed: true, transferred: true })
-    await page.getByRole("button", { name: "刷新仓库", exact: true }).click()
+    await page.getByRole("button", { name: "重新核对", exact: true }).click()
     await expect(
       page.getByRole("table").getByText("octo-dev/future-api", { exact: true })
     ).toBeVisible()
@@ -319,9 +340,11 @@ test.describe("P8c GitHub 归属与范围", () => {
       row(page, "github").locator("..").getByText("octo-dev", { exact: true })
     ).toBeVisible()
     await openServer(page, "github-2", "GitHub")
-    await expect(
-      page.getByText("归属 octo-labs · 登录 octo-dev", { exact: true })
-    ).toBeVisible()
+    await expect(page.getByText("登录有效", { exact: true })).toBeVisible()
+    await expect(page.locator('[data-handle="github-2"]').locator("..").getByText("octo-dev", { exact: true })).toBeVisible()
+    await expect(page.getByText("octo-labs", { exact: true })).toBeVisible()
+    await expect(page.getByRole("button", { name: "重新核对", exact: true })).toHaveCount(1)
+    await expect(page.getByRole("button", { name: "刷新仓库", exact: true })).toHaveCount(0)
     const resource = (await assets(page)).find(
       (asset) => asset.type === "cli" && asset.handle === "github-2"
     ) as CliAsset
@@ -329,7 +352,7 @@ test.describe("P8c GitHub 归属与范围", () => {
       mode: "auto",
       owner: { login: "octo-labs", kind: "organization" },
     })
-    expect(resource.agent.mode).toBe("read-only")
+    expect(resource.agent.mode).toBe("confirm-changes")
     expect(resource.cli.scope.every((repo) => repo.selected)).toBe(true)
     if (process.env.P8_GITHUB_SHOTS === "1") {
       await page.evaluate(() =>

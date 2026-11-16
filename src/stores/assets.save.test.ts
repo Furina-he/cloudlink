@@ -253,12 +253,12 @@ describe("同资源保存串行与 latest-builder（P8a／b）", () => {
     const mutation = { setMode: fake.mode, setDistribute: fake.distribute, setCliScope: fake.scope }[action]
     mutation.mockReturnValueOnce(b.promise)
     const changed: Asset = action === "setMode"
-      ? { ...resultA.asset, agent: { ...initial.agent, mode: "standard" } }
+      ? { ...resultA.asset, agent: { ...initial.agent, mode: "auto-ops" } }
       : action === "setDistribute"
         ? { ...resultA.asset, agent: { ...initial.agent, agents: [] } }
         : { ...(resultA.asset as CliAsset), cli: { ...cli.cli, scope: cli.cli.scope.map((item) => ({ ...item, selected: false })) } }
     const resultB: DistributeResult = { ...snapshot(changed, action), affectedAgentKeys: ["claude-code", "universal"] }
-    const changing = action === "setMode" ? state().setMode(initial.id, "standard")
+    const changing = action === "setMode" ? state().setMode(initial.id, "auto-ops")
       : action === "setDistribute" ? state().setDistribute(initial.id, "claude-code", false)
         : state().setCliScope(initial.id, [])
     await expectQueued(mutation, () => { a.resolve(resultA); b.resolve(resultB) }, [first, changing])

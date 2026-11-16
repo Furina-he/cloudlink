@@ -198,8 +198,18 @@ pub fn remove_owned(target: &Path) -> Result<bool> {
 
 /// 发布一份编译结果到 `compiled/`。`files` 为空时移除这一份
 pub fn publish(compiled_root: &Path, marker: &Marker, files: &[CompiledFile]) -> Result<PathBuf> {
+    publish_with_key(compiled_root, &marker.agent_key, marker, files)
+}
+
+/// The private source key identifies a physical delivery unit; the marker retains the actual Agent.
+pub(crate) fn publish_with_key(
+    compiled_root: &Path,
+    source_key: &str,
+    marker: &Marker,
+    files: &[CompiledFile],
+) -> Result<PathBuf> {
     let env = EnvId::parse(&marker.env_id).ok_or_else(|| AppError::internal("bad env id"))?;
-    let target = output_dir(compiled_root, &env, &marker.agent_key);
+    let target = output_dir(compiled_root, &env, source_key);
     if files.is_empty() {
         remove_owned(&target)?;
         return Ok(target);

@@ -244,7 +244,7 @@ fn refresh(app: &AppHandle, state: &TrayState) -> tauri::Result<()> {
     assets.sort_by_cached_key(|a| order_key(matches!(a, Asset::Cli(_)), a.production(), a.handle()));
     let prod_standard = assets
         .iter()
-        .filter(|a| a.production() && a.agent().mode == Mode::Standard)
+        .filter(|a| a.production() && a.agent().mode == Mode::AutoOps)
         .count();
 
     let guard = if state.guard_on.load(Ordering::SeqCst) {
@@ -273,7 +273,7 @@ fn refresh(app: &AppHandle, state: &TrayState) -> tauri::Result<()> {
             let mode = asset.agent().mode;
             let label = columns(
                 asset.handle(),
-                if mode == Mode::Standard {
+                if mode == Mode::AutoOps {
                     &copy.standard
                 } else {
                     &copy.read_only
@@ -290,7 +290,7 @@ fn refresh(app: &AppHandle, state: &TrayState) -> tauri::Result<()> {
                         format!("mode:read-only:{id}"),
                         &copy.read_only,
                         true,
-                        mode == Mode::ReadOnly,
+                        mode == Mode::ConfirmChanges,
                         None::<&str>,
                     )?,
                     &CheckMenuItem::with_id(
@@ -298,12 +298,12 @@ fn refresh(app: &AppHandle, state: &TrayState) -> tauri::Result<()> {
                         format!("mode:standard:{id}"),
                         &copy.standard,
                         true,
-                        mode == Mode::Standard,
+                        mode == Mode::AutoOps,
                         None::<&str>,
                     )?,
                 ],
             )?;
-            if asset.production() && mode == Mode::Standard {
+            if asset.production() && mode == Mode::AutoOps {
                 sub.set_icon(Some(tauri::image::Image::new_owned(
                     amber_dot_rgba(),
                     DOT_SIZE,
@@ -360,6 +360,14 @@ fn refresh(app: &AppHandle, state: &TrayState) -> tauri::Result<()> {
     Ok(())
 }
 
+fn menu_mode(value: &str) -> Option<Mode> {
+    match value {
+        "auto-ops" => Some(Mode::AutoOps),
+        "confirm-changes" | "read-only" | "standard" => Some(Mode::ConfirmChanges),
+        _ => None,
+    }
+}
+
 fn on_menu(app: &AppHandle, id: &str) {
     match id {
         "open" => show_main(app),
@@ -373,11 +381,7 @@ fn on_menu(app: &AppHandle, id: &str) {
             let Some((mode, asset_id)) = rest.split_once(':') else {
                 return;
             };
-            let mode = if mode == "standard" {
-                Mode::Standard
-            } else {
-                Mode::ReadOnly
-            };
+            let Some(mode) = menu_mode(mode) else { return };
             let app = app.clone();
             let asset_id = asset_id.to_string();
             tauri::async_runtime::spawn_blocking(move || set_mode(&app, &asset_id, mode));
@@ -397,7 +401,7 @@ fn set_mode(app: &AppHandle, asset_id: &str, mode: Mode) {
     match production {
         None => {}
         // AC1：托盘里不做确认，打开主窗口让用户确认
-        Some(true) if mode == Mode::Standard => {
+        Some(true) if mode == Mode::AutoOps => {
             show_main(app);
             let _ = app.emit(
                 "tray://confirm-mode",
@@ -447,6 +451,17 @@ fn all_read_only(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn real_use_tray_mode_ids_round_trip_and_legacy_modes_do_not_elevate() {
+        for mode in [Mode::ConfirmChanges, Mode::AutoOps] {
+            assert_eq!(menu_mode(mode.as_str()), Some(mode));
+        }
+        for value in ["read-only", "standard"] {
+            assert_eq!(menu_mode(value), Some(Mode::ConfirmChanges));
+        }
+        assert_eq!(menu_mode("unrecognized"), None);
+    }
 
     #[test]
     fn servers_come_first_then_production_then_handle() {

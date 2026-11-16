@@ -87,6 +87,12 @@ fn reason_for(asset: &Asset, env: &EnvContext, agent_key: &str, managed_written:
         if !state.installed {
             return Some(Reason::CliNotInstalled);
         }
+        if !state.authenticated || state.expired {
+            return Some(Reason::CliNotLoggedIn);
+        }
+        if cli.cli_provider == crate::model::asset::CliProvider::Github {
+            return (!cli.github_scope_ready(&env.id)).then_some(Reason::GithubScopeUnverified);
+        }
         let account_matches = cli.account.as_deref().is_none_or(|bound| {
             state
                 .account

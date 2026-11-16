@@ -104,6 +104,7 @@ export function GithubScopeFields({ form, scope, config, initiallyProvided, load
           <ToggleGroupItem value="manual">{copy.github.modeLabel.manual}</ToggleGroupItem>
         </ToggleGroup>
         <FieldDescription>{draft.mode === "auto" ? copy.github.autoHint : copy.github.manualHint}</FieldDescription>
+        {draft.mode === "manual" && initialMode === "manual" && <FieldDescription>{copy.github.manualPreserved}</FieldDescription>}
         {draft.mode === "auto" && initialMode === "manual" && <FieldDescription>{copy.github.expansion(newlyProvided)}</FieldDescription>}
       </Field>
       <Field>
@@ -149,13 +150,12 @@ export function GithubScopeFields({ form, scope, config, initiallyProvided, load
 }
 
 export function GithubAccountGroup({ asset, config = asset.github, onScope }: { asset: CliAsset; config?: GithubConfig; onScope: () => void }) {
-  const identities = [...new Set(Object.values(config?.envStates ?? {}).flatMap((snapshot) => snapshot?.identity ? [snapshot.identity.login] : []))]
+  const identities = [...new Set(Object.values(asset.cli.envStates).flatMap((state) => state?.authenticated && !state.expired && state.account ? [state.account] : []))]
   const owner = config?.owner?.login
   const count = config?.mode === "auto" ? config.excludedRepoIds.length : asset.cli.scope.filter((repo) => repo.selected).length
   return (
     <ListGroup id="detail-account" title={copy.github.scopeTitle} action={<Button variant="ghost" size="sm" aria-haspopup="dialog" onClick={onScope}>{copy.github.manageScope}</Button>}>
-      <PrefRow label={copy.github.owner}>{owner ? <CopyValue value={owner} label={copy.github.owner} /> : <span className="text-xs text-muted-foreground">{copy.github.ownerMissing}</span>}</PrefRow>
-      <PrefRow label={copy.github.identity}>{identities.length ? <CopyValue value={identities.join("、")} label={copy.github.identity} /> : <span className="text-xs text-muted-foreground">{copy.cli.unchecked}</span>}</PrefRow>
+      <PrefRow label={copy.github.owner} hint={config?.owner ? [copy.github.ownerKind[config.owner.kind], identities.length === 1 && identities[0] === owner ? copy.github.sameIdentity : null].filter(Boolean).join(" · ") : undefined}>{owner ? <CopyValue value={owner} label={copy.github.owner} /> : <span className="text-xs text-muted-foreground">{copy.github.ownerMissing}</span>}</PrefRow>
       <PrefRow label={copy.github.mode} hint={config?.mode === "auto" ? copy.github.autoHint : copy.github.manualHint}>
         <span className="text-xs text-muted-foreground">{config?.mode === "auto" ? copy.github.autoSummary(count) : copy.github.manualSummary(count)}</span>
       </PrefRow>
@@ -173,7 +173,7 @@ function deploymentRelations(asset: CliAsset, repo: CliScopeItem, relations: Rel
 }
 
 /** Four fixed columns; evidence is shown only for a selected repository and provided target. */
-export function GithubReposGroup({ asset, loading, onRefresh }: { asset: CliAsset; loading: boolean; onRefresh: () => void }) {
+export function GithubReposGroup({ asset }: { asset: CliAsset }) {
   const [query, setQuery] = useState("")
   const id = useId()
   const relations = useSkillStore((state) => state.relations)
@@ -181,7 +181,7 @@ export function GithubReposGroup({ asset, loading, onRefresh }: { asset: CliAsse
   const repos = useMemo(() => asset.cli.scope.filter((repo) => repo.kind === "repo" && repo.selected), [asset.cli.scope])
   const shown = repos.filter((repo) => repo.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
   return (
-    <ListGroup id="detail-repos" title={copy.detail.groups.repos} count={repos.length} action={<Button variant="ghost" size="sm" disabled={loading} onClick={onRefresh}>{loading ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy.github.refresh}</Button>}>
+    <ListGroup id="detail-repos" title={copy.detail.groups.repos} count={repos.length}>
       <div className="px-3.5 py-3"><Field><FieldLabel htmlFor={id} className="sr-only">{copy.github.search}</FieldLabel><Input id={id} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={copy.github.searchPlaceholder} /></Field></div>
       {shown.length === 0 ? (
         <Empty className="border-0 p-4"><EmptyDescription>{query.trim() ? copy.github.noMatch : copy.github.noneProvided}</EmptyDescription>{query.trim() && <EmptyContent><Button variant="outline" size="sm" onClick={() => setQuery("")}>{copy.github.clearSearch}</Button></EmptyContent>}</Empty>

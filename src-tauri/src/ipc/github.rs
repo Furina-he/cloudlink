@@ -128,10 +128,15 @@ impl Backend {
             }
             let fresh = self.cli.github_scope(&self.cli_contexts()?, &previous.host, None)?;
             let _edit = self.edit_at(epoch)?;
-            let current = self.database()?.require_asset(id)?;
+            let mut current = self.database()?.require_asset(id)?;
             if config_of(&current)?.revision != previous.revision {
                 return Err(changed());
             }
+            if let Asset::Cli(cli) = &mut current {
+                cli.cli.env_states = fresh.env_states.clone();
+            }
+            self.database()?.upsert_asset(&current)?;
+            self.publish_locked()?;
             let mut result = result_for(&current, previous, fresh.owners);
             result.env_states = fresh.env_states;
             return Ok(result);
@@ -149,13 +154,6 @@ impl Backend {
         let mut stored = self.database()?.put_github_config(id, previous.revision, next)?;
         if let Asset::Cli(cli) = &mut stored {
             cli.cli.env_states = fresh.env_states;
-            for (env_id, state) in &mut cli.cli.env_states {
-                state.authenticated &= cli
-                    .github
-                    .as_ref()
-                    .and_then(|config| config.env_states.get(env_id))
-                    .is_some_and(|snapshot| snapshot.status == GithubSnapshotStatus::Complete);
-            }
         }
         self.database()?.upsert_asset(&stored)?;
         self.publish_locked()?;

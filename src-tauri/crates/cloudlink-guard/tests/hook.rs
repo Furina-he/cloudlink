@@ -49,7 +49,7 @@ impl Fixture {
             exe,
             runtime: Some(runtime),
         };
-        fixture.policy(json!({"version":1,"resources":[{"id":"ast-test","kind":"vps","handle":"test-vps","mode":"read-only","envIds":["windows","wsl:Fixture"],"hosts":[],"criticalServices":[]}]}));
+        fixture.policy(json!({"version":1,"resources":[{"id":"ast-test","kind":"vps","handle":"test-vps","mode":"confirm-changes","envIds":["windows","wsl:Fixture"],"hosts":[],"criticalServices":[]}]}));
         fixture
     }
 
@@ -77,7 +77,7 @@ impl Fixture {
     }
 
     fn bash(&self, command: &str) -> Output {
-        self.run(&serde_json::to_vec(&json!({"tool_name":"Bash","session_id":"fixture-session","cwd":"/fixture/project","tool_input":{"command":command}})).unwrap(), &["--env", "windows"])
+        self.run(&serde_json::to_vec(&json!({"hook_event_name":"PreToolUse","tool_name":"Bash","session_id":"fixture-session","cwd":"/fixture/project","tool_input":{"command":command}})).unwrap(), &["--env", "windows"])
     }
 
     fn records(&self) -> Vec<Value> {
@@ -133,6 +133,7 @@ impl Drop for Fixture {
 #[test]
 fn stopped_hooks_do_not_check_but_a_damaged_record_never_means_exit() {
     let mut fixture = Fixture::new();
+    fixture.policy(Value::Null);
     fixture.runtime.take();
     let record = json!({"managedBy":"cloudlink","kind":"runtime","version":1,
         "installationId":guard_rules::runtime::installation_id(&fixture.root).unwrap(),
@@ -149,7 +150,7 @@ fn stopped_hooks_do_not_check_but_a_damaged_record_never_means_exit() {
 #[test]
 fn production_direct_calls_use_the_channel_and_an_owned_runner_is_not_rechecked() {
     let fixture = Fixture::new();
-    fixture.policy(json!({"version":1,"resources":[{"id":"ast-test","kind":"vps","handle":"test-vps","production":true,"mode":"standard","envIds":["windows"],"hosts":[],"criticalServices":[]}]}));
+    fixture.policy(json!({"version":1,"resources":[{"id":"ast-test","kind":"vps","handle":"test-vps","production":true,"mode":"auto-ops","envIds":["windows"],"hosts":[],"criticalServices":[]}]}));
     let output = fixture.bash("ssh test-vps uptime");
     let deny: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(
@@ -197,18 +198,23 @@ fn denied_json_is_a_real_hook_response_and_operation_is_redacted() {
 }
 
 #[test]
-fn allowance_is_silent_and_does_not_bypass_the_agents_permission_system() {
+fn nonproduction_direct_queries_use_the_runner_and_keep_the_actual_hook_caller() {
     let fixture = Fixture::new();
     let output = fixture.bash("ssh test-vps uptime");
-    assert!(output.status.success() && output.stdout.is_empty() && output.stderr.is_empty());
+    assert!(output.status.success() && !output.stdout.is_empty() && output.stderr.is_empty());
+    let deny: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(deny["hookSpecificOutput"]["permissionDecision"], "deny");
     let records = fixture.records();
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0]["decision"], "allowed");
-    assert!(records[0].get("reasonId").is_none());
+    assert_eq!(records[0]["decision"], "denied");
+    assert_eq!(records[0]["reasonId"], "execution-channel");
+    assert_eq!(records[0]["source"], "hook");
+    assert_eq!(records[0]["caller"], json!({"agent":"claude-code","provenance":"hook"}));
+    assert_eq!(records[0]["sessionId"], "fixture-session");
 }
 
 #[test]
-fn missing_invalid_policy_and_unrelated_input_are_silent_without_records() {
+fn malformed_or_unrelated_input_is_silent_with_a_healthy_policy() {
     let fixture = Fixture::new();
     for input in [
         b"not-json".as_slice(),
@@ -219,11 +225,27 @@ fn missing_invalid_policy_and_unrelated_input_are_silent_without_records() {
         assert!(output.status.success() && output.stdout.is_empty() && output.stderr.is_empty());
     }
     assert!(fixture.bash("git status").stdout.is_empty());
-    fs::write(fixture.root.join("guard/policy.json"), b"{").unwrap();
-    assert!(fixture.bash("ssh test-vps reboot").stdout.is_empty());
-    fs::remove_file(fixture.root.join("guard/policy.json")).unwrap();
-    assert!(fixture.bash("ssh test-vps reboot").stdout.is_empty());
     assert!(fixture.records().is_empty());
+}
+
+#[test]
+fn invalid_policy_never_bypasses_a_running_or_damaged_runtime() {
+    let fixture = Fixture::new();
+    fixture.policy(Value::Null);
+    let assert_blocked = || {
+        let output = fixture.bash("ssh test-vps uptime");
+        let denied: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(denied["hookSpecificOutput"]["permissionDecision"], "deny");
+    };
+    assert_blocked();
+    guard_rules::runtime::read_owned_json(&fixture.root.join("guard/.cloudlink.json"), "guard", guard_rules::runtime::MAX_RUNTIME).unwrap();
+    assert!(no_links(&fixture.root.join("guard")));
+    fs::remove_file(fixture.root.join("guard/policy.json")).unwrap();
+    assert_blocked();
+    guard_rules::runtime::read_owned_json(&fixture.root.join("runtime.json"), "runtime", guard_rules::runtime::MAX_RUNTIME).unwrap();
+    assert!(no_links(&fixture.root));
+    fs::write(fixture.root.join("runtime.json"), b"{").unwrap();
+    assert_blocked();
 }
 
 #[test]
@@ -255,9 +277,10 @@ fn inbox_rotation_and_environment_identity_are_independent_of_process_home() {
         &serde_json::to_vec(&json!({"tool_name":"Bash","tool_input":{"command":"ssh test-vps uptime"}})).unwrap(),
         &["--env", "wsl:Fixture"],
     );
-    assert!(output.status.success() && output.stdout.is_empty());
+    assert!(output.status.success() && !output.stdout.is_empty());
     assert!(log.exists() && rotated.exists());
     assert_eq!(fixture.records()[0]["envId"], "wsl:Fixture");
+    assert!(fixture.records()[0].get("caller").is_none());
 }
 
 #[test]

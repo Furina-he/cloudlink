@@ -121,7 +121,7 @@ try {
     await expect(form).toHaveCount(0, { timeout: 60_000 })
     saved = (await invoke("list_assets"))[0]
     assert.equal(saved.connection.verified.ok, true)
-    await invoke("set_mode", { assetId: saved.id, mode: "standard" })
+    await invoke("set_mode", { assetId: saved.id, mode: "auto-ops" })
     await target.exec(["mkdir", "--", scratch])
     await target.ssh(`printf '%s' '{"managedBy":"cloudlink","kind":"p8-lifecycle"}' > '${scratch}/.cloudlink.json'; mkdir '${scratch}/never'`)
   })

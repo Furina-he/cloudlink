@@ -1,6 +1,6 @@
 # hk-edge — Hong Kong edge proxy node
 
-> Production | Mode: read-only | Snapshot: 2026-10-27
+> Production | Mode: confirm-changes | Snapshot: 2026-10-27
 
 ## Connect
 Pass exactly one quoted remote command after `--`; the stable ID maps to the private SSH configuration. Do not replace this entry with a direct alias:
@@ -16,7 +16,7 @@ PowerShell:
 ## Guardrails (must follow)
 1. Memory is only 2 GB — never run npm run build, cargo build or other memory-heavy builds on this host
 2. After editing OpenResty config, run docker exec openresty nginx -t and reload only if it passes
-3. Never stop or restart the `openresty` container (critical)
+3. Stopping or restarting the `openresty` container is high risk (critical); while CloudLink runs, request one-time approval through its runner
 
 ## Key directories
 | Key | Path | Purpose |

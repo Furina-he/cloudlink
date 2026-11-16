@@ -83,7 +83,7 @@ export const notes: AgentNote[] = [
 ]
 
 export const activity: ActivityItem[] = [
-  { id: "act_1", kind: "mode", at: ago(7.5 * MIN), assetId: "ast_sg_db", messageId: "mode-changed", params: { alias: "sg-db", mode: "standard" }, ok: true },
+  { id: "act_1", kind: "mode", at: ago(7.5 * MIN), assetId: "ast_sg_db", messageId: "mode-changed", params: { alias: "sg-db", mode: "auto-ops" }, ok: true },
   { id: "act_11", kind: "cli", at: ago(10 * MIN), assetId: "ast_vercel", messageId: "cli-detected", params: { alias: "vercel", ready: 1, total: 2 }, ok: false },
   {
     id: "act_2",

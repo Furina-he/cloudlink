@@ -82,15 +82,17 @@ pub enum ProbeState {
 #[serde(rename_all = "kebab-case")]
 #[ts(export, export_to = "asset.ts")]
 pub enum Mode {
-    ReadOnly,
-    Standard,
+    /// Legacy inputs are conservatively interpreted as confirmation, never automation.
+    #[serde(alias = "read-only", alias = "standard")]
+    ConfirmChanges,
+    AutoOps,
 }
 
 impl Mode {
     pub fn as_str(self) -> &'static str {
         match self {
-            Mode::ReadOnly => "read-only",
-            Mode::Standard => "standard",
+            Mode::ConfirmChanges => "confirm-changes",
+            Mode::AutoOps => "auto-ops",
         }
     }
 }
@@ -644,6 +646,22 @@ pub struct CliAsset {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub github: Option<super::github::GithubConfig>,
+}
+
+impl CliAsset {
+    /// A valid login does not authorize an incomplete or unbound repository scope.
+    pub fn github_scope_ready(&self, env_id: &EnvId) -> bool {
+        self.github.as_ref().is_some_and(|config| {
+            !config.migration_pending
+                && config.owner.as_ref().is_some_and(|owner| {
+                    config.env_states.get(env_id).is_some_and(|snapshot| {
+                        snapshot.status == super::github::GithubSnapshotStatus::Complete
+                            && snapshot.identity.is_some()
+                            && snapshot.owner.as_ref().is_some_and(|actual| actual.id == owner.id)
+                    })
+                })
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

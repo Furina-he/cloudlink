@@ -19,7 +19,7 @@ export function countDeliveredForAsset(assetId: string, inclusions: Inclusion[],
     const included = inclusions.some((i) => i.assetId === assetId && i.envId === target.envId && i.agentKey === target.agentKey && i.included)
     const blocked = statuses.some((s) => s.envId === target.envId && s.agentKey === target.agentKey && s.blocked)
     const d = deliveries.find((d) => d.targetId === target.id)
-    if (included && !blocked && d?.status === "ok") units.add(d.unitId ?? `${d.envId}|${d.targetId}`)
+    if (included && !blocked && d?.status === "ok" && (!d.assetIds || d.assetIds.includes(assetId))) units.add(d.unitId ?? `${d.envId}|${d.targetId}`)
   }
   return units.size
 }
@@ -32,7 +32,8 @@ export function deliveryOutcome(assetId: string, agentKeys: string[], on: boolea
     const inc = snapshot.inclusions.find((i) => i.assetId === assetId && i.envId === target.envId && i.agentKey === target.agentKey)
     const blocked = snapshot.statuses.some((s) => s.envId === target.envId && s.agentKey === target.agentKey && s.blocked)
     let id: string | undefined, params: DeliveryProblem["params"]
-    if (d?.statusDetail?.id === "shared-selection-mismatch") { id = d.statusDetail.id; params = d.statusDetail.params }
+    if (on && d?.statusDetail?.id === "shared-selection-mismatch" && !d.assetIds?.includes(assetId)) { id = d.statusDetail.id; params = d.statusDetail.params }
+    else if (on && d?.status === "ok" && d.assetIds && !d.assetIds.includes(assetId)) id = "shared-selection-mismatch"
     else if (d && d.status !== "ok" && !(!on && ["missing", "shared"].includes(d.status))) { id = d.statusDetail?.id ?? d.status; params = d.statusDetail?.params }
     else if (!on && inc?.included) id = "withdraw-failed"
     else if (on && blocked) id = "compile-blocked"

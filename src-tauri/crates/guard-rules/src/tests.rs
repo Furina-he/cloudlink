@@ -57,7 +57,7 @@ fn every_compiled_health_check_command_passes_in_read_only_mode() {
             .trim()
             .replace("<alias>", "hk-edge")
             .replace("<site>", "example.com");
-        let result = evaluate(&fixture("read-only"), "windows", &command);
+        let result = evaluate(&fixture("confirm-changes"), "windows", &command);
         assert!(
             !result.is_empty() && result.iter().all(|d| d.allowed),
             "health checklist rejected: {command}: {result:?}"
@@ -81,7 +81,7 @@ fn policy_missing_malformed_or_unknown_version_passes_without_a_record() {
         assert!(!policy_valid(&value));
         assert!(evaluate(&value, "windows", "ssh hk-edge reboot").is_empty());
     }
-    let mut policy = fixture("read-only");
+    let mut policy = fixture("confirm-changes");
     policy["resources"][1]["account"] = Value::Null;
     assert!(policy_valid(&policy));
     assert!(!evaluate(&policy, "windows", "ssh hk-edge reboot")[0].allowed);
@@ -90,11 +90,11 @@ fn policy_missing_malformed_or_unknown_version_passes_without_a_record() {
 
 #[test]
 fn modes_use_current_policy_and_unparsed_standard_is_explicitly_marked() {
-    let ro = fixture("read-only");
-    let standard = fixture("standard");
+    let ro = fixture("confirm-changes");
+    let standard = fixture("auto-ops");
     assert!(!evaluate(&ro, "windows", "ssh hk-edge 'echo $(uptime)'")[0].allowed);
     let parsed = evaluate(&standard, "windows", "ssh hk-edge 'echo $(uptime)'");
-    assert!(parsed[0].allowed);
+    assert!(!parsed[0].allowed);
     assert_eq!(parsed[0].reason_id, Some("unparsed"));
     assert!(evaluate(&standard, "windows", "ssh hk-edge 'docker restart api'")[0].allowed);
     assert!(!evaluate(&ro, "windows", "ssh hk-edge 'docker restart api'")[0].allowed);
@@ -102,8 +102,8 @@ fn modes_use_current_policy_and_unparsed_standard_is_explicitly_marked() {
 
 #[test]
 fn account_selection_cannot_inherit_another_accounts_mode_or_scope() {
-    let mut policy = fixture("standard");
-    let second = json!({"id":"ast-vercel-2","kind":"cli","handle":"vercel-2","mode":"read-only","provider":"vercel","account":"team_2","scope":[{"id":"prj_2","kind":"project","name":"other"}]});
+    let mut policy = fixture("auto-ops");
+    let second = json!({"id":"ast-vercel-2","kind":"cli","handle":"vercel-2","mode":"confirm-changes","provider":"vercel","account":"team_2","scope":[{"id":"prj_2","kind":"project","name":"other"}]});
     policy["resources"].as_array_mut().unwrap().push(second);
     let bound = evaluate(&policy, "windows", "vercel --scope team_2 deploy");
     assert_eq!(bound.len(), 1);
@@ -117,7 +117,7 @@ fn account_selection_cannot_inherit_another_accounts_mode_or_scope() {
 #[test]
 fn multiple_commands_cannot_erase_an_earlier_denial() {
     let result = evaluate(
-        &fixture("read-only"),
+        &fixture("confirm-changes"),
         "windows",
         "ssh hk-edge reboot; ssh hk-edge uptime",
     );
@@ -128,9 +128,9 @@ fn multiple_commands_cannot_erase_an_earlier_denial() {
 
 #[test]
 fn allow_does_not_emit_an_approval_and_denial_never_echoes_a_secret() {
-    assert!(deny_output(&evaluate(&fixture("read-only"), "windows", "ssh hk-edge uptime")).is_none());
+    assert!(deny_output(&evaluate(&fixture("confirm-changes"), "windows", "ssh hk-edge uptime")).is_none());
     let denied = evaluate(
-        &fixture("read-only"),
+        &fixture("confirm-changes"),
         "windows",
         "ssh hk-edge 'echo password=fixture-value > .env'",
     );
@@ -172,40 +172,40 @@ fn compact_redaction_handles_assignments_tokens_headers_and_quoted_values() {
 #[test]
 fn conservative_parser_covers_control_prefixes_option_variants_and_critical_groups() {
     let cases = [
-        ("read-only", "if true; then ssh hk-edge 'docker restart api'; fi"),
-        ("read-only", "for host in hk-edge; do ssh hk-edge uptime; done"),
-        ("read-only", "ssh hk-edge 'curl -sI -XDELETE https://example.com'"),
-        ("read-only", "ssh hk-edge 'curl -sIo/tmp/output https://example.com'"),
+        ("confirm-changes", "if true; then ssh hk-edge 'docker restart api'; fi"),
+        ("confirm-changes", "for host in hk-edge; do ssh hk-edge uptime; done"),
+        ("confirm-changes", "ssh hk-edge 'curl -sI -XDELETE https://example.com'"),
+        ("confirm-changes", "ssh hk-edge 'curl -sIo/tmp/output https://example.com'"),
         (
-            "read-only",
+            "confirm-changes",
             "ssh hk-edge 'curl -sI --config=/tmp/curlrc https://example.com'",
         ),
         (
-            "read-only",
+            "confirm-changes",
             "ssh hk-edge 'openssl s_client -connect localhost:443 -sess_out /tmp/session'",
         ),
-        ("standard", "ssh hk-edge 'docker compose stop'"),
-        ("standard", "ssh hk-edge 'docker compose restart'"),
+        ("auto-ops", "ssh hk-edge 'docker compose stop'"),
+        ("auto-ops", "ssh hk-edge 'docker compose restart'"),
         (
-            "standard",
+            "auto-ops",
             "ssh hk-edge 'docker compose config --services --environment'",
         ),
-        ("standard", "vercel --scope team_1 --scope other deploy"),
-        ("read-only", "ssh hk-edge 'systemctl --failed set-environment FOO=bar'"),
-        ("read-only", "ssh hk-edge 'systemctl --failed preset-all'"),
+        ("auto-ops", "vercel --scope team_1 --scope other deploy"),
+        ("confirm-changes", "ssh hk-edge 'systemctl --failed set-environment FOO=bar'"),
+        ("confirm-changes", "ssh hk-edge 'systemctl --failed preset-all'"),
         (
-            "read-only",
+            "confirm-changes",
             "ssh hk-edge 'docker compose config --services --output=/tmp/leak'",
         ),
-        ("read-only", "ssh hk-edge 'nginx -t -gdaemon=on'"),
-        ("standard", "vercel --scope team_1 deploy"),
-        ("standard", "vercel --scope team_1 --prod"),
-        ("standard", "VERCEL_PROJECT_ID=unknown vercel --scope team_1 deploy"),
-        ("standard", "vercel --scope team_1 deploy --name unknown"),
-        ("standard", "CLOUDFLARE_ACCOUNT_ID=cf-1 wrangler deploy"),
-        ("standard", "oci --profile main compute instance update"),
+        ("confirm-changes", "ssh hk-edge 'nginx -t -gdaemon=on'"),
+        ("auto-ops", "vercel --scope team_1 deploy"),
+        ("auto-ops", "vercel --scope team_1 --prod"),
+        ("auto-ops", "VERCEL_PROJECT_ID=unknown vercel --scope team_1 deploy"),
+        ("auto-ops", "vercel --scope team_1 deploy --name unknown"),
+        ("auto-ops", "CLOUDFLARE_ACCOUNT_ID=cf-1 wrangler deploy"),
+        ("auto-ops", "oci --profile main compute instance update"),
         (
-            "standard",
+            "auto-ops",
             "CLOUDFLARE_ACCOUNT_ID=cf-1 wrangler deploy --name api-gateway --name outside",
         ),
     ];
@@ -216,10 +216,10 @@ fn conservative_parser_covers_control_prefixes_option_variants_and_critical_grou
             "unprotected {mode} command: {command}: {decisions:?}"
         );
     }
-    assert!(evaluate(&fixture("read-only"), "windows", "ssh hk-edge 'echo env'")[0].allowed);
+    assert!(evaluate(&fixture("confirm-changes"), "windows", "ssh hk-edge 'echo env'")[0].allowed);
     assert!(
         evaluate(
-            &fixture("standard"),
+            &fixture("auto-ops"),
             "windows",
             "VERCEL_PROJECT_ID=prj_1 vercel --scope team_1 deploy"
         )[0]
@@ -227,7 +227,7 @@ fn conservative_parser_covers_control_prefixes_option_variants_and_critical_grou
     );
     assert!(
         evaluate(
-            &fixture("standard"),
+            &fixture("auto-ops"),
             "windows",
             "vercel --scope team_1 deploy --project shop"
         )[0]

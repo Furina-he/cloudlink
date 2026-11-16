@@ -61,6 +61,7 @@ pub(crate) fn delivery(target: &Target, status: DeliveryStatus) -> Delivery {
         checked_at: crate::time::now_rfc3339(),
         unit_id: None,
         shared_agent_keys: None,
+        asset_ids: None,
     }
 }
 
@@ -175,7 +176,16 @@ fn files_are_safe(files: &[CompiledFile]) -> bool {
 
 /// 编译源始终在应用私有目录，不允许链接；共用组从其主成员的源读取。
 pub fn load_source(paths: &Paths, env_id: &EnvId, agent_key: &str) -> Result<Option<(Marker, Vec<CompiledFile>)>> {
-    let source = publish::output_dir(&paths.compiled_dir(), env_id, agent_key);
+    load_source_with_key(paths, env_id, agent_key, agent_key)
+}
+
+pub(crate) fn load_source_with_key(
+    paths: &Paths,
+    env_id: &EnvId,
+    agent_key: &str,
+    source_key: &str,
+) -> Result<Option<(Marker, Vec<CompiledFile>)>> {
+    let source = publish::output_dir(&paths.compiled_dir(), env_id, source_key);
     paths::reject_link_ancestors(&source)?;
     match fs::symlink_metadata(&source) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),

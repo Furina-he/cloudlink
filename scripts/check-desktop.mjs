@@ -404,7 +404,7 @@ try {
     assert.equal(saved.connection.auth.passwordSaved, false)
     assert.equal(saved.connection.verified.ok, true)
     assert.equal(saved.production, true)
-    assert.equal(saved.agent.mode, "read-only")
+    assert.equal(saved.agent.mode, "confirm-changes")
     assert.deepEqual([...saved.agent.agents].sort(), ["claude-code", "universal"])
     const probed = await event("probe://finished", (entry) => entry.assetId === saved.id)
     assert.equal(probed.status, "ok", JSON.stringify(probed.error))
@@ -601,7 +601,7 @@ try {
   })
 
   await check("real IPC validation rejects malformed requests and unverified authorization", async () => {
-    await rejected("set_mode", { assetId: "missing", mode: "read-only" }, "not-found")
+    await rejected("set_mode", { assetId: "missing", mode: "confirm-changes" }, "not-found")
     await rejected("update_settings", { patch: { dataDir: join(runRoot, "elsewhere") } }, "settings-invalid")
     const input = inputOf(saved)
     delete input.id
@@ -619,7 +619,7 @@ try {
     await guard("ssh desktop-ssh 'uptime'", "denied")
     await guard("ssh desktop-ssh 'docker restart api'", "denied")
     await guard("ssh desktop-ssh 'cat /opt/app/.env'", "denied")
-    await invoke("set_mode", { assetId: saved.id, mode: "standard" })
+    await invoke("set_mode", { assetId: saved.id, mode: "auto-ops" })
     await guard("ssh desktop-ssh 'docker restart api'", "denied")
     await guard("ssh desktop-ssh 'docker compose down -v'", "denied")
     saved = await asset(saved.id)
@@ -627,7 +627,7 @@ try {
     input.services.push({ kind: "docker", name: "nginx", ports: [], critical: true, source: "manual", missing: false })
     await invoke("save_asset", { input })
     await guard("ssh desktop-ssh 'docker stop nginx'", "denied")
-    await invoke("set_mode", { assetId: saved.id, mode: "read-only" })
+    await invoke("set_mode", { assetId: saved.id, mode: "confirm-changes" })
     await guard("ssh desktop-ssh 'docker restart api'", "denied")
     const operations = await invoke("list_operations", { q: { assetId: saved.id, limit: 50 } })
     assert.equal(operations.length, 7)
@@ -638,19 +638,27 @@ try {
 
   const scratch = `/home/cloudlink/p8-${createHash("sha256").update(runRoot).digest("hex").slice(0, 16)}`
   const scratchMarker = JSON.stringify({ managedBy: "cloudlink", kind: "p8-runner", root: scratch })
-  await check("P8 runner checks native queries and refuses readonly writes", async () => {
+  await check("P8 runner checks native queries and waits for confirmation before writes", async () => {
     assert.equal((await invoke("get_runtime_status")).state, "active")
     const query = await runnerExec("uname -s").result
     assert.equal(query.code, 0, query.stderr)
     assert.match(query.stdout, /Linux/)
-    const denied = await runnerExec(`touch '${scratch}-denied'`).result
+    const command = `touch '${scratch}-denied'`
+    const pending = runnerExec(command)
+    const request = await waitingRequest()
+    assert.equal(request.command, command)
+    assert.equal(request.approvalRequired, true)
+    await target.exec(["test", "!", "-e", `${scratch}-denied`])
+    await invoke("respond_execution", { req: { requestId: request.requestId, expectedRevision: request.revision, decision: "deny" } })
+    const denied = await pending.result
     assert.equal(denied.code, 125)
-    assert.ok(diagnostic(denied).some((entry) => entry.checked === true && entry.state === "denied"))
+    assert.ok(diagnostic(denied).some((entry) => entry.checked === true && entry.state === "rejected"))
+    await target.exec(["test", "!", "-e", `${scratch}-denied`])
     await target.ssh(`test ! -e '${scratch}' && mkdir '${scratch}' && printf '%s' '${scratchMarker}' > '${scratch}/.cloudlink.json' && mkdir '${scratch}/remove'`)
   })
 
   await check("P8 native approval waits beyond 90 seconds, then one original wait starts once", async () => {
-    await invoke("set_mode", { assetId: saved.id, mode: "standard" })
+    await invoke("set_mode", { assetId: saved.id, mode: "auto-ops" })
     await target.ssh(`test ! -L '${scratch}' && test "$(cat '${scratch}/.cloudlink.json')" = '${scratchMarker}'`)
     const command = `rm -rf -- '${scratch}/remove/../remove'; printf 'x\\n' >> '${scratch}/counter'`
     const started = Date.now()
@@ -694,7 +702,7 @@ try {
   await check("P8 policy narrowing cancels native pending input without starting it", async () => {
     const pending = runnerExec(`rm -rf -- '${scratch}/remove/../remove'; printf 'y\\n' >> '${scratch}/counter'`)
     const request = await waitingRequest()
-    await invoke("set_mode", { assetId: saved.id, mode: "read-only" })
+    await invoke("set_mode", { assetId: saved.id, mode: "confirm-changes" })
     const result = await pending.result
     assert.equal(result.code, 125)
     assert.equal((await requests()).find((entry) => entry.requestId === request.requestId).state, "cancelled")
@@ -702,7 +710,7 @@ try {
   })
 
   await check("P8 native SFTP copies one file to new paths and refuses overwrite", async () => {
-    await invoke("set_mode", { assetId: saved.id, mode: "standard" })
+    await invoke("set_mode", { assetId: saved.id, mode: "auto-ops" })
     const directory = join(userRoot, "transfer [paths]")
     await mkdir(directory)
     await writeFile(join(directory, ".cloudlink.json"), JSON.stringify({ managedBy: "cloudlink", kind: "p8-transfer-test" }), { flag: "wx" })
@@ -753,7 +761,7 @@ try {
     assert.equal((await invoke("install_guard", { envId: "windows" })).state, "active")
     const receipt = JSON.parse(await readFile(join(dataRoot, "bin", ".cloudlink.json"), "utf8"))
     assert.deepEqual(receipt.retiredFiles ?? {}, {})
-    await invoke("set_mode", { assetId: saved.id, mode: "read-only" })
+    await invoke("set_mode", { assetId: saved.id, mode: "confirm-changes" })
   })
 
   if (nativeTools) await check("P8 native caption close keeps tray runtime active and checked requests working", async () => {

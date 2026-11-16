@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react"
 
 import type { ExecutionRequest } from "@/bindings"
-import { AgentMark } from "@/components/app/AgentMark"
+import { InvocationAvatar, invocationName } from "@/components/app/InvocationAvatar"
 import { Button } from "@/components/ui/button"
 import { Item, ItemActions, ItemContent, ItemHeader, ItemMedia, ItemTitle } from "@/components/ui/item"
 import { Spinner } from "@/components/ui/spinner"
@@ -28,10 +28,8 @@ export function ExecutionCard({ request }: { request: ExecutionRequest }) {
     <Item id={`execution-${request.requestId}`} ref={ref} role="listitem" tabIndex={-1} className="items-start rounded-none border-0 px-3.5 py-3">
       <ItemHeader>
         <div className="flex min-w-0 items-center gap-2.5">
-          <ItemMedia className="size-5.5 rounded-control border border-line bg-card" aria-hidden>
-            <AgentMark agent="custom" label={copy.execution.source} lit={false} className="size-3.5" />
-          </ItemMedia>
-          <ItemTitle className="line-clamp-none">{copy.execution.ask(name)}</ItemTitle>
+          <ItemMedia><InvocationAvatar caller={request.caller} channel="runner" /></ItemMedia>
+          <ItemTitle className="line-clamp-none">{copy.execution.ask(name, invocationName(request.caller))}</ItemTitle>
         </div>
         <time dateTime={request.createdAt} className="shrink-0 text-xs text-muted-foreground tabular-nums">{formatRelative(request.createdAt)}</time>
       </ItemHeader>

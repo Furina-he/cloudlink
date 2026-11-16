@@ -130,7 +130,7 @@ fn skill_md_structure_matches_prd() {
     // 只输出 name 和 description 两个 frontmatter 字段（5.1）
     let fm: Vec<&str> = skill.split("---\n").nth(1).unwrap().lines().collect();
     assert_eq!(fm.len(), 2);
-    assert!(skill.contains("| `hk-edge` | Public reverse proxy for api.example.com and blog.example.com, and host for the backend API containers | production | read-only | `references/hk-edge.md` |"));
+    assert!(skill.contains("| `hk-edge` | Public reverse proxy for api.example.com and blog.example.com, and host for the backend API containers | production | confirm-changes | `references/hk-edge.md` |"));
     assert!(skill.contains("5. Deploy with docker compose in /opt/apps/<name>; never edit containers by hand\n6. Tell the user before restarting anything on a production server\n"));
     assert!(skill.contains("`C:/Users/me/.cloudlink/inbox/<name>.md`"));
     assert!(!skill.contains("30 minutes"), "v3.1 removed the 30-minute unlock");
@@ -147,7 +147,7 @@ fn skill_md_structure_matches_prd() {
     );
     let hk = &p.files[1].content;
     assert!(hk.contains("- System: Ubuntu 24.04 LTS | 2 vCPU / 2 GB RAM | managed by 1Panel (/opt/1panel)\n"));
-    assert!(hk.contains("3. Never stop or restart the `openresty` container (critical)\n"));
+    assert!(hk.contains("3. Stopping or restarting the `openresty` container is high risk (critical); while CloudLink runs, request one-time approval through its runner\n"));
     assert!(!hk.contains("203.0.113.10"), "IP is not exported by default");
     assert!(
         !hk.contains("0.0.0.0:22"),
@@ -404,7 +404,7 @@ fn status_keeps_last_success_when_blocked() {
 fn mode_changes_the_output() {
     let mut hk = testkit::hk_edge();
     let a = compile_with(&[Asset::Vps(hk.clone())], &SkillConfig::default());
-    hk.agent.mode = Mode::Standard;
+    hk.agent.mode = Mode::AutoOps;
     let b = compile_with(&[Asset::Vps(hk)], &SkillConfig::default());
     assert_ne!(a.files, b.files);
 }

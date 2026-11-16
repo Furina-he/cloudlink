@@ -12,7 +12,7 @@ use super::Backend;
 use crate::error::{AppError, Result};
 use crate::model::env::EnvId;
 use crate::model::execution::*;
-use crate::model::guard::{Operation, OperationDecision, OperationSource};
+use crate::model::guard::{InvocationProvenance, InvocationSource, Operation, OperationDecision, OperationSource};
 use crate::model::misc::IpcErrorId;
 use crate::paths::Paths;
 
@@ -201,6 +201,17 @@ fn valid_input(input: &Value) -> bool {
             .get("timeoutSec")
             .is_none_or(|t| t.as_u64().is_some_and(|t| (1..=3600).contains(&t)))
         && (input["kind"] != "put" || input["inputDigest"].as_str().is_some_and(runtime::valid_token))
+        && input.get("caller").is_none_or(|caller| {
+            caller.is_null()
+                || serde_json::from_value::<InvocationSource>(caller.clone())
+                    .is_ok_and(|caller| caller.valid() && caller.provenance != InvocationProvenance::Hook)
+        })
+        && input.get("sessionId").is_none_or(|session| {
+            session.is_null()
+                || session.as_str().is_some_and(|session| {
+                    !session.is_empty() && session.len() <= 256 && !session.chars().any(char::is_control)
+                })
+        })
 }
 
 impl Backend {
@@ -246,7 +257,7 @@ impl Backend {
                 asset_id: view.asset_id.clone(),
                 env_id: view.env_id.clone(),
                 at: view.created_at.clone(),
-                session_id: String::new(),
+                session_id: view.session_id.clone().unwrap_or_default(),
                 cwd: view.cwd.clone(),
                 command: view.command.clone(),
                 decision: if allowed {
@@ -259,6 +270,7 @@ impl Backend {
                     .as_ref()
                     .and_then(|reason| serde_json::from_value(Value::String(reason.clone())).ok()),
                 source: Some(OperationSource::Runner),
+                caller: view.caller,
                 checked: Some(view.checked),
                 execution_state: Some(view.state),
                 request_id: Some(view.request_id.clone()),
@@ -395,6 +407,12 @@ impl Backend {
                 env_id: EnvId::parse(input["envId"].as_str().expect("validated env")).expect("validated env"),
                 kind: serde_json::from_value(input["kind"].clone())?,
                 source: "unidentified".into(),
+                caller: input
+                    .get("caller")
+                    .filter(|caller| !caller.is_null())
+                    .map(|caller| serde_json::from_value(caller.clone()))
+                    .transpose()?,
+                session_id: input["sessionId"].as_str().map(crate::operations::redact_text),
                 command: display(input),
                 cwd: crate::operations::redact_text(input["cwd"].as_str().expect("validated cwd")),
                 state,

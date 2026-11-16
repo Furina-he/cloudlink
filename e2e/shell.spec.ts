@@ -90,7 +90,7 @@ test.describe("应用外壳", () => {
     await expect(dialog.getByRole("option", { name: /^测试 .+ 的连接$/ })).toHaveCount(0)
     await expect(dialog.getByRole("option", { name: "添加 GitHub" })).toHaveCount(1)
     await expect(dialog.getByRole("option", { name: /云平台 CLI/ })).toHaveCount(0)
-    await expect(dialog.getByRole("option", { name: "生产资源全部切回只读" })).toHaveCount(1)
+    await expect(dialog.getByRole("option", { name: "生产资源全部改为确认变更" })).toHaveCount(1)
     await page.keyboard.press("Escape")
     await expect(dialog).toBeHidden()
 
@@ -226,7 +226,7 @@ test.describe("键盘焦点（P6 无障碍复查）", () => {
     await page.keyboard.press("Control+2")
     await page.getByRole("button", { name: /^护栏规则/ }).click()
     await expect(page.getByRole("heading", { level: 1, name: "护栏规则" })).toBeFocused()
-    await expect(page.getByRole("heading", { name: "只读巡检时" })).toBeVisible()
+    await expect(page.getByRole("heading", { name: "两档都直接执行查询" })).toBeVisible()
     await page.keyboard.press("Escape")
     await expect(page.getByRole("button", { name: /^护栏规则/ })).toBeVisible()
   })

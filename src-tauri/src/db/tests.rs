@@ -19,6 +19,80 @@ fn migrates_to_current_schema_with_wal() {
 }
 
 #[test]
+fn real_use_migration_keeps_old_modes_conservative_in_assets_settings_and_probe_history() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    for migration in &MIGRATIONS[..6] {
+        conn.execute_batch(migration).unwrap();
+    }
+    conn.execute_batch("CREATE TABLE schema_version(version INTEGER NOT NULL); INSERT INTO schema_version VALUES(6);")
+        .unwrap();
+    for (index, mode) in ["read-only", "standard", "auto-ops"].iter().enumerate() {
+        let mut asset = serde_json::to_value(Asset::Vps(testkit::hk_edge())).unwrap();
+        let id = format!("legacy-{index}");
+        asset["id"] = id.clone().into();
+        asset["agent"]["mode"] = (*mode).into();
+        let json = asset.to_string();
+        conn.execute(
+            "INSERT INTO assets(id,type,handle,created_at,json) VALUES(?1,'vps',?1,'2026-11-15',?2)",
+            params![id, json],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO probe_snapshots(run_id,asset_id,at,json) VALUES(?1,?1,'2026-11-15',?2)",
+            params![id, json],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO probe_results(run_id,after_json,merged_json) VALUES(?1,?2,?3)",
+            params![id, json, serde_json::json!({"asset":asset}).to_string()],
+        )
+        .unwrap();
+    }
+    conn.execute(
+        "INSERT INTO settings(key,json) VALUES('settings',?1)",
+        [r#"{"defaultMode":"standard"}"#],
+    )
+    .unwrap();
+    let db = Db::init(conn).unwrap();
+    assert_eq!(db.schema_version().unwrap(), 7);
+    for index in 0..3 {
+        let expected = if index < 2 { "confirm-changes" } else { "auto-ops" };
+        let id = format!("legacy-{index}");
+        for (table, column, path, key) in [
+            ("assets", "json", "$.agent.mode", "id"),
+            ("probe_snapshots", "json", "$.agent.mode", "run_id"),
+            ("probe_results", "after_json", "$.agent.mode", "run_id"),
+            ("probe_results", "merged_json", "$.asset.agent.mode", "run_id"),
+        ] {
+            let actual: String = db
+                .conn
+                .query_row(
+                    &format!("SELECT json_extract({column},?1) FROM {table} WHERE {key}=?2"),
+                    params![path, id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(actual, expected, "{table}.{column}: {id}");
+        }
+    }
+    let default: String = db
+        .conn
+        .query_row(
+            "SELECT json_extract(json,'$.defaultMode') FROM settings WHERE key='settings'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(default, "confirm-changes");
+    for old in ["read-only", "standard"] {
+        assert_eq!(
+            serde_json::from_value::<Mode>(old.into()).unwrap(),
+            Mode::ConfirmChanges
+        );
+    }
+}
+
+#[test]
 fn refuses_newer_schema() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("data.db");
@@ -47,7 +121,7 @@ fn assets_round_trip_and_aliases_are_unique_ignoring_case() {
 
     // 更新同一条
     let mut changed = testkit::hk_edge();
-    changed.agent.mode = Mode::Standard;
+    changed.agent.mode = Mode::AutoOps;
     db.upsert_asset(&Asset::Vps(changed.clone())).unwrap();
     assert_eq!(db.get_asset(&changed.id).unwrap(), Some(Asset::Vps(changed)));
     assert!(db.delete_asset(hk.id()).unwrap());
@@ -108,6 +182,7 @@ fn targets_deliveries_and_settings() {
         checked_at: testkit::NOW.into(),
         unit_id: None,
         shared_agent_keys: None,
+        asset_ids: None,
     };
     db.upsert_delivery(&d).unwrap();
     assert_eq!(db.list_targets().unwrap(), vec![t.clone()]);

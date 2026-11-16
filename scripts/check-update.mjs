@@ -166,8 +166,8 @@ function runner(args, timeout = 130_000) {
   // Do not persist raw stderr: waiting receipts contain a one-request owner token.
   return { child, completed }
 }
-// A parseable custom command is allowed in standard mode; the explicit shell
-// wrapper exercises D14's opaque-command approval without changing guard rules.
+// Custom commands and explicit shell wrappers require approval in both modes.
+// Keep the wrapper to exercise the opaque-command update handoff.
 const taskCommand = (name) => `sh -c 'cloudlink-p8-task ${name}'`
 const task = (name, timeout = 130_000) => runner(["exec", "--env", "windows", "--asset", saved.id, "--timeout", "600", "--", taskCommand(name)], timeout)
 const getRequest = async (id) => (await requests()).find((item) => item.requestId === id)
@@ -275,7 +275,7 @@ try {
     assert.equal(saved.production, true)
     assert.equal(saved.connection.auth.method, "key")
     assert.equal(saved.connection.verified.ok, true)
-    await invoke("set_mode", { assetId: saved.id, mode: "standard" })
+    await invoke("set_mode", { assetId: saved.id, mode: "auto-ops" })
     const deliveries = await invoke("check_deliveries")
     assert.equal(deliveries.filter((item) => item.status === "ok").length, 2)
     assert.equal((await invoke("install_guard", { envId: "windows" })).state, "active")

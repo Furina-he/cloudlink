@@ -1,6 +1,7 @@
 import { CircleCheckIcon, ClockIcon, ShieldXIcon } from "lucide-react"
 
 import type { Operation } from "@/bindings"
+import { InvocationAvatar, invocationChannel, invocationName } from "@/components/app/InvocationAvatar"
 import {
   TraceCollapsible,
   TraceCollapsibleContent,
@@ -32,6 +33,7 @@ export function OperationLine({ op }: { op: Operation }) {
             <Icon className={className} />
           </TraceIcon>
           <TraceDescription className="shrink-0">{formatRelative(op.at)}</TraceDescription>
+          <InvocationAvatar caller={op.caller} channel={op.source} />
           <TraceTitle className="font-mono text-xs text-foreground">{op.command}</TraceTitle>
           <span className="sr-only">{status.text}</span>
         </TraceLine>
@@ -42,7 +44,8 @@ export function OperationLine({ op }: { op: Operation }) {
           {/* 标准运维资源上解析不了的命令：放行并在记录中标注（F-306 AC3） */}
           {reason ? `${status.text}：${reason}` : status.text}
         </span>
-        <span>{op.source === "runner" ? copy.execution.runnerSource : copy.execution.hookSource}</span>
+        <span>{invocationName(op.caller)}</span>
+        <span>{invocationChannel(op.source)}</span>
         {op.exitCode !== undefined && <span className="tabular-nums">{copy.execution.exitCode(op.exitCode)}</span>}
         {op.durationMs !== undefined && <span className="tabular-nums">{copy.execution.duration(formatDuration(op.durationMs))}</span>}
         <span className="font-mono">{op.cwd}</span>

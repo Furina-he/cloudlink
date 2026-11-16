@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils"
 import { isProdWritable } from "@/stores/assets"
 import { serverActions } from "./actions"
 
-export const MODE_ICON: Record<Mode, typeof EyeIcon> = { "read-only": EyeIcon, standard: WrenchIcon }
+export const MODE_ICON: Record<Mode, typeof EyeIcon> = { "confirm-changes": EyeIcon, "auto-ops": WrenchIcon }
 
 /** 生产资源处于标准运维时的琥珀色提醒（DESIGN.md Breaker Row） */
 export const PROD_WRITABLE = "border-warning/35 bg-warning/12 text-warning hover:bg-warning/18 hover:text-warning aria-pressed:bg-warning/12"
@@ -24,10 +24,10 @@ export function ModeToggle({ asset, labelledBy }: { asset: Asset; labelledBy: st
       value={[asset.agent.mode]}
       onValueChange={(next) => next[0] && serverActions.requestMode(asset, next[0] as Mode)}
     >
-      {(["read-only", "standard"] as const).map((mode) => {
+      {(["confirm-changes", "auto-ops"] as const).map((mode) => {
         const Icon = MODE_ICON[mode]
         return (
-          <ToggleGroupItem key={mode} value={mode} className={cn("px-3", mode === "standard" && warn && PROD_WRITABLE)}>
+          <ToggleGroupItem key={mode} value={mode} className={cn("px-3", mode === "auto-ops" && warn && PROD_WRITABLE)}>
             <Icon />
             {copy.mode[mode]}
           </ToggleGroupItem>

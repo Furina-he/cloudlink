@@ -137,7 +137,7 @@ fn policy_follows_mode_even_when_skill_compilation_is_blocked() {
         s.notes = "password=only-a-fake-test-password".into();
     }
     fixture.backend.database().unwrap().upsert_asset(&asset).unwrap();
-    let result = fixture.backend.set_mode(asset.id(), Mode::Standard).unwrap();
+    let result = fixture.backend.set_mode(asset.id(), Mode::AutoOps).unwrap();
     assert!(result.statuses.iter().any(|s| s.blocked));
     let policy: Value =
         serde_json::from_slice(&fs::read(fixture.paths.data_dir.join("guard/policy.json")).unwrap()).unwrap();
@@ -147,11 +147,11 @@ fn policy_follows_mode_even_when_skill_compilation_is_blocked() {
         .iter()
         .find(|r| r["id"] == asset.id())
         .unwrap();
-    assert_eq!(resource["mode"], "standard");
-    fixture.backend.set_mode(asset.id(), Mode::ReadOnly).unwrap();
+    assert_eq!(resource["mode"], "auto-ops");
+    fixture.backend.set_mode(asset.id(), Mode::ConfirmChanges).unwrap();
     let policy: Value =
         serde_json::from_slice(&fs::read(fixture.paths.data_dir.join("guard/policy.json")).unwrap()).unwrap();
-    assert_eq!(policy["resources"][0]["mode"], "read-only");
+    assert_eq!(policy["resources"][0]["mode"], "confirm-changes");
 }
 
 #[test]

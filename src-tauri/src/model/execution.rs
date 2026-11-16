@@ -86,10 +86,16 @@ pub struct ExecutionRequest {
     pub asset_id: String,
     pub env_id: EnvId,
     pub kind: ExecutionKind,
-    /// 不能核实调用方品牌时只显示未识别来源，不信任自报品牌。
+    // Legacy channel field; caller carries bounded display-only provenance, never authorization.
     #[ts(type = "\"unidentified\"")]
     pub source: String,
-    /// 展示完整命令的脱敏版本，绝不作为执行输入。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub caller: Option<super::guard::InvocationSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub session_id: Option<String>,
+    // Complete redacted display command, never an executable input.
     pub command: String,
     pub cwd: String,
     pub state: ExecutionState,

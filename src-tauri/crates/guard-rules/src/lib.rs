@@ -41,7 +41,7 @@ pub fn policy_valid(policy: &Value) -> bool {
                         }) && matches!(resource.get("kind").and_then(Value::as_str), Some("vps" | "cli"))
                             && matches!(
                                 resource.get("mode").and_then(Value::as_str),
-                                Some("read-only" | "standard")
+                                Some("confirm-changes" | "auto-ops")
                             )
                             && ["envIds", "hosts", "criticalServices", "accountAliases"]
                                 .iter()
@@ -97,8 +97,9 @@ fn matches_host(resource: &Value, host: &str) -> bool {
 }
 
 fn push(out: &mut Vec<Decision>, resource: &Value, reason_id: Option<&'static str>) {
-    let standard = resource["mode"] == "standard";
-    let allowed = reason_id.is_none() || standard && reason_id == Some("unparsed");
+    // An inline hook cannot grant the runner's one-time approval. Unknown
+    // commands remain blocked here and the installed hook directs them to exec.
+    let allowed = reason_id.is_none();
     let asset_id = resource["id"].as_str().unwrap_or_default();
     if let Some(existing) = out.iter_mut().find(|d| d.asset_id == asset_id) {
         // One log per resource per Bash call. A denial wins over every allowance.
@@ -168,7 +169,7 @@ fn inspect(resources: &[Value], env_id: &str, text: &str, outer_unsafe: bool, de
                     .unwrap_or_default();
                 let reason = ssh::judge(
                     &invocation.remote,
-                    resource["mode"] == "standard",
+                    resource["mode"] == "auto-ops",
                     &critical,
                     unsafe_shell || invocation.unsupported || shell::writes_redirect(simple),
                 );
@@ -182,10 +183,8 @@ fn inspect(resources: &[Value], env_id: &str, text: &str, outer_unsafe: bool, de
                 if target_match {
                     let reason = if words.iter().any(|word| ssh::credential_path(word)) {
                         Some("credential-read")
-                    } else if resource["mode"] != "standard" {
-                        Some("file-transfer")
                     } else {
-                        unsafe_shell.then_some("unparsed")
+                        Some("file-transfer")
                     };
                     push(out, resource, reason);
                 }
@@ -269,17 +268,17 @@ pub fn deny_output(decisions: &[Decision]) -> Option<Value> {
     // Do not echo command text: even a rejection must not return credentials to the Agent.
     let reason = match denied.reason_id.unwrap_or("unparsed") {
         "read-only" | "cli-write" => {
-            "This resource is in read-only mode; this command is not an inspection command. Ask the user to switch it to Standard mode in CloudLink if the change is intended."
+            "This change requires one-time approval. Use the resource's CloudLink runner Connect entry instead of switching modes or bypassing checks."
         }
         "credential-read" | "cli-env-export" => "Reading or exporting credentials is forbidden in every mode.",
         "runtime-protected" => {
             "Changing CloudLink's running checks or stopping its process is forbidden while CloudLink is running."
         }
         "execution-channel" => {
-            "This production resource uses CloudLink's execution channel while CloudLink is running. Use the quoted runner and stable asset ID from the resource's Skill details."
+            "This resource uses CloudLink's execution channel while CloudLink is running, regardless of production or mode. Use the quoted runner and stable asset ID from the resource's Skill details."
         }
         "runtime-invalid" | "runtime-not-ready" => {
-            "CloudLink's running state could not be verified. Do not treat an unavailable coordinator as an exit; retry after checking CloudLink's status."
+            "CloudLink's running checks are unavailable or could not be verified. Do not treat an unavailable coordinator or policy as an exit; retry after checking CloudLink's status."
         }
         "github-repo-delete" => "Deleting a managed GitHub repository is forbidden in every mode.",
         "github-default-force" => {
@@ -289,14 +288,13 @@ pub fn deny_output(decisions: &[Decision]) -> Option<Value> {
             "The command does not explicitly match a configured cloud account. Use the account selector from the resource's CloudLink details."
         }
         "cli-scope" => "The requested cloud resource is outside the selected CloudLink scope.",
-        "file-transfer" => "File transfer is forbidden in read-only mode.",
-        "interactive" => "Interactive SSH is forbidden in read-only mode. Supply an inspection command.",
-        "unparsed" => "CloudLink could not confirm that this is a read-only command.",
-        "critical-service" => "Stopping, deleting or restarting a critical service is forbidden.",
-        "ssh-config" => "Changing SSH access or stopping the SSH service is forbidden.",
-        "firewall" => "Changing firewall rules is forbidden.",
-        "host-reboot" => "Rebooting or shutting down the host is forbidden.",
-        _ => "This command can destroy data or infrastructure and is forbidden.",
+        "file-transfer" => "Use the resource's CloudLink runner single-file put/get entry, not direct file transfer.",
+        "interactive" => "Interactive SSH is not supported. Use the resource's CloudLink runner with an explicit remote command.",
+        "unparsed" => "CloudLink could not classify this command. Use the resource's CloudLink runner for one-time approval when the target is explicit; uncertain targets remain denied.",
+        "critical-service" | "ssh-config" | "firewall" | "host-reboot" | "volume-delete" | "data-delete"
+        | "cli-destroy" | "github-dangerous" => "This high-risk change requires one-time approval through the resource's CloudLink runner in either mode.",
+        "cli-identity" => "The actual CLI identity could not be verified; changing accounts is not authorization.",
+        _ => "CloudLink could not safely authorize this command. Do not bypass the block.",
     };
     Some(json!({"hookSpecificOutput": {
         "hookEventName":"PreToolUse", "permissionDecision":"deny",

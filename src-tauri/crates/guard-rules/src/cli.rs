@@ -218,6 +218,36 @@ fn in_scope(resource: &Value, target: &str) -> bool {
     })
 }
 
+fn routine_change(provider: &str, words: &[String], args: &[&str]) -> bool {
+    let flags: &[&str];
+    let options: &[&str];
+    let supported = match provider {
+        "cloudflare" => {
+            flags = &["--minify", "--no-bundle", "--keep-vars", "--dry-run", "--commit-dirty"];
+            options = &["--account-id", "--name", "--project-name", "--namespace-id", "--branch", "--commit-hash", "--commit-message", "--compatibility-date", "--outdir"];
+            args.first().is_some_and(|arg| ["deploy", "publish"].contains(arg))
+                || args.starts_with(&["pages", "deploy"])
+                || args.starts_with(&["kv", "key", "put"])
+        }
+        "vercel" => {
+            flags = &["--prod", "--yes", "-y", "--force", "--prebuilt", "--skip-domain"];
+            options = &["--scope", "-S", "--team", "-T", "--project", "--project-id", "--name", "--archive"];
+            args.first().is_some_and(|arg| ["deploy", "redeploy"].contains(arg))
+                || args.is_empty() && words.iter().any(|word| word == "--prod")
+        }
+        "oracle" => {
+            flags = &[];
+            options = &["--profile", "--instance-id", "--action", "--display-name", "--region"];
+            args.starts_with(&["compute", "instance", "action"])
+                && option(words, &["--action"]) == Some("START")
+                || args.starts_with(&["compute", "instance", "update"])
+                    && option(words, &["--display-name"]).is_some()
+        }
+        _ => return false,
+    };
+    supported && shell::checked_arguments(&words[1..], flags, options).is_some()
+}
+
 pub(crate) fn judge(
     resource: &Value,
     provider: &str,
@@ -226,7 +256,7 @@ pub(crate) fn judge(
     unsafe_shell: bool,
 ) -> Option<&'static str> {
     let args = positional(words);
-    let standard = resource.get("mode").and_then(Value::as_str) == Some("standard");
+    let auto_ops = resource.get("mode").and_then(Value::as_str) == Some("auto-ops");
     let starts = |head: &[&str]| args.starts_with(head);
     let has = |needle: &str| {
         words
@@ -321,9 +351,6 @@ pub(crate) fn judge(
     if unsafe_shell {
         return Some("unparsed");
     }
-    if standard {
-        return None;
-    }
     let allowed = match provider {
         "cloudflare" => {
             starts(&["tail"])
@@ -345,5 +372,11 @@ pub(crate) fn judge(
         }
         _ => false,
     };
-    (!allowed).then_some("cli-write")
+    if allowed {
+        None
+    } else if !routine_change(provider, words, &args) {
+        Some("unparsed")
+    } else {
+        (!auto_ops).then_some("cli-write")
+    }
 }

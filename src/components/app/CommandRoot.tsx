@@ -56,7 +56,7 @@ function openServer(id: string) {
 function CurrentActions({ asset, probing, close }: { asset: Asset; probing: boolean; close: () => void }) {
   const { agents } = useAgentOptions()
   const handle = handleOf(asset)
-  const nextMode = asset.agent.mode === "standard" ? "read-only" : "standard"
+  const nextMode = asset.agent.mode === "auto-ops" ? "confirm-changes" : "auto-ops"
   const run = (fn: () => void) => () => {
     fn()
     close()
@@ -86,7 +86,7 @@ function CurrentActions({ asset, probing, close }: { asset: Asset; probing: bool
         )
       })}
       <CommandItem value={`${mode} ${asset.name}`} onSelect={run(() => serverActions.requestMode(asset, nextMode))}>
-        {nextMode === "standard" ? <WrenchIcon /> : <EyeIcon />}
+        {nextMode === "auto-ops" ? <WrenchIcon /> : <EyeIcon />}
         {mode}
       </CommandItem>
     </>

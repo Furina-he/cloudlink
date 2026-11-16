@@ -1,5 +1,5 @@
-//! Rules for an explicitly routed request. Unlike legacy hooks, standard-mode
-//! opaque/high-risk commands require a GUI permit; a credential red line never does.
+//! Rules for an explicitly routed request. Both modes ask for opaque/high-risk
+//! commands; only explicitly supported routine changes can run automatically.
 
 use serde_json::{Value, json};
 
@@ -13,10 +13,9 @@ fn decision(action: &str, reason: Option<&str>) -> Value {
     result
 }
 
-fn result(reason: Option<&'static str>, standard: bool) -> Value {
+fn result(reason: Option<&'static str>) -> Value {
     match reason {
         None => decision("allow", None),
-        Some("cli-write" | "read-only") if standard => decision("allow", None),
         Some(
             reason @ ("credential-read"
             | "cli-env-export"
@@ -27,8 +26,7 @@ fn result(reason: Option<&'static str>, standard: bool) -> Value {
             | "runtime-protected"
             | "execution-input-invalid"),
         ) => decision("deny", Some(reason)),
-        Some(reason) if standard => decision("ask", Some(reason)),
-        Some(reason) => decision("deny", Some(reason)),
+        Some(reason) => decision("ask", Some(reason)),
     }
 }
 
@@ -174,14 +172,14 @@ pub fn managed_runner_invocation(command: &str, installed: &str) -> bool {
 }
 
 pub fn evaluate_execution(resource: &Value, kind: &str, args: &[String], tool: Option<&str>) -> Value {
-    if !matches!(resource["mode"].as_str(), Some("read-only" | "standard"))
+    if !matches!(resource["mode"].as_str(), Some("confirm-changes" | "auto-ops"))
         || args.len() > 256
         || args.iter().map(String::len).sum::<usize>() > 65_536
         || args.iter().any(|arg| arg.contains('\0'))
     {
         return decision("deny", Some("execution-input-invalid"));
     }
-    let standard = resource["mode"] == "standard";
+    let auto_ops = resource["mode"] == "auto-ops";
     let text = args.join(" ");
     if runtime_modification(resource, &text) {
         return decision("deny", Some("runtime-protected"));
@@ -204,8 +202,8 @@ pub fn evaluate_execution(resource: &Value, kind: &str, args: &[String], tool: O
             if args.iter().any(|arg| ssh::credential_path(arg)) {
                 return decision("deny", Some("credential-read"));
             }
-            return if kind == "put" && !standard {
-                decision("deny", Some("file-transfer"))
+            return if kind == "put" && !auto_ops {
+                decision("ask", Some("file-transfer"))
             } else {
                 decision("allow", None)
             };
@@ -241,13 +239,13 @@ pub fn evaluate_execution(resource: &Value, kind: &str, args: &[String], tool: O
                     .skip(i + 1)
                     .any(|word| ["-c", "-lc", "-ic"].contains(&word.as_str()))
         });
-        return result(ssh::judge(&args[0], standard, &critical, opaque), standard);
+        return result(ssh::judge(&args[0], auto_ops, &critical, opaque));
     }
     if resource["kind"] != "cli" || kind != "exec" || args.is_empty() {
         return decision("deny", Some("execution-input-invalid"));
     }
     if resource["provider"] == "github" {
-        return result(github::judge(resource, args, tool), standard);
+        return result(github::judge(resource, args, tool));
     }
     if tool.is_some() {
         return decision("deny", Some("execution-input-invalid"));
@@ -285,7 +283,7 @@ pub fn evaluate_execution(resource: &Value, kind: &str, args: &[String], tool: O
     } else {
         Vec::new()
     };
-    result(cli::judge(resource, provider, &words, &prefix, false), standard)
+    result(cli::judge(resource, provider, &words, &prefix, false))
 }
 
 #[cfg(test)]
@@ -299,6 +297,58 @@ mod tests {
     }
 
     #[test]
+    fn real_use_modes_allow_queries_and_only_auto_allow_explicit_routine_changes() {
+        for mode in ["confirm-changes", "auto-ops"] {
+            for command in ["uptime", "docker ps | head -n 5", "docker exec api nginx -t"] {
+                assert_eq!(exec(mode, command)["decision"], "allow", "{mode}: {command}");
+            }
+            for command in ["docker restart api", "docker compose up -d --build", "systemctl restart app"] {
+                assert_eq!(
+                    exec(mode, command)["decision"],
+                    if mode == "auto-ops" { "allow" } else { "ask" },
+                    "{mode}: {command}"
+                );
+            }
+            for command in [
+                "custom-deploy app", "docker frobnicate api", "docker restart --unknown api",
+                "docker compose down -v", "docker restart gateway", "reboot",
+                "sh -c 'docker restart api'", "echo $(uptime)", "docker restart api; custom-deploy app",
+                "docker restart api > /tmp/receipt", "sudo docker restart api",
+            ] {
+                assert_eq!(exec(mode, command)["decision"], "ask", "{mode}: {command}");
+            }
+            for command in ["cat .env", "docker inspect api", "taskkill /PID 4242"] {
+                assert_eq!(exec(mode, command)["decision"], "deny", "{mode}: {command}");
+            }
+            assert_eq!(
+                evaluate_execution(&vps(mode), "put", &["/tmp/local".into(), "/tmp/remote".into()], None)["decision"],
+                if mode == "auto-ops" { "allow" } else { "ask" }
+            );
+        }
+    }
+
+    #[test]
+    fn real_use_cli_unknown_commands_ask_but_unknown_targets_deny() {
+        for mode in ["confirm-changes", "auto-ops"] {
+            let resource = json!({"kind":"cli", "provider":"cloudflare", "mode":mode,
+                "account":"account-1", "scope":[{"id":"worker-1", "name":"api", "kind":"worker"}]});
+            for (args, action) in [
+                (vec!["whoami"], "allow"),
+                (vec!["deploy", "--name", "api"], if mode == "auto-ops" { "allow" } else { "ask" }),
+                (vec!["deploy", "--name", "api", "--unknown"], "ask"),
+                (vec!["future-command", "--name", "api"], "ask"),
+                (vec!["delete", "--name", "api"], "ask"),
+                (vec!["deploy", "--name", "other"], "deny"),
+                (vec!["deploy"], "deny"),
+                (vec!["secret", "get", "TOKEN", "--name", "api"], "deny"),
+            ] {
+                let args: Vec<String> = args.into_iter().map(String::from).collect();
+                assert_eq!(evaluate_execution(&resource, "exec", &args, None)["decision"], action, "{mode}: {args:?}");
+            }
+        }
+    }
+
+    #[test]
     fn inspection_pipelines_and_nested_docker_commands_pass() {
         for command in [
             "uptime; df -h | tail -n 5",
@@ -307,7 +357,7 @@ mod tests {
             "kubectl get pods -o wide",
             "kubectl get deployments -n app -o json | head -n 40",
         ] {
-            assert_eq!(exec("read-only", command)["decision"], "allow", "{command}");
+            assert_eq!(exec("confirm-changes", command)["decision"], "allow", "{command}");
         }
     }
     #[test]
@@ -319,8 +369,8 @@ mod tests {
             "echo $(uptime)",
             "nohup sh -c 'docker restart api' &",
         ] {
-            assert_eq!(exec("standard", command)["decision"], "ask", "{command}");
-            assert_eq!(exec("read-only", command)["decision"], "deny", "{command}");
+            assert_eq!(exec("auto-ops", command)["decision"], "ask", "{command}");
+            assert_eq!(exec("confirm-changes", command)["decision"], "ask", "{command}");
         }
         for command in [
             "cat .env",
@@ -330,24 +380,24 @@ mod tests {
             "taskkill /PID 4242",
             "kubectl get secrets -o yaml",
         ] {
-            assert_eq!(exec("standard", command)["decision"], "deny", "{command}");
+            assert_eq!(exec("auto-ops", command)["decision"], "deny", "{command}");
         }
-        assert_eq!(exec("standard", "docker restart api")["decision"], "allow");
+        assert_eq!(exec("auto-ops", "docker restart api")["decision"], "allow");
     }
     #[test]
     fn transfers_have_no_read_only_upload_or_credential_escape() {
         assert_eq!(
             evaluate_execution(
-                &vps("read-only"),
+                &vps("confirm-changes"),
                 "put",
                 &["/tmp/local".into(), "/tmp/remote".into()],
                 None
             )["decision"],
-            "deny"
+            "ask"
         );
         assert_eq!(
             evaluate_execution(
-                &vps("read-only"),
+                &vps("confirm-changes"),
                 "get",
                 &["/tmp/remote".into(), "/tmp/local".into()],
                 None
@@ -356,14 +406,14 @@ mod tests {
         );
         assert_eq!(
             evaluate_execution(
-                &vps("standard"),
+                &vps("auto-ops"),
                 "get",
                 &["/home/u/.ssh/id_ed25519".into(), "/tmp/local".into()],
                 None
             )["reasonId"],
             "credential-read"
         );
-        assert_eq!(exec("standard", "sh -s")["reasonId"], "execution-input-invalid");
+        assert_eq!(exec("auto-ops", "sh -s")["reasonId"], "execution-input-invalid");
     }
     #[test]
     fn runner_recognition_requires_exact_installed_path_and_one_call() {

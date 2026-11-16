@@ -42,6 +42,55 @@ struct Parsed {
     ticket: Option<String>,
     status: bool,
 }
+
+fn known_agent(agent: &str) -> bool {
+    // Kept aligned with model::delivery::AgentBrand; the desktop validates the enum again.
+    matches!(
+        agent,
+        "claude-code"
+            | "codex"
+            | "cursor"
+            | "windsurf"
+            | "gemini-cli"
+            | "copilot"
+            | "opencode"
+            | "cline"
+            | "roo-code"
+            | "kilo-code"
+            | "goose"
+            | "amp"
+            | "qwen-code"
+            | "droid"
+            | "augment"
+            | "crush"
+            | "junie"
+            | "warp"
+            | "trae"
+            | "trae-cn"
+            | "kiro"
+            | "continue"
+    )
+}
+
+fn metadata_valid(input: &Value) -> bool {
+    input.get("caller").is_none_or(|caller| {
+        caller.is_null()
+            || caller.as_object().is_some_and(|caller| {
+                caller.keys().all(|key| key == "agent" || key == "provenance")
+                    && match caller.get("provenance").and_then(Value::as_str) {
+                        Some("self-reported") => caller.get("agent").and_then(Value::as_str).is_some_and(known_agent),
+                        Some("unknown") => caller.get("agent").is_none_or(Value::is_null),
+                        _ => false,
+                    }
+            })
+    }) && input.get("sessionId").is_none_or(|session| {
+        session.is_null()
+            || session.as_str().is_some_and(|session| {
+                !session.is_empty() && session.len() <= 256 && !session.chars().any(char::is_control)
+            })
+    })
+}
+
 fn parse(args: &[String]) -> Result<Parsed> {
     let Some(kind) = args.first().map(String::as_str) else {
         return Err(Error::new("execution-input-invalid"));
@@ -60,6 +109,8 @@ fn parse(args: &[String]) -> Result<Parsed> {
     let mut env = None;
     let mut asset = None;
     let mut tool = None;
+    let mut agent = None;
+    let mut session_id = None;
     let mut timeout = 90u64;
     let mut trailing = Vec::new();
     let mut index = 1;
@@ -77,6 +128,8 @@ fn parse(args: &[String]) -> Result<Parsed> {
                 "--env" if env.is_none() => env = Some(value.clone()),
                 "--asset" if asset.is_none() => asset = Some(value.clone()),
                 "--tool" if tool.is_none() && value == "git" => tool = Some(value.clone()),
+                "--agent" if agent.is_none() && known_agent(value) => agent = Some(value.clone()),
+                "--session" if session_id.is_none() => session_id = Some(value.clone()),
                 "--timeout" => timeout = value.parse().map_err(|_| Error::new("execution-input-invalid"))?,
                 _ => return Err(Error::new("execution-input-invalid")),
             }
@@ -92,7 +145,13 @@ fn parse(args: &[String]) -> Result<Parsed> {
         .filter(|env| !env.is_empty() && env.len() <= 256 && !env.chars().any(char::is_control))
         .ok_or_else(|| Error::new("execution-input-invalid"))?;
     if kind == "wait" {
-        if trailing.len() != 1 || asset.is_some() || tool.is_some() || timeout != 90 {
+        if trailing.len() != 1
+            || asset.is_some()
+            || tool.is_some()
+            || agent.is_some()
+            || session_id.is_some()
+            || timeout != 90
+        {
             return Err(Error::new("execution-input-invalid"));
         }
         validate_ticket(&trailing[0])?;
@@ -111,8 +170,17 @@ fn parse(args: &[String]) -> Result<Parsed> {
         .to_str()
         .ok_or_else(|| Error::new("execution-path-invalid"))?
         .to_string();
-    let input =
+    let mut input =
         json!({"envId":env,"assetId":asset,"kind":kind,"args":trailing,"tool":tool,"timeoutSec":timeout,"cwd":cwd});
+    if let Some(agent) = agent {
+        input["caller"] = json!({"agent":agent,"provenance":"self-reported"});
+    }
+    if let Some(session_id) = session_id {
+        input["sessionId"] = session_id.into();
+    }
+    if !metadata_valid(&input) {
+        return Err(Error::new("execution-input-invalid"));
+    }
     routes::validate_input(&input).map_err(Error::from)?;
     Ok(Parsed {
         input,
@@ -136,7 +204,12 @@ fn validate_ticket(ticket: &str) -> Result<(&str, &str)> {
     Ok((id, token))
 }
 fn diagnostic(value: &Value) {
-    if let Ok(mut bytes) = serde_json::to_vec(value) {
+    let mut value = value.clone();
+    if value["reasonId"] == "execution-route-invalid" {
+        value["stage"] = "local-route".into();
+        value["sent"] = false.into();
+    }
+    if let Ok(mut bytes) = serde_json::to_vec(&value) {
         bytes.push(b'\n');
         let _ = std::io::stderr().lock().write_all(&bytes);
     }
@@ -223,6 +296,9 @@ fn wait_for_claim(session: &Value, id: &str, token: &str, env: &str) -> Result<V
 }
 
 fn hydrate_receipt(root: &Path, receipt: &mut Value) -> Result<()> {
+    if !metadata_valid(&receipt["input"]) {
+        return Err(Error::new("execution-protocol-invalid"));
+    }
     routes::validate_input(&receipt["input"]).map_err(Error::from)?;
     let manifest = routes::load(root).map_err(Error::from)?;
     if receipt["policyRevision"]
@@ -296,8 +372,13 @@ fn audit(root: &Path, input: &Value, request_id: &str, epoch: &str, output: &pro
         .map(|args| args.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" "))
         .unwrap_or_default();
     let mut value = json!({"id":format!("exec_{request_id}"),"source":"runner","checked":true,"epoch":epoch,
-        "requestId":request_id,"assetId":input["assetId"],"envId":input["envId"],"at":at,"sessionId":"","cwd":crate::safe_text(input["cwd"].as_str().unwrap_or_default(),4096),
+        "requestId":request_id,"assetId":input["assetId"],"envId":input["envId"],"at":at,"sessionId":crate::safe_text(input["sessionId"].as_str().unwrap_or_default(),256),"cwd":crate::safe_text(input["cwd"].as_str().unwrap_or_default(),4096),
         "command":crate::safe_text(&command,16384),"decision":decision,"executionState":output.state,"durationMs":output.duration_ms});
+    if metadata_valid(input)
+        && let Some(caller) = input.get("caller").filter(|caller| !caller.is_null())
+    {
+        value["caller"] = caller.clone();
+    }
     if let Some(code) = output.exit_code {
         value["exitCode"] = json!(code);
     }
@@ -589,7 +670,12 @@ fn run_inner(args: &[String], root: &Path) -> Result<i32> {
         );
         return Ok(125);
     }
-    let mut receipt = wait_for_claim(&session, &id, &token, parsed.input["envId"].as_str().unwrap_or_default())?;
+    let mut receipt = wait_for_claim(
+        &session,
+        &id,
+        &token,
+        parsed.input["envId"].as_str().unwrap_or_default(),
+    )?;
     if receipt["state"] == "waiting" {
         diagnostic(&json!({"source":"cloudlink","state":"waiting","requestId":format!("{id}.{token}")}));
         return Ok(75);
@@ -673,6 +759,106 @@ mod tests {
             assert!(parse(&strings(&args)).is_err());
         }
     }
+    #[test]
+    fn caller_is_an_explicit_self_report_and_wait_cannot_replace_it() {
+        let input = parse(&strings(&[
+            "exec",
+            "--env",
+            "windows",
+            "--asset",
+            "ast_1",
+            "--agent",
+            "codex",
+            "--session",
+            "original-session",
+            "--",
+            "uptime",
+        ]))
+        .unwrap()
+        .input;
+        assert_eq!(input["caller"], json!({"agent":"codex","provenance":"self-reported"}));
+        assert_eq!(input["sessionId"], "original-session");
+        let unknown = parse(&strings(&[
+            "exec", "--env", "windows", "--asset", "ast_1", "--", "uptime",
+        ]))
+        .unwrap()
+        .input;
+        assert!(unknown.get("caller").is_none() && unknown.get("sessionId").is_none());
+        let ticket = format!("req_1.{}", "a".repeat(64));
+        for (option, value) in [("--agent", "codex"), ("--session", "replacement-session")] {
+            assert!(parse(&strings(&["wait", "--env", "windows", option, value, &ticket])).is_err());
+        }
+        for (option, value) in [("--agent", "unrecognized"), ("--session", "invalid\nsession")] {
+            assert!(
+                parse(&strings(&[
+                    "exec", "--env", "windows", "--asset", "ast_1", option, value, "--", "uptime"
+                ]))
+                .is_err()
+            );
+        }
+        let mut spoofed = input;
+        spoofed["caller"]["provenance"] = "hook".into();
+        assert!(!metadata_valid(&spoofed));
+        spoofed["caller"]["provenance"] = "self-reported".into();
+        spoofed["sessionId"] = "x".repeat(257).into();
+        assert!(!metadata_valid(&spoofed));
+    }
+
+    #[test]
+    fn result_audit_keeps_the_original_caller_and_bounded_session() {
+        let root = std::env::temp_dir().join(format!("cloudlink-caller-audit-{}", runtime::nonce().unwrap()));
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("guard")).unwrap();
+        fs::write(
+            root.join(".cloudlink.json"),
+            br#"{"managedBy":"cloudlink","kind":"data"}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("guard/.cloudlink.json"),
+            br#"{"managedBy":"cloudlink","kind":"guard"}"#,
+        )
+        .unwrap();
+        let caller = json!({"agent":"codex","provenance":"self-reported"});
+        let input = json!({"assetId":"ast_1","envId":"windows","args":["uptime"],"cwd":root,"caller":caller,"sessionId":"original-session"});
+        let output = process::Finished {
+            state: "succeeded",
+            exit_code: Some(0),
+            duration_ms: 42,
+            ..Default::default()
+        };
+        audit(&root, &input, "req_1", "fixture-epoch", &output, "allowed");
+        let directory = root.join("guard/log");
+        let log = fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().is_some_and(|extension| extension == "jsonl"))
+            .unwrap();
+        let record: Value = serde_json::from_slice(&fs::read(&log).unwrap()).unwrap();
+        assert_eq!(record["caller"], caller);
+        assert_eq!(record["sessionId"], "original-session");
+        assert_eq!(record["source"], "runner");
+        for (directory, kind) in [
+            (&root, "data"),
+            (&root.join("guard"), "guard"),
+            (&directory, "operation-log"),
+        ] {
+            runtime::read_owned_json(&directory.join(".cloudlink.json"), kind, runtime::MAX_RUNTIME).unwrap();
+        }
+        for path in [
+            log,
+            directory.join(".cloudlink.json"),
+            root.join("guard/.cloudlink.json"),
+            root.join(".cloudlink.json"),
+        ] {
+            assert!(runtime::safe_path(&path) && !runtime::is_link(&fs::symlink_metadata(&path).unwrap()));
+            fs::remove_file(path).unwrap();
+        }
+        fs::remove_dir(directory).unwrap();
+        fs::remove_dir(root.join("guard")).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
+
     #[test]
     fn wait_ticket_is_private_and_contains_no_command() {
         let token = "a".repeat(64);

@@ -49,8 +49,8 @@ const spaced = (name: string) => (/[A-Za-z0-9]$/.test(name) ? `${name} ` : name)
 const v = (p: Params, key: string) => String(p?.[key] ?? "…")
 
 const MODE_LABEL: Record<Mode, string> = {
-  "read-only": "只读巡检",
-  standard: "标准运维",
+  "confirm-changes": "确认变更",
+  "auto-ops": "自动运维",
 }
 const AGENT_LABEL: Record<AgentId, string> = {
   "claude-code": "Claude Code",
@@ -212,6 +212,7 @@ const INCLUSION_REASON: Record<InclusionReasonId, Msg> = {
   "no-key-in-env": (p) => `${envOf(p)} 中没有配置私钥`,
   "cli-not-installed": (p) => `${envOf(p)} 没有安装 ${v(p, "cli")}`,
   "cli-not-logged-in": (p) => `${envOf(p)} 的 ${v(p, "cli")} 还没有登录`,
+  "github-scope-unverified": (p) => `${envOf(p)} 登录有效，但 GitHub 仓库范围尚未完整核对`,
 }
 
 /** 同上，用在已经写明运行环境的问题行副行里，不再重复环境名 */
@@ -226,6 +227,7 @@ const INCLUSION_REASON_IN_ENV: Record<InclusionReasonId, Msg> = {
   "no-key-in-env": () => "这里没有配置私钥",
   "cli-not-installed": (p) => `没有安装 ${v(p, "cli")}`,
   "cli-not-logged-in": (p) => `${v(p, "cli")} 还没有登录`,
+  "github-scope-unverified": () => "登录有效，但仓库范围尚未完整核对；保留已有选择，暂不扩大提供范围。请用上方「重新核对」，不必重复登录",
 }
 
 /** 护栏未生效、不可用的原因（F-306 AC5） */
@@ -243,6 +245,7 @@ const DISTRIBUTE_BLOCK: Record<DistributeBlockReason, string> = {
   failed: "最近一次连接失败，测试连接通过后才能分发",
   "password-only": "只用密码认证，Agent 无法输入密码；先改用密钥登录",
   "cli-not-ready": "CLI 还没有在任何运行环境里就绪；先安装并登录",
+  "github-scope-unverified": "GitHub 登录有效，但仓库范围尚未完整核对；请用上方「重新核对」，不必重复登录",
 }
 
 export type ViewId = "servers" | "agents" | "activity" | "settings"
@@ -307,7 +310,7 @@ export const copy = {
       setMode: (handle: string, mode: string) => `把 ${handle} 切换为「${mode}」`,
       preview: "预览 Skill",
       // 只动生产资源（F-407 AC2），名字里写明
-      allReadOnly: "生产资源全部切回只读",
+      allReadOnly: "生产资源全部改为确认变更",
       theme: "切换主题",
     },
     back: "返回",
@@ -336,10 +339,10 @@ export const copy = {
 
   mode: MODE_LABEL,
   modeHint: {
-    "read-only":
-      "只允许巡检类命令，例如 docker ps、docker logs、df -h。需要改动时，Agent 先向你说明计划并停下。",
-    standard:
-      "允许常规部署和重启服务。删除数据、改防火墙或 SSH 配置、停止关键服务、重启主机前，必须先征得你同意。",
+    "confirm-changes":
+      "查询直接执行，变更先问你。高危或目标明确但解析不明时仍需确认；凭据红线和目标不明一律拒绝。",
+    "auto-ops":
+      "范围内规则明确的常规变更直接执行。高危或不明确的操作仍先问你；凭据红线和目标不明一律拒绝。",
   } satisfies Record<Mode, string>,
 
   /** 资源行和详情的连接状态（6.11 状态词表）。changed 仍是「未验证」，另附一句提示（F-106 AC4） */
@@ -376,6 +379,7 @@ export const copy = {
     "no-key-in-env": "配置私钥",
     "cli-not-installed": "去安装",
     "cli-not-logged-in": "去登录",
+    "github-scope-unverified": "重新核对",
   } as Partial<Record<InclusionReasonId, string>>,
 
   delivery: {
@@ -413,7 +417,7 @@ export const copy = {
   >,
   /** 护栏拦下或标注的原因（8.6） */
   guardReason: {
-    "read-only": "只读巡检的资源，这不是巡检类命令",
+    "read-only": "这项变更需要确认",
     "credential-read": "读取凭据文件",
     "volume-delete": "删除数据卷",
     "data-delete": "删除数据",
@@ -421,15 +425,15 @@ export const copy = {
     firewall: "修改防火墙",
     "ssh-config": "修改 SSH 配置或停止 sshd",
     "critical-service": "停止或删除标为「关键」的服务",
-    "file-transfer": "只读服务器上的文件传输",
-    interactive: "只读服务器上的交互式登录或经标准输入执行脚本",
+    "file-transfer": "文件上传需要确认",
+    interactive: "不支持交互式登录或不透明的标准输入脚本",
     "cli-env-export": "导出云平台 CLI 的凭据",
-    "cli-write": "只读巡检的云平台，这不是查询或日志命令",
+    "cli-write": "这项云平台变更需要确认",
     "cli-destroy": "删库、删站或销毁云资源",
     "cli-account": "无法确认命令使用的是已绑定的云平台账号",
     "cli-scope": "命令目标不在已公开的范围内，或无法确认目标",
-    unparsed: "无法确认是只读命令",
-    "execution-channel": "生产资源请通过 CloudLink 执行入口操作",
+    unparsed: "目标已确定，但命令未能明确解析",
+    "execution-channel": "请通过 CloudLink 执行入口操作这项资源",
     "runtime-protected": "不能结束或改写正在运行的命令检查",
     "cli-identity": "当前登录身份与资源绑定不符",
     "github-repo-delete": "删除 GitHub 仓库不允许审批",
@@ -471,7 +475,7 @@ export const copy = {
     "body-too-long": (p) =>
       `Skill 正文 ${v(p, "lines")} 行，超过提醒的长度 ${v(p, "limit")} 行`,
     "prod-standard-no-guardrails": (p) =>
-      `${v(p, "alias")} 是生产资源，使用标准运维档，但没有自定义红线，建议补充`,
+      `${v(p, "alias")} 是生产资源，使用自动运维档，但没有自定义红线，建议补充`,
     "probe-stale": (p) =>
       `${v(p, "alias")} 的探测数据已有 ${v(p, "days")} 天，建议重新探测`,
     "suspected-injection": (p) =>
@@ -569,11 +573,11 @@ export const copy = {
     prod: "生产",
     loggedIn: (account: string | null) => (account ? `已登录 ${account}` : "已登录"),
     modeShort: {
-      "read-only": "只能查看，不能改动",
-      standard: "可以部署和重启，危险操作先问你",
+      "confirm-changes": "查询直接执行，变更先问你",
+      "auto-ops": "常规变更直接执行，高危或不明确时仍询问",
     } satisfies Record<Mode, string>,
     modeMenuLabel: (alias: string) => `${alias} 的档位`,
-    prodConfirm: (alias: string) => `${alias} 是生产环境。切到标准运维后，Agent 可以部署和重启。`,
+    prodConfirm: (alias: string) => `${alias} 是生产环境。常规变更将不再逐次询问，高危操作仍需确认。`,
     switch: "切换",
   },
 
@@ -597,7 +601,7 @@ export const copy = {
       `${handle}，${name}，${state}`,
     modeToggle: (handle: string, mode: string, next: string) =>
       `${handle} 当前是${mode}，点击切换为${next}`,
-    prodWritable: "生产环境已开启写权限",
+    prodWritable: "生产环境已启用自动运维",
     agentsLabel: (alias: string) => `将 ${alias} 分发给哪些 Agent`,
     agentToggle: (alias: string, agent: string) =>
       `将 ${alias} 分发给 ${agent}`,
@@ -721,6 +725,11 @@ export const copy = {
     ownerKind: { user: "个人账号", organization: "组织" },
     ownerMissing: "先选择仓库归属",
     identity: "使用的登录身份",
+    loginValid: "登录有效",
+    identityUnverified: "登录身份尚未核对",
+    recheck: "重新核对",
+    sameIdentity: "与登录身份相同",
+    manualPreserved: "保留当前手动范围，刷新或打开编辑不会自动扩大",
     host: "GitHub 服务",
     mode: "提供范围",
     modeLabel: { auto: "自动跟随", manual: "手动选择" },
@@ -801,9 +810,9 @@ export const copy = {
     aliasChangedHint: "修改别名后，已有命令和脚本也要相应调整。",
     defaultName: (n: number) => `服务器 ${n}`,
     nameFallback: (name: string) => `留空将使用“${name}”`,
-    prodHint: "切到标准运维前会再确认一次",
+    prodHint: "切到自动运维前会再确认一次",
     advancedHint: "SSH 别名、跳板机、在哪些运行环境里可用",
-    footHint: "添加后先是只读巡检，并同步给全部 Agent",
+    footHint: "添加后先是确认变更，并同步给全部 Agent",
     connectEnable: "连接并启用",
     working: "正在添加…",
     saveOnly: "仅保存（暂不启用）",
@@ -905,10 +914,14 @@ export const copy = {
     },
     rows: {
       production: "生产环境",
-      productionHint: "默认只读巡检；切到标准运维要确认",
+      productionHint: "只标记风险，不改变模式；生产自动运维需确认",
       mode: "档位",
       agents: "给哪些 Agent",
       agentsSynced: (n: number) => (n ? `${n} 个目录已同步` : "还没有同步给任何 Agent"),
+      selectedNotSynced: "已选择，尚未同步",
+      productionChanged: (on: boolean) => on ? "已标记为生产环境，执行模式未变" : "已取消生产标记，执行模式与检查未变",
+      sharedUnavailable: "共用目录无法单独提供这项资源",
+      sharedUnavailableHint: (names: string) => `${names} 共用同一目录；只有明确选择的交集会写入，其他选择没有改变。`,
       address: "地址",
       auth: "登录方式",
       jump: "跳板机",
@@ -949,7 +962,7 @@ export const copy = {
     editExport: "让 Agent 知道哪些信息",
     editExportHint: "连接由你自己的 SSH 配置维护，这里只选择写给 Agent 的内容，不改动连接。",
     saveExport: "保存",
-    honest: "这里的红线写给 Agent 看。CloudLink 运行中，生产资源经执行入口按档位检查；Claude Code 护栏也会引导可识别直连。能防手滑，不是安全沙箱。",
+    honest: "这里的红线写给 Agent 看。CloudLink 运行中，所有资源经执行入口按模式检查；Claude Code 护栏也会引导可识别直连。能防手滑，不是安全沙箱。",
     addRule: "添加",
     viewAll: "查看全部",
     activityEmpty: "还没有动态",
@@ -989,7 +1002,7 @@ export const copy = {
     partial: (name: string, n: number) => n ? `${name} 的选择已保存，${n} 个目录已同步，其余尚未完成` : `${name} 的选择已保存，但还没有同步成功`,
     withdrawPartial: (name: string) => `${name} 的选择已关闭，部分目录尚未完成撤回`,
     shared: (names: string[], name: string, on: boolean) => `${names.join(" 与 ")} 共用同一目录，${name}${on ? "已一起提供" : "已一起撤回"}`,
-    sharedHint: (names: string[]) => `${names.join("、")} 共用同一目录，资源开关一起生效`,
+    sharedHint: (names: string[]) => `${names.join("、")} 共用同一目录；只修改当前选择，副本只提供共同选择的资源`,
     mismatchWith: (names: string[]) => `与 ${names.join("、")} 共用同一目录，资源选择不一致`,
     envReason: (env: string, reason: string) => `${env}：${reason}`,
     addedPartial: (name: string, n: number) => `${name} 已添加，${n ? `${n} 个目录已同步，其余尚未完成` : "但还没有同步成功"}`,
@@ -1009,7 +1022,7 @@ export const copy = {
       "path-unsupported": "这个跨环境目录位置暂不支持，请改用该环境自己的目录",
       "sync-failed": "写入失败，请检查目录权限后重新检测",
       "withdraw-failed": "尚未完成撤回，请检查目录权限后重新检测",
-      "shared-selection-mismatch": "共用目录的资源选择不一致，已按共同选择提供；开关一次可对齐",
+      "shared-selection-mismatch": "共用目录不能单独提供这项资源；需由你分别选择共用的目标，其他选择未改变",
       "shared-windows": "与 Windows 共用目录，未单独提供",
       "shared-agent": "目录仍由共用的其他 Agent 使用",
       "shared-directory": "与其他 Agent 共用同一目录",
@@ -1018,10 +1031,13 @@ export const copy = {
     } as Record<string, string>,
   },
   modeConfirm: {
-    title: (alias: string) => `把 ${alias} 切换为标准运维？`,
+    title: (alias: string) => `为生产资源 ${alias} 启用自动运维？`,
     description:
-      "所有已启用的 Agent 都会获得变更权限的指令，护栏只会拦下明显危险的命令。切换后资源行会一直以琥珀色提醒，干完活记得切回只读巡检。",
-    confirm: "切换为标准运维",
+      "范围内规则明确的常规变更将不再逐次询问；高危或不明确的操作仍需确认，红线和目标不明仍拒绝。生产自动运维会持续以琥珀色提醒。",
+    confirm: "启用自动运维",
+    productionTitle: (name: string) => `把 ${name} 标记为生产环境并保持自动运维？`,
+    productionDescription: "这项资源正在自动运维。标记生产不会改变模式，常规变更仍不逐次询问，高危操作仍需确认；取消将保持原来的生产标记和模式。",
+    productionConfirm: "标记生产并保持",
   },
 
   /** 详情笔记分段（F-308） */
@@ -1302,7 +1318,7 @@ export const copy = {
   basic: {
     name: "名称",
     production: "生产环境",
-    productionHint: "新建时默认只读巡检，切到标准运维前会再确认",
+    productionHint: "只标记风险，不改变模式；生产自动运维需确认",
     env: "环境",
     summary: "用途",
     summaryHint: "一句话说明它是做什么的。Agent 靠这句话判断一个任务该找哪项资源。",
@@ -1400,7 +1416,7 @@ export const copy = {
     portsHint: "例如 127.0.0.1:8080->8080, 80->80/udp，多个用逗号分隔。",
     role: "角色",
     critical: "关键服务",
-    criticalHint: "护栏会拦下停止、删除或 kill 它的命令，红线里也会点名提醒 Agent。",
+    criticalHint: "停止、重启或删除关键服务属于高危操作；CloudLink 运行中两档都需允许一次，详情也会点名提醒 Agent。",
     submitAdd: "添加服务",
     submitEdit: "保存修改",
   },
@@ -1408,7 +1424,7 @@ export const copy = {
   guardrails: {
     advisoryTitle: "红线是写给 Agent 的指令。",
     advisoryDescription:
-      "Claude Code 上的护栏会拦下只读服务器上的写操作和明显危险的命令，能防手滑，防不了刻意绕过。需要硬隔离时，请为只读场景配置低权限 SSH 用户。",
+      "运行中由 CloudLink 执行入口检查两档操作：确认变更的变更先问，自动运维只直接执行规则明确的常规变更；高危操作仍需确认。Claude Code 护栏会引导纳管命令走入口，能防手滑，不是安全沙箱。需要硬隔离时，请配置低权限 SSH 用户。",
     custom: "自定义红线",
     customHint: "在任何档位下都会写进详情文件，逐字输出，顺序与这里一致。",
     add: "添加红线",
@@ -1424,8 +1440,8 @@ export const copy = {
         note: "不读取、不输出凭据类文件，不用 docker inspect 查看环境变量",
       },
       {
-        text: "Never ask for or record passwords, private keys or IP addresses; connect only through the SSH alias.",
-        note: "不询问、不记录密码、私钥或 IP；连接只通过 SSH 别名进行",
+        text: "Never ask for or record passwords, private keys or IP addresses; use the Connect entry in the resource's details file.",
+        note: "不询问、不记录密码、私钥或 IP；使用详情文件中指定的执行入口",
       },
       {
         text: 'If a host does not match its details file, report the difference to the user instead of "fixing" the server to match the document.',
@@ -1656,7 +1672,7 @@ export const copy = {
     guardReinstall: "重新安装",
     guardInstall: "开启护栏",
     guardNone: "无护栏",
-    guardNoneTip: "没有 Claude Code 的直连护栏；生产资源仍按 Skill 的执行入口检查，其他工具不保证纳管",
+    guardNoneTip: "没有 Claude Code 的直连护栏；所有资源仍按 Skill 的执行入口检查，其他工具不保证纳管",
     guardRules: "查看护栏规则",
     removeGuard: "移除护栏",
     reveal: "在文件夹中显示",
@@ -1754,22 +1770,22 @@ export const copy = {
     installed: (env: string) => `已为 ${env} 的 Claude Code 安装护栏`,
     removeTitle: (env: string) => `移除 ${env} 的护栏？`,
     removeDescription:
-      "只撤掉 CloudLink 加的那一处设置，不再拦截可识别的直连命令。CloudLink 运行中，生产资源的执行入口仍按档位检查；其他工具不保证纳管。",
+      "只撤掉 CloudLink 加的那一处设置，不再拦截可识别的直连命令。CloudLink 运行中，所有资源的执行入口仍按模式检查；其他工具不保证纳管。",
     removeConfirm: "移除护栏",
     removed: (env: string) => `已移除 ${env} 的护栏`,
-    /** 护栏规则页（PRD 6.6）：先讲拦什么，再讲只读巡检时放行什么 */
-    intro: "CloudLink 运行中（含托盘），执行入口检查生产资源的两档操作。Claude Code 护栏还能拦截并引导可识别直连；其他工具、别名或凭据不保证纳管。",
-    standardTitle: "标准运维的高风险操作",
+    /** 护栏规则页（PRD 6.6）：先讲拦什么，再讲确认变更时放行什么 */
+    intro: "生产与非生产统一从 CloudLink 入口执行，运行中（含托盘）按模式检查。Claude Code 护栏引导可识别直连；其他工具、别名或凭据不保证纳管。",
+    standardTitle: "两档都需确认的高风险操作",
     alwaysTitle: "任何档位都拦下",
     categoryCount: (n: number) => `${n} 类`,
-    readOnlyTitle: "只读巡检时",
-    readOnlyRow: "只放行查看类命令，其余都拦下",
+    readOnlyTitle: "两档都直接执行查询",
+    readOnlyRow: "已识别、非敏感的查看类命令",
     readOnlySummary: (n: number, examples: string[]) =>
       examples.length ? `${n} 条，例如 ${examples.join("、")}` : `${n} 条`,
     allowGroup: { system: "系统", services: "服务与日志", docker: "Docker", cloud: "云平台" },
     readOnlyNote:
-      "只放行支持且目标明确的查询；写入、上传或无法可靠判断的结构不放行。docker exec 和包装中的内容也要检查；不接受交互式登录或不透明的标准输入脚本。",
-    honest: "生产标准运维的高风险或目标明确但解析不了的命令，需要允许一次；凭据导出等红线不可审批。非生产保留原行为。彻底退出后新调用停止 CloudLink 检查，旧审批不获准或续跑；能防手滑，防不了刻意绕过。",
+      "查询直接执行；确认变更的变更先问，自动运维只直接执行规则明确的常规变更。docker exec 和包装中的内容仍会检查；不接受交互式登录或不透明的标准输入脚本。",
+    honest: "两档的高危或目标明确但解析不明的命令都需允许一次；凭据红线和目标不明都拒绝。彻底退出后 Skill、入口和新操作可用，但停止 CloudLink 检查与审批；旧请求不因退出获批，异常不当退出。不是安全沙箱。",
     loading: "正在加载规则",
   },
 
@@ -1875,8 +1891,8 @@ export const copy = {
 
   /** 自动同步的备份与撤销（F-309） */
   allReadOnly: {
-    done: (n: number) => `${n} 项生产资源已切回只读`,
-    none: "没有处于标准运维的生产资源",
+    done: (n: number) => `${n} 项生产资源已改为确认变更`,
+    none: "没有处于自动运维的生产资源",
   },
 
   backups: {
@@ -1891,14 +1907,14 @@ export const copy = {
     guardOn: "● 护栏运行中",
     guardOff: "○ 护栏未开启",
     modesHeader: "档位",
-    readOnly: "只读巡检",
-    standard: "标准运维",
-    allReadOnly: "生产资源全部切回只读",
-    prodInStandard: "{n} 项在标准运维",
+    readOnly: "确认变更",
+    standard: "自动运维",
+    allReadOnly: "生产资源全部改为确认变更",
+    prodInStandard: "{n} 项在自动运维",
     open: "打开 CloudLink",
     quit: "退出",
     notifyTitle: "CloudLink",
-    notifyAllReadOnly: "{n} 项生产资源已切回只读",
+    notifyAllReadOnly: "{n} 项生产资源已改为确认变更",
     notifyExecution: "有一条命令需要你确认。打开动态查看。",
   } satisfies TrayCopy,
 
@@ -1950,7 +1966,7 @@ export const copy = {
     "guard-installed": (p) => `为 ${envOf(p)} 的 Claude Code 安装了护栏`,
     "guard-removed": (p) => `移除了 ${envOf(p)} 的护栏`,
     "mode-changed": (p) =>
-      `把 ${v(p, "alias")} 切换为「${MODE_LABEL[v(p, "mode") as Mode] ?? v(p, "mode")}」`,
+      `把 ${v(p, "alias")} 切换为「${MODE_LABEL[v(p, "mode") as Mode] ?? ({ "read-only": "只读巡检（旧档）", standard: "标准运维（旧档）" } as Record<string, string>)[v(p, "mode")] ?? v(p, "mode")}」`,
     "cli-detected": (p) =>
       `检测了 ${v(p, "alias")} 的 CLI：${v(p, "ready")}/${v(p, "total")} 个运行环境已就绪`,
     "cli-scope-updated": (p) =>
@@ -1960,18 +1976,22 @@ export const copy = {
     "notes-dismissed": (p) =>
       `忽略了 ${v(p, "alias")} 的 ${v(p, "count")} 条 Agent 笔记`,
     "agent-op-allowed": (p) =>
-      `Agent 在 ${v(p, "alias")} 上执行了 \`${v(p, "command")}\``,
+      `CloudLink 已放行 Agent 在 ${v(p, "alias")} 上提交的 \`${v(p, "command")}\``,
     "agent-op-denied": (p) =>
-      `Agent 在 ${v(p, "alias")} 上执行的 \`${v(p, "command")}\` 被护栏拦下`,
+      `Agent 在 ${v(p, "alias")} 上提交的 \`${v(p, "command")}\` 已被拦下`,
     "update-installing": (p) =>
       `开始把 CloudLink 从 ${v(p, "from")} 更新到 ${v(p, "to")}`,
   } satisfies Record<ActivityMessageId, Msg>,
 
   execution: {
-    source: "未识别来源",
-    hookSource: "Claude Code 护栏",
+    source: "未知来源",
+    sourceName: (agent?: AgentBrand, provenance?: string) => agent && provenance !== "unknown" ? `${BRAND_NAME[agent]}${provenance === "self-reported" ? "（自报）" : ""}` : "未知来源",
+    sourceEvidence: { hook: "调用来自 Claude Code hook", "self-reported": "调用方自报，只用于显示，不作权限依据", unknown: "无法识别调用方，不根据分发目录推断" },
+    hookSource: "直连护栏",
+    unknownChannel: "未知检查通道",
+    callerAndChannel: (name: string, channel: string) => `${name} · ${channel}`,
     runnerSource: "CloudLink 执行入口",
-    ask: (name: string) => `未识别来源想在 ${name} 上运行`,
+    ask: (name: string, source = "未知来源") => `${spaced(source)}想在 ${name} 上运行`,
     allow: "允许一次",
     deny: "拒绝",
     cancel: "取消请求",
@@ -2031,10 +2051,10 @@ export const copy = {
     unparsed: "未能解析，已放行",
     reasonShort: (id: GuardReasonId) =>
       ({
-        "read-only": "只读档",
-        "cli-write": "只读档",
-        "file-transfer": "只读档",
-        interactive: "只读档",
+        "read-only": "需确认",
+        "cli-write": "需确认",
+        "file-transfer": "需确认",
+        interactive: "需确认",
         "credential-read": "读取凭据",
         "cli-env-export": "导出凭据",
         "cli-account": "账号不符",
@@ -2047,7 +2067,7 @@ export const copy = {
     clearFilter: "清除筛选",
     loadMore: "加载更多",
     loading: "正在加载操作记录",
-    scopeNote: "这里只记录 Claude Code 护栏的判定和 CloudLink 执行入口的受检请求；已放行不代表执行成功。彻底退出后，CloudLink 停止检查与审批。",
+    scopeNote: "这里只记录经过 CloudLink 的调用，来源与检查通道分别显示；已放行不代表执行成功。关闭到托盘继续检查，彻底退出后新操作仍可用，但停止检查与审批。",
     deletedAsset: "已删除的资源",
   },
 

@@ -2,7 +2,7 @@
 
 CloudLink 是 Windows 优先的 Tauri v2 桌面应用。它把服务器连接、云平台 CLI 账号与资源范围整理成统一的 `cloudlink-servers` Skill，并向 Windows 和 WSL 中的 Agent 目录分发受管副本。
 
-本文说明当前开发源码的职责与数据流，不替代接口定义。其中执行通道、审批与 GitHub 按归属范围属于 v0.3 候选实现，不是 v0.2.0 已发布能力；发行版以[发布说明](releases/)为准。开发命令见[贡献指南](../CONTRIBUTING.md)，实现约定见[代码规范](code-standards.md)。
+本文说明当前源码的职责与数据流，不替代接口定义。执行通道、审批与 GitHub 按归属范围在 v0.3 引入，v0.3.1 修订两档语义、独立分发与来源展示；各发行版以[发布说明](releases/)为准。开发命令见[贡献指南](../CONTRIBUTING.md)，实现约定见[代码规范](code-standards.md)。
 
 ## 分层与源码入口
 
@@ -62,7 +62,7 @@ Rust 的领域模型位于 [model](../src-tauri/src/model/)，前端使用 [bind
 
 [cli](../src-tauri/src/cli/mod.rs) 通过可注入的 runner 执行固定的只读查询，检测程序、版本、登录账号和可选资源。目录缓存绑定提供方与账号，保存范围时验证来源；安装或登录命令通过明确的界面操作打开终端，不在检测流程中偷偷执行。
 
-GitHub 将资源归属与登录身份分开：[GithubConfig](../src-tauri/src/model/github.rs) 绑定 host 和稳定 owner ID，各环境另存有效身份与仓库快照。自动模式跟随该归属当前及未来有权访问的仓库，手动模式保留明确选择；排除项使用稳定仓库 ID，不依赖可改名的仓库路径。
+GitHub 将资源归属与登录身份分开：[GithubConfig](../src-tauri/src/model/github.rs) 绑定 host 和稳定 owner ID，各环境另存有效身份与仓库快照。新接入默认自动跟随该归属当前及未来有权访问的仓库，已有手动模式保留明确选择；排除项使用稳定仓库 ID，不依赖可改名的仓库路径。有效登录不等于仓库范围已完整核对，两者分别显示和校验。
 
 [GitHub IPC](../src-tauri/src/ipc/github.rs) 在网络查询后复核 revision 和重置 epoch。不完整或失败的查询保留历史快照，不据此推断删除或扩大范围；扩围需要完整核对。历史手选保留手动模式，归属无法核实则留待确认，不靠旧登录名猜测。执行前的身份与目标预检独立于这份展示快照。
 
@@ -78,7 +78,7 @@ GitHub 将资源归属与登录身份分开：[GithubConfig](../src-tauri/src/mo
 
 [compile::compile](../src-tauri/src/compile/mod.rs) 接收已列入资源、Skill 配置、环境、runner 入口和显式时间，生成正文与明细文件，并返回 lint、预算和阻断状态。预览与发布复用同一编译器；相同输入产生相同内容。
 
-渲染与检查分别位于 [render.rs](../src-tauri/src/compile/render.rs) 和 [lint.rs](../src-tauri/src/compile/lint.rs)。生产 SSH 与云 CLI 的两种档位都生成基于稳定资源 ID 的受管入口；用户手动 SSH 别名仍保留。检查包括内容预算、资源数据及敏感信息；错误级 lint 阻止新产物发布。
+渲染与检查分别位于 [render.rs](../src-tauri/src/compile/render.rs) 和 [lint.rs](../src-tauri/src/compile/lint.rs)。所有已提供的 SSH 与云 CLI 资源都生成基于稳定资源 ID 的受管入口，不因生产标记或模式改走直连；用户手动 SSH 别名仍保留。检查包括内容预算、资源数据及敏感信息；错误级 lint 阻止新产物发布。
 
 [publication.rs](../src-tauri/src/ipc/publication.rs) 串起列入、策略与路由投影、编译及分发。策略和私有路由不依赖 Skill lint 放行；路由失效会取消未启动请求。编译受阻时可能保留上一份成功产物，但不能恢复已撤销的资源、范围或导出权限，必要时撤回旧副本。
 
@@ -86,9 +86,9 @@ GitHub 将资源归属与登录身份分开：[GithubConfig](../src-tauri/src/mo
 
 每个目标目录接收一个名为 `cloudlink-servers` 的 Skill，而不是每台服务器各写一份 Skill。
 
-[deliver/groups.rs](../src-tauri/src/deliver/groups.rs) 按解析后的真实目录组织分发单位：同环境多个 Agent 共用目录时，只生成、写入和备份一次，再向各目标返回状态。不一致的已有选择先收窄，显式切换会返回受影响的共用成员。
+[deliver/groups.rs](../src-tauri/src/deliver/groups.rs) 按解析后的真实目录组织分发单位：同环境多个 Agent 共用目录时，只生成、写入和备份一次，再向各目标返回状态。每次只修改点选的 AgentKey；物理副本取已启用成员明确选择且就绪资源的交集，不反写用户选择，也不拆链接或搬目录。同名 AgentKey 位于不同真实目录时，编译源、授权回执与内容哈希按物理单位隔离。
 
-“选择了 Agent”“资源满足列入条件”“副本已送达”是不同状态，界面不能用其中一个代替另一个。目标停用、目录共用、环境不可用和写入失败均由后端快照表达。
+“选择了 Agent”“资源满足列入条件”“副本已送达”是不同状态，界面不能用其中一个代替另一个。成功副本的 `assetIds` 标明实际包含的资源；目标停用、共用目录无法单独提供、部分送达、环境不可用和写入失败均由后端快照表达。
 
 [compile/publish.rs](../src-tauri/src/compile/publish.rs) 使用暂存目录、内容哈希和目录交换发布产物；[deliver](../src-tauri/src/deliver/mod.rs) 复制到目标目录，不创建分发软链接。
 
@@ -104,13 +104,13 @@ Sidecar 不直接读取 SQLite 或原生密码库，但会读取受管运行身�
 
 [runtime.rs](../src-tauri/crates/guard-rules/src/runtime.rs) 用安装身份、会话 epoch、PID、进程创建标识和每数据根的实例锁核实运行状态。关闭到托盘仍是 `active`；写有 `stopped` 的文件本身不是进程已退出的证明。启动、更新交接会短暂等待；记录损坏、身份不明或存活协调器不可达不能当成退出放行。
 
-[ipc/routes.rs](../src-tauri/src/ipc/routes.rs) 生成私有 manifest 和内容寻址的 SSH 配置快照，绑定资源 ID、环境、程序、账号、策略哈希及 revision。[共享读取层](../src-tauri/crates/guard-rules/src/routes.rs) 检查所有权、哈希、启用状态和路径；这些文件不写入 Skill，也不保存密码或私钥内容。
+[ipc/routes.rs](../src-tauri/src/ipc/routes.rs) 生成私有 manifest 和内容寻址的 SSH 配置快照，绑定资源 ID、环境、程序、账号、策略哈希及 revision。[共享读取层](../src-tauri/crates/guard-rules/src/routes.rs) 检查所有权、哈希、启用状态和路径；这些文件不写入 Skill，也不保存密码或私钥内容。允许的目录必须是完整绝对路径，裸 `//wsl.localhost` 不是合法目录，不进入允许列表；隔离目录边界与路径校验不因此放宽。
 
 只有核实应用完全退出后，新请求才可以沿已有有效路由转发而不做 CloudLink 命令检查或审批，并明确报告 `checked: false`。原审批不因退出获准，重启不恢复执行；正常退出取消未启动请求，不主动终止已经启动的独立命令。输入、路由与文件安全校验仍然存在。
 
 ### 判定、审批与最多一次消费
 
-[执行规则](../src-tauri/crates/guard-rules/src/execution.rs) 区分查询、普通写入、高危或解析不明操作及不可批准红线。只读档拒绝写入；标准档允许常规操作，高危或解析不明请求进入审批。凭据导出、目标或范围无效、删除仓库、默认或未指定分支强推等不会因为审批而变成可执行。
+[执行规则](../src-tauri/crates/guard-rules/src/execution.rs) 使用 `confirm-changes`（确认变更）和 `auto-ops`（自动运维）两档。查询直接执行；确认变更的变更先审批，自动运维仅直接执行范围内规则明确的常规变更。高危与目标明确但解析不明的操作两档都进入审批；凭据导出、目标或范围无效、删除仓库、默认或未指定分支强推等不会因为审批而变成可执行。生产只是独立风险标记，生产自动运维需用户确认；新资源固定确认变更，两个旧模式及历史快照也保守迁入确认变更。
 
 [协调器](../src-tauri/src/ipc/execution.rs) 保存本会话待处理请求。其 [loopback 协议](../src-tauri/crates/guard-rules/src/protocol.rs) 有版本、帧上限、短读写超时和会话凭证，只暴露提交、领取、取消及状态回报；允许一次或拒绝只能由主窗口的具名 Tauri 命令进入。
 
@@ -118,11 +118,11 @@ Sidecar 不直接读取 SQLite 或原生密码库，但会读取受管运行身�
 - 审批自请求创建起 5 分钟过期，后续 `wait` 不重置有效期。票据绑定请求与调用方能力，不等于批准，也不应公开分享。
 - 领取许可只发生一次；执行前再次核对会话、到期时间、路由与策略 revision。上传还核对输入摘要，GitHub 还重新验证有效身份、稳定仓库与 owner。
 - `approved`、`dispatching`、`running` 和最终结果分别记录，子进程创建后才报告运行。断线、超时或结果不明不能自动重试；不承诺跨崩溃的 exactly-once 或远端副作用回滚。
-- 前端仅显示脱敏请求，未知调用方不冒认 Agent 品牌。通知只定位到现有审批卡片，不直接批准，也不带原始命令。
+- 前端仅显示脱敏请求。`caller` 表示实际调用来源，与 hook／runner 检查通道 `source` 分开；runner 的 `--agent` 是有界自报，只作展示。审批、`wait` 和结果保留首次来源与 session，未知不按分发目录猜品牌。通知只定位到现有审批卡片，不直接批准，也不带原始命令。
 
 ### Hook 分工与操作记录
 
-[guard](../src-tauri/src/guard/mod.rs) 仍负责 hook 设置备份、安装记录、策略和受管可执行文件。Hook 分支读取 policy 与 runtime：运行中拦下可识别的生产直连并引导到执行通道；准确识别本安装的 runner 后避免重复判定。非生产直连沿用对应规则，核实完全退出后不继续把调用记录为受检。
+[guard](../src-tauri/src/guard/mod.rs) 仍负责 hook 设置备份、安装记录、策略和受管可执行文件。Hook 分支读取 policy 与 runtime：运行中拦下可识别的纳管直连并引导到执行通道，不按生产标记分流；准确识别本安装的 runner 后避免重复判定。策略损坏／缺失或通信故障不能被当作退出而静默放行；只有核实完全退出后才停止检查，也不继续把调用记录为受检。
 
 这些检查不覆盖任意工具、凭据或未知别名，也不是同一系统用户之间的安全沙箱。原始 argv 与许可只留在必要的会话内存；持久化的是脱敏操作记录，不是可重放任务队列。
 

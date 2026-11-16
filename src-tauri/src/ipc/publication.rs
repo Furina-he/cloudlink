@@ -111,20 +111,11 @@ impl Backend {
         let all_envs = self.contexts(false)?;
         let targets = self.list_targets()?;
         let plan = deliver::groups::Plan::new(&self.paths, &all_envs, &targets);
-        let choices_before: BTreeMap<_, _> = assets
-            .iter()
-            .map(|a| (a.id().to_string(), a.agent().agents.clone()))
-            .collect();
-        let mismatched = plan.normalize_choices(&mut assets);
-        self.shared_mismatches
+        let mismatched = plan.selection_mismatches(&assets);
+        *self
+            .shared_mismatches
             .lock()
-            .map_err(|_| crate::error::AppError::internal("sharing state unavailable"))?
-            .extend(mismatched);
-        for asset in &assets {
-            if choices_before.get(asset.id()) != Some(&asset.agent().agents) {
-                self.database()?.upsert_asset(asset)?;
-            }
-        }
+            .map_err(|_| crate::error::AppError::internal("sharing state unavailable"))? = mismatched;
         for asset in &mut assets {
             if let Asset::Vps(server) = asset
                 && server.connection.source == ConnectionSource::Imported
@@ -147,7 +138,6 @@ impl Backend {
             self.emit_guard_status()?;
             log::warn!("CloudLink guard policy could not be updated");
         }
-        let previous_inclusions = self.list_inclusions()?;
         let mut inclusions = deliver::compute_inclusions(&assets, &envs, &targets);
         plan.constrain_inclusions(&mut inclusions, &targets);
         // An exact generated file is necessary, but the user's other configuration can still override it.
@@ -196,6 +186,7 @@ impl Backend {
         let units = plan.units.iter().filter(|unit| unit.enabled());
         let mut statuses = Vec::new();
         let mut sources = BTreeMap::new();
+        let mut written_assets = BTreeMap::new();
         let mut hashes = BTreeMap::new();
         let mut withdraw = BTreeSet::new();
         let mut changed = BTreeSet::new();
@@ -203,12 +194,17 @@ impl Backend {
         for unit in units {
             let env_id = unit.env_id.clone();
             let agent_key = unit.owner().agent_key.clone();
+            let source_key = plan.source_key(unit);
             let active_keys = unit.active_keys();
             let member_keys = if unit.keys().len() > 1 { unit.keys() } else { Vec::new() };
             let Some(env) = envs.iter().find(|e| e.id == env_id && e.available) else {
                 continue;
             };
-            let ids = included_ids(&inclusions, &env_id, &active_keys[0]);
+            let mut ids = included_ids(&inclusions, &env_id, &active_keys[0]);
+            for member in active_keys.iter().skip(1) {
+                let member_ids = included_ids(&inclusions, &env_id, member);
+                ids.retain(|id| member_ids.contains(id));
+            }
             let included: Vec<_> = assets.iter().filter(|a| ids.contains(a.id())).collect();
             let grants = included
                 .iter()
@@ -216,15 +212,15 @@ impl Backend {
                 .collect::<BTreeMap<_, _>>();
             let prior_authority = self
                 .database()?
-                .publication_authority(&env_id, &agent_key)?
+                .publication_authority(&env_id, &source_key)?
                 .and_then(|v| serde_json::from_value::<Authority>(v).ok());
-            let key = (env_id.clone(), agent_key.clone());
-            if ids != included_ids(&previous_inclusions, &env_id, &agent_key)
-                || prior_authority.as_ref().is_none_or(|a| a.grants != grants)
-            {
+            let key = (env_id.clone(), source_key.clone());
+            if prior_authority.as_ref().is_none_or(|a| a.grants != grants) {
                 changed.insert(key.clone());
             }
-            let old_source = deliver::load_source(&self.paths, &env_id, &agent_key).ok().flatten();
+            let old_source = deliver::load_source_with_key(&self.paths, &env_id, &agent_key, &source_key)
+                .ok()
+                .flatten();
             let retains_grants = prior_authority.as_ref().is_some_and(|prior| {
                 old_source
                     .as_ref()
@@ -287,7 +283,8 @@ impl Backend {
                 {
                     Ok(())
                 } else {
-                    publish::publish(&self.paths.compiled_dir(), &marker, &preview.files).map(|_| ())
+                    publish::publish_with_key(&self.paths.compiled_dir(), &source_key, &marker, &preview.files)
+                        .map(|_| ())
                 };
                 if published.is_err() {
                     preview.blocked = true;
@@ -302,13 +299,14 @@ impl Backend {
                 } else {
                     self.database()?.put_publication_authority(
                         &env_id,
-                        &agent_key,
+                        &source_key,
                         &serde_json::to_value(Authority {
                             content_hash: content_hash.clone(),
                             grants,
                         })?,
                     )?;
                     hashes.insert(key.clone(), content_hash);
+                    written_assets.insert(key.clone(), ids.into_iter().collect::<Vec<_>>());
                     sources.insert(key.clone(), (marker, preview.files.clone()));
                 }
             }
@@ -363,7 +361,7 @@ impl Backend {
             let Some(env) = all_envs.iter().find(|e| e.id == unit.env_id) else {
                 continue;
             };
-            let key = (unit.env_id.clone(), unit.owner().agent_key.clone());
+            let key = (unit.env_id.clone(), plan.source_key(unit));
             let hash = hashes.get(&key).map(String::as_str);
             let outcome = if withdraw.contains(&key) {
                 deliver::inspect_unit(&self.paths, env, unit, hash).and_then(|checked| {
@@ -389,7 +387,10 @@ impl Backend {
             };
             let checked = outcome.unwrap_or_else(|error| deliver::broken(unit.owner(), &error));
             for target in &unit.targets {
-                let delivery = unit.decorate(checked.clone(), target, mismatches.contains(&target.id));
+                let mut delivery = unit.decorate(checked.clone(), target, mismatches.contains(&target.id));
+                if delivery.status == DeliveryStatus::Ok {
+                    delivery.asset_ids = written_assets.get(&key).cloned();
+                }
                 if delivery.status == DeliveryStatus::Missing
                     && !mismatches.contains(&target.id)
                     && sources.get(&key).is_some_and(|(_, files)| files.is_empty())

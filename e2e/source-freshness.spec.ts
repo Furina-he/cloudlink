@@ -10,6 +10,11 @@ test("P8 浏览器服务确实提供当前源码", async ({ request }) => {
     ["src/lib/operation-status.ts", "operation.checked !== true"],
     ["src/mocks/render.ts", "requestId.ownerToken"],
     ["src/mocks/handlers-execution.ts", "record(request, false)"],
+    ["src/lib/copy.ts", '"confirm-changes": "确认变更"'],
+    ["src/features/servers/actions.ts", "CONFIRM_REQUIRED"],
+    ["src/components/app/InvocationAvatar.tsx", "knownCaller"],
+    ["src/components/app/SettingsList.tsx", "bg-warning/5"],
+    ["src/features/servers/ServerActionDialogs.tsx", "text-balance"],
   ]
   const proof = []
   for (const [path, marker] of files) {
@@ -17,7 +22,13 @@ test("P8 浏览器服务确实提供当前源码", async ({ request }) => {
     const response = await request.get(`/${path}`)
     expect(response.ok()).toBe(true)
     expect(await response.text()).toContain(marker)
+    const rawResponse = await request.get(`/${path}?raw`)
+    expect(rawResponse.ok()).toBe(true)
+    const rawModule = await rawResponse.text()
+    expect(rawModule.startsWith("export default ")).toBe(true)
+    const servedSource = JSON.parse(rawModule.slice("export default ".length).split("\n", 1)[0].trim().replace(/;$/, "")) as string
+    expect(servedSource).toBe(source)
     proof.push({ path, sha256: createHash("sha256").update(source).digest("hex") })
   }
-  if (process.env.CLOUDLINK_E2E_SHOTS) await writeFile(resolve(SHOTS, "source-freshness.json"), `${JSON.stringify({ checkedAt: new Date().toISOString(), files: proof }, null, 2)}\n`, { flag: "wx" })
+  if (process.env.CLOUDLINK_E2E_SHOTS) await writeFile(resolve(SHOTS, `source-freshness-${Date.now()}.json`), `${JSON.stringify({ checkedAt: new Date().toISOString(), files: proof }, null, 2)}\n`, { flag: "wx" })
 })

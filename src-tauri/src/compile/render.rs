@@ -12,7 +12,7 @@ use crate::model::compile::{CompiledFile, SkillConfig};
 use crate::model::env::EnvId;
 use crate::model::github::GithubScopeMode;
 
-pub const TEMPLATE_VERSION: u32 = 2;
+pub const TEMPLATE_VERSION: u32 = 3;
 pub const DESCRIPTION_LIMIT: usize = 1024;
 pub const HEALTH_CHECK: &str = include_str!("templates/health-check.md");
 const TOC_THRESHOLD: usize = 100;
@@ -238,9 +238,7 @@ pub fn description(assets: &[&Asset]) -> Description {
             r
         };
         let mut tail: Vec<&str> = a.production().then_some("production").into_iter().collect();
-        if a.agent().mode == crate::model::asset::Mode::ReadOnly {
-            tail.push("read-only");
-        }
+        tail.push(a.agent().mode.as_str());
         let tail = tail.join(", ");
         let inner = [text, tail]
             .into_iter()
@@ -429,7 +427,7 @@ pub fn render_skill(input: &RenderInput) -> Rendered {
             "rules": rules,
             "inbox": input.inbox,
             "example_name": example_name,
-            "has_execution": input.assets.iter().any(|a| a.production() || a.as_server().is_some_and(|s| server_handle(s) != s.connection.ssh_alias) || a.as_cli().is_some_and(|c| c.cli_provider == CliProvider::Github)),
+            "has_execution": !input.assets.is_empty(),
             "wait": entry.call("wait", None, "'<requestId.ownerToken>'", false),
             "wait_ps": entry.powershell("wait", None, "'<requestId.ownerToken>'"),
             "status": entry.call("status", None, "", false),
@@ -500,7 +498,7 @@ struct ServiceRow {
 fn render_server(a: &ServerAsset, snapshot_enabled: Option<&str>, entry: &ExecutionEntry) -> String {
     let f = &a.facts;
     let alias = server_handle(a);
-    let use_entry = a.production || alias != a.connection.ssh_alias;
+    let use_entry = true;
     let mut system = Vec::new();
     if let Some(os) = f.os.as_deref().map(plain_probe).filter(|s| !s.is_empty()) {
         system.push(os);
@@ -528,7 +526,7 @@ fn render_server(a: &ServerAsset, snapshot_enabled: Option<&str>, entry: &Execut
                 crate::model::asset::ServiceKind::Docker => "container",
                 crate::model::asset::ServiceKind::Systemd => "service",
             };
-            format!("Never stop or restart the {} {what} (critical)", code(&s.name))
+            format!("Stopping or restarting the {} {what} is high risk (critical); while CloudLink runs, request one-time approval through its runner", code(&s.name))
         }))
         .collect();
     let resolved = match (&a.connection.resolved, a.export.resolved_connection) {
@@ -703,12 +701,12 @@ fn render_cli(a: &CliAsset, all: &[Asset], entry: &ExecutionEntry) -> String {
             "env_title": if a.production { title_case("production") } else { String::new() },
             "mode": a.agent.mode.as_str(),
             "binary": a.cli.binary.as_str(),
-            "execution": a.production.then(|| entry.call("exec", Some(&a.id), "-- <command arguments>", false)),
-            "execution_ps": a.production.then(|| entry.powershell("exec", Some(&a.id), "-- <command arguments>")).flatten(),
+            "execution": Some(entry.call("exec", Some(&a.id), "-- <command arguments>", false)),
+            "execution_ps": entry.powershell("exec", Some(&a.id), "-- <command arguments>"),
             "discover": entry.call("discover", Some(&a.id), "", false),
             "discover_ps": entry.powershell("discover", Some(&a.id), ""),
-            "git": a.production.then(|| entry.call("exec", Some(&a.id), "--tool git -- <git arguments>", false)),
-            "git_ps": a.production.then(|| entry.powershell("exec", Some(&a.id), "--tool git -- <git arguments>")).flatten(),
+            "git": (a.cli_provider == CliProvider::Github).then(|| entry.call("exec", Some(&a.id), "--tool git -- <git arguments>", false)),
+            "git_ps": (a.cli_provider == CliProvider::Github).then(|| entry.powershell("exec", Some(&a.id), "--tool git -- <git arguments>")).flatten(),
             "github_owner": github.and_then(|config| config.owner.as_ref()).map(|owner| code(&owner.login)),
             "github_identity": github_snapshot.and_then(|snapshot| snapshot.identity.as_ref()).map(|identity| code(&identity.login)),
             "github_host": code(github.map(|config| config.host.as_str()).unwrap_or("github.com")),

@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react"
 import { useEffect, useMemo, useState } from "react"
 
 import type { AgentNote, Operation } from "@/bindings"
-import { AgentMark } from "@/components/app/AgentMark"
+import { InvocationAvatar, invocationChannel, invocationName } from "@/components/app/InvocationAvatar"
 import { ListGroup } from "@/components/app/SettingsList"
 import { StatusDot } from "@/components/app/StatusDot"
 import { ViewShell } from "@/components/app/ViewShell"
@@ -29,12 +29,6 @@ import { operationStatus } from "@/lib/operation-status"
 import { ExecutionCard } from "./ExecutionCard"
 
 type Filter = "all" | "denied" | "allowed"
-
-const AgentAvatar = () => (
-  <span aria-hidden className="flex size-5.5 shrink-0 items-center justify-center rounded-[6px] border border-line bg-card">
-    <AgentMark agent="claude-code" label="Claude Code" lit className="size-3.5" />
-  </span>
-)
 
 /** 一条待确认的 Agent 笔记（DESIGN.md Ask Card）。命中密钥的要编辑后才能并入；疑似注入的只能忽略 */
 function AskCard({ note }: { note: AgentNote }) {
@@ -69,7 +63,7 @@ function AskCard({ note }: { note: AgentNote }) {
   return (
     <div role="listitem" className="flex flex-col gap-2 px-3.5 py-3">
       <div className="flex items-center gap-2.5">
-        <AgentAvatar />
+        <InvocationAvatar />
         <span className="flex-1 text-[13px] font-medium">{copy.feed.noteAsk(alias)}</span>
         <time dateTime={note.writtenAt} className="text-xs text-muted-foreground">
           {formatDay(note.writtenAt)}
@@ -187,14 +181,13 @@ function FeedRow({ op }: { op: Operation }) {
   const copyCommand = () => void navigator.clipboard.writeText(op.command).then(() => toast.add({ title: copy.common.copiedValue(op.command) })).catch(() => undefined)
   return (
     <div role="listitem" className="group/feed flex min-h-11 items-center gap-3 px-3.5 py-2">
-      {op.source === "runner" ? <span aria-hidden className="flex size-5.5 shrink-0 items-center justify-center rounded-control border border-line bg-card"><AgentMark agent="custom" label={copy.execution.source} lit={false} className="size-3.5" /></span> : <AgentAvatar />}
-      <div className="flex min-w-0 flex-1 items-center gap-1">
-        <code className="truncate font-mono text-xs select-text" title={op.command}>
-          {op.command}
-        </code>
-        <Button variant="ghost" size="icon-xs" className="shrink-0 opacity-0 group-hover/feed:opacity-100 focus-visible:opacity-100" aria-label={copy.feed.copyCommand} onClick={copyCommand}>
-          <CopyIcon />
-        </Button>
+      <InvocationAvatar caller={op.caller} channel={op.source} />
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <div className="flex min-w-0 items-center gap-1">
+          <code className="truncate font-mono text-xs select-text" title={op.command}>{op.command}</code>
+          <Button variant="ghost" size="icon-xs" className="shrink-0 opacity-0 group-hover/feed:opacity-100 focus-visible:opacity-100" aria-label={copy.feed.copyCommand} onClick={copyCommand}><CopyIcon /></Button>
+        </div>
+        <span className="truncate text-[11px] text-muted-foreground">{copy.execution.callerAndChannel(invocationName(op.caller), invocationChannel(op.source))}</span>
       </div>
       <span className="w-24 shrink-0 truncate text-xs text-muted-foreground">{alias}</span>
       <span className="flex w-36 shrink-0 items-center text-xs">

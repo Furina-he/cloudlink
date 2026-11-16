@@ -19,8 +19,11 @@ import { useTargetStore } from "@/stores/targets"
 import { useUIStore } from "@/stores/ui"
 import { missingIncludeEnvs } from "./includeState"
 import { connectionInputOf } from "./serverForm"
+import { renameInputOf } from "./profileForm"
 
-export type PendingAction = { kind: "mode" | "delete"; assetId: string } | null
+const CONFIRM_REQUIRED = Symbol("production-automation-confirmation")
+
+export type PendingAction = { kind: "mode" | "production" | "delete"; assetId: string } | null
 
 /** 等用户确认的操作：生产资源切到标准运维、删除 */
 export const usePendingAction = create<{ pending: PendingAction; set: (p: PendingAction) => void }>()((set) => ({
@@ -131,12 +134,13 @@ export const serverActions = {
 
   /** 档位闸刀（PRD 6.4）：生产资源切到标准运维前确认（F-202 AC2）；切回只读巡检一键完成 */
   requestMode(asset: Asset, mode: Asset["agent"]["mode"]) {
-    if (mode === asset.agent.mode) return
-    if (mode === "standard" && asset.production) {
+    const latest = useAssetStore.getState().byId[asset.id]
+    if (!latest || mode === latest.agent.mode) return
+    if (mode === "auto-ops" && latest.production) {
       usePendingAction.getState().set({ kind: "mode", assetId: asset.id })
       return
     }
-    void serverActions.setMode(asset, mode)
+    void serverActions.setMode(latest, mode)
   },
 
   /** F-407 AC2「全部切回只读」：命令面板入口；托盘的入口由 Rust 处理并发系统通知 */
@@ -150,23 +154,48 @@ export const serverActions = {
     }
   },
 
-  async setMode(asset: Asset, mode: Asset["agent"]["mode"]) {
-    const prev = asset.agent.mode
+  async setMode(asset: Asset, mode: Asset["agent"]["mode"], confirmed = false) {
+    let prev = asset.agent.mode
     try {
-      await useAssetStore.getState().setMode(asset.id, mode)
-      // 切换后底部提示条带「撤销」（PRD 6.3）；撤销直接回到原档位，不再确认
+      await useAssetStore.getState().setMode(asset.id, mode, (latest) => {
+        prev = latest.agent.mode
+        if (mode === "auto-ops" && prev !== mode && latest.production && !confirmed) {
+          usePendingAction.getState().set({ kind: "mode", assetId: latest.id })
+          throw CONFIRM_REQUIRED
+        }
+      })
       const id: string = toast.add({
         title: copy.agentSection.modeChanged(alias(asset), copy.mode[mode]),
         actionProps: {
           children: copy.common.undo,
           onClick: () => {
             toast.close(id)
-            useAssetStore.getState().setMode(asset.id, prev).catch(toastError)
+            const latest = useAssetStore.getState().byId[asset.id]
+            if (latest) serverActions.requestMode(latest, prev)
           },
         },
       })
     } catch (e) {
-      toastError(e)
+      if (e !== CONFIRM_REQUIRED) toastError(e)
+    }
+  },
+
+  requestProduction(asset: Asset, production: boolean) {
+    void serverActions.setProduction(asset, production)
+  },
+
+  async setProduction(asset: Asset, production: boolean, confirmed = false) {
+    try {
+      await useAssetStore.getState().update(asset.id, (latest) => {
+        if (production && !latest.production && latest.agent.mode === "auto-ops" && !confirmed) {
+          usePendingAction.getState().set({ kind: "production", assetId: latest.id })
+          throw CONFIRM_REQUIRED
+        }
+        return { ...renameInputOf(latest, latest.name), production }
+      })
+      toast.add({ title: copy.detail.rows.productionChanged(production) })
+    } catch (e) {
+      if (e !== CONFIRM_REQUIRED) toastError(e)
     }
   },
 

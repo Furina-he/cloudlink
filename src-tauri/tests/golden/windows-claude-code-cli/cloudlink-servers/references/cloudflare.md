@@ -1,6 +1,6 @@
 # cloudflare — Cloudflare
 
-> Production | Mode: read-only
+> Production | Mode: confirm-changes
 
 ## Connect
 Use separate CLI arguments after `--`, without the provider binary or a shell wrapper. Never print or export credentials:

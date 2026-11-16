@@ -19,7 +19,7 @@ export type DeleteResult = { statuses: Array<CompileStatus>, };
  */
 export type Detail<I> = { id: I, params?: Record<string, string | number>, };
 
-export type DistributeBlockReason = "unverified" | "failed" | "password-only" | "cli-not-ready";
+export type DistributeBlockReason = "unverified" | "failed" | "password-only" | "cli-not-ready" | "github-scope-unverified";
 
 /**
  * 分发开关返回真实结果，不能用授权开启或 Promise resolve 代替送达。

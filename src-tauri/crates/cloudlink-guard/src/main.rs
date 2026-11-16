@@ -89,6 +89,24 @@ fn safe_text(text: &str, limit: usize) -> String {
     bounded
 }
 
+fn hook_caller(input: &Value) -> Option<Value> {
+    // This identifies the explicit Claude Code hook protocol, not arbitrary input or a Skill path.
+    // It remains display metadata: the same OS user can invoke the hook directly.
+    let bounded = |key: &str, max: usize| {
+        input[key]
+            .as_str()
+            .is_some_and(|text| !text.is_empty() && text.len() <= max && !text.chars().any(char::is_control))
+    };
+    (input["hook_event_name"] == "PreToolUse"
+        && input["tool_name"] == "Bash"
+        && bounded("session_id", 256)
+        && bounded("cwd", 4096)
+        && input["tool_input"]["command"]
+            .as_str()
+            .is_some_and(|command| !command.is_empty() && command.len() <= MAX_INPUT as usize))
+    .then(|| json!({"agent":"claude-code","provenance":"hook"}))
+}
+
 fn record(root: &Path, env_id: &str, input: &Value, command: &str, decisions: &[guard_rules::Decision]) {
     let Some(marker) =
         bounded_file(&root.join(".cloudlink.json"), 16_384).and_then(|b| serde_json::from_slice::<Value>(&b).ok())
@@ -157,6 +175,9 @@ fn record(root: &Path, env_id: &str, input: &Value, command: &str, decisions: &[
             "command": command,
             "decision": if decision.allowed { "allowed" } else { "denied" },
         });
+        if let Some(caller) = hook_caller(input) {
+            item["caller"] = caller;
+        }
         if let Some(reason_id) = decision.reason_id {
             item["reasonId"] = Value::String(reason_id.into());
         }
@@ -175,7 +196,7 @@ fn self_test(policy: &Value) -> bool {
     if !guard_rules::policy_valid(policy) {
         return false;
     }
-    let fixture = json!({"version":1,"resources":[{"id":"self-test","kind":"vps","handle":"cloudlink-self-test","mode":"read-only","envIds":["windows"],"hosts":[],"criticalServices":[]}]});
+    let fixture = json!({"version":1,"resources":[{"id":"self-test","kind":"vps","handle":"cloudlink-self-test","mode":"confirm-changes","envIds":["windows"],"hosts":[],"criticalServices":[]}]});
     let allow = guard_rules::evaluate(&fixture, "windows", "ssh -- cloudlink-self-test uptime");
     let deny = guard_rules::evaluate(&fixture, "windows", "ssh -- cloudlink-self-test 'docker restart app'");
     allow.len() == 1
@@ -206,14 +227,12 @@ fn run() -> i32 {
     let Some(env_id) = env_id.filter(|e| !e.is_empty() && e.len() <= 256 && !e.chars().any(char::is_control)) else {
         return i32::from(check);
     };
-    let policy = root_dir().and_then(|root| {
-        bounded_file(&root.join("guard").join("policy.json"), MAX_POLICY)
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-            .map(|policy| (root, policy))
-    });
-    let Some((root, policy)) = policy else {
+    let Some(root) = root_dir() else {
         return i32::from(check);
     };
+    let policy = bounded_file(&root.join("guard").join("policy.json"), MAX_POLICY)
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .unwrap_or(Value::Null);
     if check {
         if self_test(&policy) {
             let _ = std::io::stdout().write_all(b"cloudlink-guard:ok\n");
@@ -249,14 +268,23 @@ fn run() -> i32 {
     }
     let mut decisions = guard_rules::evaluate(&policy, &env_id, command);
     let protected = guard_rules::runtime_modification(&policy, command);
-    if decisions.is_empty() && !protected {
+    let invalid_policy = !guard_rules::policy_valid(&policy);
+    if decisions.is_empty() && !protected && !invalid_policy {
         return 0;
     }
     let snapshot = guard_rules::runtime::snapshot(&root);
     if snapshot.as_ref().is_ok_and(|snapshot| snapshot["state"] == "stopped") {
         return 0;
     }
-    if snapshot.as_ref().is_ok_and(|snapshot| snapshot["state"] == "active") {
+    if invalid_policy {
+        // An unavailable policy cannot turn a live/unknown runtime into an unchecked exit.
+        decisions = vec![guard_rules::Decision {
+            asset_id: "cloudlink-runtime".into(),
+            handle: "CloudLink".into(),
+            allowed: false,
+            reason_id: Some("runtime-invalid"),
+        }];
+    } else if snapshot.as_ref().is_ok_and(|snapshot| snapshot["state"] == "active") {
         if protected {
             decisions.push(guard_rules::Decision {
                 asset_id: "cloudlink-runtime".into(),
@@ -266,20 +294,20 @@ fn run() -> i32 {
             });
         }
         for decision in &mut decisions {
-            if policy["resources"].as_array().is_some_and(|resources| {
-                resources
-                    .iter()
-                    .any(|resource| resource["id"] == decision.asset_id && resource["production"] == true)
-            }) && !matches!(
-                decision.reason_id,
-                Some(
-                    "credential-read"
-                        | "cli-env-export"
-                        | "github-repo-delete"
-                        | "github-default-force"
-                        | "runtime-protected"
+            if policy["resources"]
+                .as_array()
+                .is_some_and(|resources| resources.iter().any(|resource| resource["id"] == decision.asset_id))
+                && !matches!(
+                    decision.reason_id,
+                    Some(
+                        "credential-read"
+                            | "cli-env-export"
+                            | "github-repo-delete"
+                            | "github-default-force"
+                            | "runtime-protected"
+                    )
                 )
-            ) {
+            {
                 decision.allowed = false;
                 decision.reason_id = Some("execution-channel");
             }
@@ -323,6 +351,26 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hook_caller_requires_the_explicit_bounded_hook_protocol() {
+        let mut input = json!({
+            "hook_event_name":"PreToolUse", "tool_name":"Bash", "session_id":"fixture-session",
+            "cwd":"/fixture", "tool_input":{"command":"ssh test-vps uptime"},
+            "caller":{"agent":"codex","provenance":"hook"},
+        });
+        assert_eq!(
+            hook_caller(&input),
+            Some(json!({"agent":"claude-code","provenance":"hook"}))
+        );
+        input["session_id"] = "x".repeat(257).into();
+        assert!(hook_caller(&input).is_none());
+        input["session_id"] = "fixture-session".into();
+        input.as_object_mut().unwrap().remove("hook_event_name");
+        assert!(hook_caller(&input).is_none());
+        input["hook_event_name"] = "PostToolUse".into();
+        assert!(hook_caller(&input).is_none());
+    }
 
     #[test]
     fn unix_dates_include_leap_days_and_year_boundaries() {

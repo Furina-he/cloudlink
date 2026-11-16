@@ -9,7 +9,7 @@ fn ready() -> Fixture {
         server.production = true;
     }
     fixture.backend.database().unwrap().upsert_asset(&asset).unwrap();
-    fixture.backend.set_mode(asset.id(), Mode::Standard).unwrap();
+    fixture.backend.set_mode(asset.id(), Mode::AutoOps).unwrap();
     fixture
 }
 
@@ -22,7 +22,7 @@ fn message(fixture: &Fixture, op: &str, id: Option<&str>) -> Value {
     })
 }
 
-fn submit(fixture: &Fixture, command: &str) -> Value {
+fn submission(fixture: &Fixture, command: &str) -> Value {
     let asset = fixture
         .backend
         .list_assets()
@@ -32,7 +32,11 @@ fn submit(fixture: &Fixture, command: &str) -> Value {
         .unwrap();
     let mut req = message(fixture, "submit", None);
     req["input"] = json!({"envId":"windows","assetId":asset.id(),"kind":"exec","args":[command],"timeoutSec":90,"cwd":fixture.paths.user_home.to_string_lossy()});
-    fixture.backend.execution_rpc(&req).unwrap()
+    req
+}
+
+fn submit(fixture: &Fixture, command: &str) -> Value {
+    fixture.backend.execution_rpc(&submission(fixture, command)).unwrap()
 }
 
 fn approve(fixture: &Fixture, reply: &Value) -> ExecutionRequest {
@@ -49,16 +53,23 @@ fn approve(fixture: &Fixture, reply: &Value) -> ExecutionRequest {
 #[test]
 fn approval_is_not_execution_and_claim_is_consumed_once() {
     let fixture = ready();
-    let waiting = submit(&fixture, "docker compose down -v");
+    let caller = json!({"agent":"codex","provenance":"self-reported"});
+    let mut submitted = submission(&fixture, "docker compose down -v");
+    submitted["input"]["caller"] = caller.clone();
+    submitted["input"]["sessionId"] = "original-session".into();
+    let waiting = fixture.backend.execution_rpc(&submitted).unwrap();
     assert_eq!(waiting["state"], "waiting");
     let id = waiting["requestId"].as_str().unwrap();
-    assert_eq!(approve(&fixture, &waiting).state, ExecutionState::Approved);
-    let first = fixture
-        .backend
-        .execution_rpc(&message(&fixture, "claim", Some(id)))
-        .unwrap();
+    let approved = approve(&fixture, &waiting);
+    assert_eq!(approved.state, ExecutionState::Approved);
+    assert_eq!(serde_json::to_value(approved.caller).unwrap(), caller);
+    assert_eq!(approved.session_id.as_deref(), Some("original-session"));
+    let mut claim = message(&fixture, "claim", Some(id));
+    claim["input"]["caller"] = json!({"agent":"cursor","provenance":"self-reported"});
+    claim["input"]["sessionId"] = "replacement-session".into();
+    let first = fixture.backend.execution_rpc(&claim).unwrap();
     assert_eq!(first["state"], "dispatching");
-    assert!(first["input"].is_object());
+    assert_eq!(first["input"], submitted["input"]);
     assert_eq!(
         first["routeDigest"],
         runtime::digest(&serde_json::to_vec(&first["route"]).unwrap())
@@ -92,7 +103,63 @@ fn approval_is_not_execution_and_claim_is_consumed_once() {
     finish["exitCode"] = 0.into();
     finish["durationMs"] = 42.into();
     assert_eq!(fixture.backend.execution_rpc(&finish).unwrap()["state"], "succeeded");
-    assert_eq!(fixture.backend.list_execution_requests().unwrap()[0].exit_code, Some(0));
+    let view = &fixture.backend.list_execution_requests().unwrap()[0];
+    assert_eq!(view.exit_code, Some(0));
+    assert_eq!(serde_json::to_value(view.caller).unwrap(), caller);
+    assert_eq!(view.session_id.as_deref(), Some("original-session"));
+    let mut persisted = fixture
+        .backend
+        .database()
+        .unwrap()
+        .list_operations(&crate::model::guard::OperationQuery {
+            asset_id: None,
+            before: None,
+            limit: 10,
+        })
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(serde_json::to_value(persisted.caller).unwrap(), caller);
+    assert_eq!(persisted.session_id, "original-session");
+    persisted.caller = Some(InvocationSource {
+        agent: Some(crate::model::delivery::AgentBrand::Cursor),
+        provenance: InvocationProvenance::SelfReported,
+    });
+    persisted.session_id = "replacement-session".into();
+    assert!(
+        !fixture
+            .backend
+            .database()
+            .unwrap()
+            .upsert_execution_operation(&persisted)
+            .unwrap()
+    );
+}
+
+#[test]
+fn runner_metadata_is_bounded_and_cannot_claim_a_trusted_hook_identity() {
+    let base =
+        json!({"envId":"windows","assetId":"ast_1","kind":"exec","args":["uptime"],"cwd":"/fixture","timeoutSec":90});
+    assert!(valid_input(&base));
+    let mut reported = base.clone();
+    reported["caller"] = json!({"agent":"codex","provenance":"self-reported"});
+    reported["sessionId"] = "fixture-session".into();
+    assert!(valid_input(&reported));
+    for caller in [
+        json!({"agent":"claude-code","provenance":"hook"}),
+        json!({"agent":"not-a-known-agent","provenance":"self-reported"}),
+        json!({"agent":"codex","provenance":"unknown"}),
+        json!({"agent":"codex","provenance":"self-reported","extra":"ignored"}),
+    ] {
+        let mut input = base.clone();
+        input["caller"] = caller;
+        assert!(!valid_input(&input));
+    }
+    for session in ["x".repeat(257), "invalid\nsession".into()] {
+        let mut input = base.clone();
+        input["sessionId"] = session.into();
+        assert!(!valid_input(&input));
+    }
 }
 
 #[test]
@@ -151,6 +218,7 @@ fn supported_queries_are_checked_but_do_not_create_approval_cards() {
     let view = fixture.backend.list_execution_requests().unwrap().pop().unwrap();
     assert!(view.checked);
     assert!(!view.approval_required);
+    assert!(view.caller.is_none() && view.session_id.is_none());
 }
 
 #[test]
@@ -177,7 +245,10 @@ fn narrowing_cancels_approved_and_dispatching_requests_and_late_answers() {
                 .execution_rpc(&message(&fixture, "claim", Some(&approved.request_id)))
                 .unwrap();
         }
-        fixture.backend.set_mode(&approved.asset_id, Mode::ReadOnly).unwrap();
+        fixture
+            .backend
+            .set_mode(&approved.asset_id, Mode::ConfirmChanges)
+            .unwrap();
         assert_eq!(
             fixture.backend.list_execution_requests().unwrap()[0].state,
             ExecutionState::Cancelled

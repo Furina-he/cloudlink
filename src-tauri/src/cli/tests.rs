@@ -489,6 +489,49 @@ fn script_arguments_are_quoted_and_account_values_are_validated() {
 }
 
 #[test]
+fn real_use_github_login_is_independent_from_repository_scope_completeness() {
+    struct LoginScopeRunner(&'static str);
+    impl Runner for LoginScopeRunner {
+        fn run(&self, _env: &EnvContext, query: &Query) -> Result<QueryOutput> {
+            let value = match query {
+                Query::Discover { .. } => json!({"installed":true,"path":"C:/isolated/gh.cmd"}),
+                Query::Version { .. } => json!({"version":"2.102.0"}),
+                Query::Github { .. } => json!({
+                    "status":self.0,"identity":{"id":"U_operator","login":"operator","host":"github.com"},
+                    "owner":{"id":"O_team","login":"example-team","kind":"organization"},
+                    "owners":[{"id":"O_team","login":"example-team","kind":"organization"}],"items":[],
+                }),
+                _ => panic!("only injected GitHub metadata is permitted"),
+            };
+            Ok(QueryOutput::json(value))
+        }
+        fn open_terminal(&self, _env: &EnvContext, _command: &str) -> Result<()> {
+            panic!("test must not open a terminal")
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let envs = environments(&Paths::isolated_in(temp.path()));
+    for status in ["complete", "partial", "offline", "denied"] {
+        let service = Service::new(Arc::new(LoginScopeRunner(status)));
+        let result = service
+            .github_scope(&envs[..1], "github.com", Some("example-team"))
+            .unwrap();
+        let state = &result.env_states[&envs[0].id];
+        assert!(
+            state.authenticated,
+            "{status}: repository completeness must not alter login validity"
+        );
+        assert_eq!(state.account.as_deref(), Some("operator"));
+        assert_eq!(
+            result.config.env_states[&envs[0].id].owner.as_ref().unwrap().login,
+            "example-team"
+        );
+        assert!(result.scope.is_empty());
+        assert_eq!(result.config.mode, crate::model::github::GithubScopeMode::Auto);
+    }
+}
+
+#[test]
 fn github_counts_only_the_active_login_and_lists_repositories_with_branch_and_visibility() {
     let temp = tempfile::tempdir().unwrap();
     let envs = environments(&Paths::isolated_in(temp.path()));

@@ -2,7 +2,6 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { ChevronDownIcon, EllipsisIcon, FolderOpenIcon, PackageIcon, PencilIcon, RefreshCwIcon, Trash2Icon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { FormProvider, useForm, useWatch, type Control } from "react-hook-form"
-import { useHotkeys } from "react-hotkeys-hook"
 import { useShallow } from "zustand/react/shallow"
 
 import type { CliAsset } from "@/bindings"
@@ -17,7 +16,6 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { copy } from "@/lib/copy"
-import { HOTKEY_OPTIONS, HOTKEYS, isModalOpen } from "@/lib/hotkeys"
 import { detailFileOf } from "@/lib/paths"
 import { cliFormSchema, type CliFormValues } from "@/lib/schemas"
 import { cliEnvStatus, selectCanDistribute, selectCliAccount, selectCliProblem, useAssetStore } from "@/stores/assets"
@@ -33,12 +31,8 @@ import { GithubScopeDialog } from "./GithubScopeDialog"
 import { DetailPage, DetailTitle, NotesRow, PermissionGroup, ProblemRow, RecentActivityGroup, RulesGroup, SummaryRow } from "./DetailParts"
 import { ProfileDialog } from "./ProfileDialog"
 import { ResourceName } from "./ResourceName"
-import { cliInputOf, cliValuesOf, renameInputOf } from "./profileForm"
-import { SaveErrorAlert } from "./DraftPreview"
+import { cliInputOf, cliValuesOf } from "./profileForm"
 import { CompileSummary, useInclusionProblems } from "./InspectorParts"
-import { useAutoSave } from "./useAutoSave"
-
-const FIELDS = ["production"] as const
 
 /** 这项云平台的预览（F-204）：当前草稿的编译结果，默认定位到它的详情文件 */
 function CliPreview({ asset, control, dirty }: { asset: CliAsset; control: Control<CliFormValues>; dirty: boolean }) {
@@ -71,17 +65,17 @@ function CliHeader({ asset, name, production, titleRef, onEditProfile, onRefresh
   // 单个环境的问题交给「Agent 权限」卡里带修复按钮的问题行；所有环境都用不了才写出第一个问题
   const anyReady = Object.values(asset.cli.envStates).some((s) => !!s && cliEnvStatus(s) === "ready")
   const problem = anyReady ? null : selectCliProblem(asset)
-  const identity = [...new Set(Object.values(asset.github?.envStates ?? {}).flatMap((snapshot) => snapshot?.identity ? [snapshot.identity.login] : []))].join("、")
-  const account = asset.cliProvider === "github" && asset.github?.owner ? copy.github.ownerIdentity(asset.github.owner.login, identity) : selectCliAccount(asset)
+  const identity = [...new Set(Object.values(asset.cli.envStates).flatMap((state) => state && cliEnvStatus(state) === "ready" && state.account ? [state.account] : []))].join("、")
+  const account = asset.cliProvider === "github" ? identity : selectCliAccount(asset)
   const linked = useLinkedAliases(asset)
-  const word = problem ? copy.cli.envProblem(copy.env.long(problem.envId), copy.cli.status[problem.status]) : copy.cli.status.ready
+  const word = problem ? copy.cli.envProblem(copy.env.long(problem.envId), copy.cli.status[problem.status]) : asset.cliProvider === "github" ? copy.github.loginValid : copy.cli.status.ready
   const sep = <span className="text-faint" aria-hidden>·</span>
 
   const actions = (
     <>
       <Button variant="outline" size="sm" disabled={detecting} onClick={onRefresh}>
         {detecting && <Spinner data-icon="inline-start" aria-hidden />}
-        {copy.detail.recheck}
+        {asset.cliProvider === "github" ? copy.github.recheck : copy.detail.recheck}
       </Button>
       <DropdownMenu>
         <Tooltip>
@@ -94,10 +88,10 @@ function CliHeader({ asset, name, production, titleRef, onEditProfile, onRefresh
           <DropdownMenuGroup><DropdownMenuItem onClick={onEditProfile}><PencilIcon />{copy.detail.editProfile}</DropdownMenuItem></DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
-          <DropdownMenuItem disabled={detecting} onClick={onRefresh}>
+          {asset.cliProvider !== "github" && <DropdownMenuItem disabled={detecting} onClick={onRefresh}>
             <RefreshCwIcon />
             {copy.cli.refreshScope}
-          </DropdownMenuItem>
+          </DropdownMenuItem>}
           <DropdownMenuItem onClick={() => useUIStore.getState().openPreview({ file: detailFileOf(asset.handle) })}>
             <PackageIcon />
             {copy.detail.preview}
@@ -241,39 +235,29 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
   const problems = useInclusionProblems(asset)
   const can = selectCanDistribute(asset)
   const blocked = !can.ok && asset.agent.agents.length === 0
-  const auto = useAutoSave({
-    form,
-    fields: [...FIELDS],
-    save: async ({ production }) => {
-      await useAssetStore.getState().update(asset.id, (latest) => ({ ...renameInputOf(latest, latest.name), production }))
-    },
-  })
-  const [name, production] = useWatch({ control: form.control, name: ["name", "production"] })
-  useHotkeys(HOTKEYS.save, () => !isModalOpen() && void auto.flush(), HOTKEY_OPTIONS)
 
   return (
     <FormProvider {...form}>
-      <DetailPage onBlurCapture={auto.onBlurCapture}>
-        <CliHeader asset={asset} name={name.trim() || asset.name} production={production} titleRef={titleRef} onEditProfile={() => setProfileOpen(true)} onRefresh={refresh} />
+      <DetailPage>
+        <CliHeader asset={asset} name={asset.name} production={asset.production} titleRef={titleRef} onEditProfile={() => setProfileOpen(true)} onRefresh={refresh} />
         <div className="empty:hidden">
           <CompileSummary asset={asset} dirty={form.formState.isDirty} />
         </div>
-        {auto.error && <SaveErrorAlert error={auto.error} onRetry={() => void auto.flush()} />}
         <PermissionGroup
           asset={asset}
           problems={
             <>
-              {blocked && <ProblemRow title={copy.distributeBlock["cli-not-ready"]} action={copy.cli.recheck} busy={detecting} onAction={refresh} />}
+              {blocked && !can.ok && <ProblemRow title={copy.distributeBlock[can.reason]} action={can.reason === "github-scope-unverified" ? undefined : copy.cli.recheck} busy={detecting} onAction={refresh} />}
               {problems.map((p) => (
-                <ProblemRow key={p.key} title={p.title} reason={p.reason} action={copy.inclusionFix[p.reasonId]} onAction={() => serverActions.openCliTerminal(asset, p.envId)} />
+                <ProblemRow key={p.key} title={p.title} reason={p.reason} action={p.reasonId === "github-scope-unverified" ? undefined : copy.inclusionFix[p.reasonId]} onAction={() => serverActions.openCliTerminal(asset, p.envId)} />
               ))}
             </>
           }
         />
         {asset.cliProvider === "github" ? <>
           <GithubAccountGroup asset={asset} onScope={() => setScopeOpen(true)} />
-          <GithubSnapshotNote config={asset.github} error={github.error} loading={github.loading} onRetry={refresh} />
-          <GithubReposGroup asset={asset} loading={github.loading} onRefresh={refresh} />
+          <GithubSnapshotNote config={asset.github} error={github.error} loading={github.loading} />
+          <GithubReposGroup asset={asset} />
         </> : <AccountGroup asset={asset} onScope={() => setScopeOpen(true)} />}
         {/* 「重新检测」只在标题行：这里再放一个是重复的；登录后切回窗口也会自动刷新 */}
         <ListGroup id="detail-envs" title={copy.detail.groups.envs}>

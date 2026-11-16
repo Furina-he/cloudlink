@@ -68,7 +68,7 @@ export function ModeMenu({ asset }: { asset: Asset }) {
   const alias = handleOf(asset)
   const choose = (next: Mode) => {
     if (next === mode) return setOpen(false)
-    if (next === "standard" && asset.production) return setConfirming(true)
+    if (next === "auto-ops" && asset.production) return setConfirming(true)
     setOpen(false)
     void serverActions.setMode(asset, next)
   }
@@ -97,7 +97,7 @@ export function ModeMenu({ asset }: { asset: Asset }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-72 p-1">
         <div role="group" aria-label={copy.row.modeMenuLabel(alias)} className="flex flex-col">
-          {(["read-only", "standard"] as const).map((m) => (
+          {(["confirm-changes", "auto-ops"] as const).map((m) => (
             <button
               key={m}
               type="button"
@@ -128,7 +128,7 @@ export function ModeMenu({ asset }: { asset: Asset }) {
                 onClick={() => {
                   setOpen(false)
                   setConfirming(false)
-                  void serverActions.setMode(asset, "standard")
+                  void serverActions.setMode(asset, "auto-ops", true)
                 }}
               >
                 {copy.row.switch}

@@ -60,27 +60,8 @@ export interface Target {
 }
 
 /** 未列入的原因（F-303 AC2）。界面文案由 copy.ts 按 id 映射 */
-export type InclusionReasonId =
-  /** 这台服务器没有点选这个 Agent */
-  | "agent-off"
-  /** 尚未通过测试连接或探测 */
-  | "unverified"
-  /** 运行环境暂时不可用 */
-  | "env-unavailable"
-  /** 只用密码认证：Agent 在非交互模式下无法输入密码（F-108 AC1） */
-  | "password-only"
-  /** imported：该环境的 ssh config 里没有这个别名 */
-  | "not-defined"
-  /** managed：用户没有选择写入这个环境（F-107 AC5） */
-  | "not-written"
-  /** 该环境的用户 ~/.ssh/config 还没有 Include 托管文件（F-107 AC1 用户拒绝时） */
-  | "include-missing"
-  /** managed 私钥方式：该环境没有配置私钥 */
-  | "no-key-in-env"
-  /** 云平台：该环境没有安装 CLI（F-104） */
-  | "cli-not-installed"
-  /** 云平台：该环境的 CLI 没有登录，或登录已过期 */
-  | "cli-not-logged-in"
+import type { InclusionReasonId } from "./generated/delivery"
+export type { InclusionReasonId } from "./generated/delivery"
 
 /** 一台服务器是否列入某个运行环境里某个 Agent 的总 Skill；每个已启用的「Agent × 运行环境」一行 */
 export interface Inclusion {
@@ -108,20 +89,7 @@ export type DeliveryStatus =
   | "shared"
 
 /** 总 Skill 在一个目标中的受管副本 */
-export interface Delivery {
-  id: string
-  targetId: string
-  envId: EnvId
-  path: string
-  status: DeliveryStatus
-  /** 只返回 id 和参数 */
-  statusDetail?: { id: string; params?: Record<string, string | number> }
-  checkedAt: string
-  /** 实际目录的分发单位，送达数量按它去重 */
-  unitId?: string
-  /** 同环境共用真实目录的 Agent，D15 跨环境成员不在其中 */
-  sharedAgentKeys?: AgentKey[]
-}
+export type { Delivery } from "./generated/delivery"
 
 /** 添加自定义目录（F-301 AC） */
 export interface AddCustomTargetRequest {

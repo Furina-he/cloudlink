@@ -80,7 +80,7 @@ export type ImportHost = { alias: string, definedIn: Array<EnvId>, };
 
 export type ListeningPort = { addr: string, port: number, proto: Proto, };
 
-export type Mode = "read-only" | "standard";
+export type Mode = "confirm-changes" | "auto-ops";
 
 export type PanelInfo = { type: PanelType, installPath: string, };
 

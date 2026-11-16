@@ -453,6 +453,23 @@ fn git_judge(github: &Value, args: &[String]) -> Option<&'static str> {
     })
 }
 
+fn routine_options(args: &[String]) -> bool {
+    crate::shell::checked_arguments(
+        args,
+        &["--draft", "--fill", "--fill-first", "--fill-verbose", "--merge", "--squash", "--rebase",
+            "--auto", "--disable-auto", "--delete-branch", "--approve", "--request-changes", "--comment",
+            "--edit-last", "--create-if-none", "--failed", "--debug", "--prerelease", "--generate-notes",
+            "--verify-tag", "--fail-on-no-commits", "--force", "--yes", "-y", "--json"],
+        &["--repo", "-R", "--title", "-t", "--body", "-b", "--body-file", "-F", "--base", "-B",
+            "--head", "-H", "--reviewer", "-r", "--assignee", "-a", "--label", "-l", "--milestone", "-m",
+            "--project", "-p", "--template", "--reason", "--add-label", "--remove-label", "--add-assignee",
+            "--remove-assignee", "--add-reviewer", "--remove-reviewer", "--add-project", "--remove-project",
+            "--subject", "--match-head-commit", "--ref", "--field", "-f", "--raw-field", "--job",
+            "--notes", "-n", "--notes-file", "--target", "--discussion-category", "--color", "-c",
+            "--description", "-d", "--name", "--notes-start-tag"],
+    ).is_some()
+}
+
 /// None means a supported allowance; a reason is either a permanent denial, an
 /// ordinary write, a high-risk operation, or target-clear but unparsed structure.
 pub fn judge(resource: &Value, args: &[String], tool: Option<&str>) -> Option<&'static str> {
@@ -473,11 +490,7 @@ pub fn judge(resource: &Value, args: &[String], tool: Option<&str>) -> Option<&'
         {
             return Some(reason);
         }
-        return if reason == Some("github-dangerous") && resource["mode"] == "read-only" {
-            Some("cli-write")
-        } else {
-            reason
-        };
+        return reason;
     }
     let verb = args.first().map(String::as_str).unwrap_or("");
     let sub = args.get(1).map(String::as_str).unwrap_or("");
@@ -542,18 +555,14 @@ pub fn judge(resource: &Value, args: &[String], tool: Option<&str>) -> Option<&'
                 if !parts.contains(&"heads") || repos(github).any(|repo| repo["defaultBranch"] == branch) {
                     return Some("github-default-force");
                 }
-                return Some(if resource["mode"] == "read-only" {
-                    "cli-write"
-                } else {
-                    "github-dangerous"
-                });
+                return Some("github-dangerous");
             }
         }
     }
     if let Err(reason) = target(resource, args, tool) {
         return Some(reason);
     }
-    let read_only = resource["mode"] == "read-only";
+    let auto_ops = resource["mode"] == "auto-ops";
     if verb == "api" {
         let parts = match endpoint_parts(api_endpoint(args).unwrap_or("")) {
             Ok(parts) => parts,
@@ -566,10 +575,9 @@ pub fn judge(resource: &Value, args: &[String], tool: Option<&str>) -> Option<&'
         if method == "GET" {
             return (!api_read(&parts)).then_some("unparsed");
         }
-        if read_only {
-            return Some("cli-write");
-        }
-        return (method == "DELETE").then_some("github-dangerous");
+        // An arbitrary write endpoint is not an established routine operation.
+        // The explicit repo target is known, so both modes can ask rather than guess.
+        return Some(if method == "DELETE" { "github-dangerous" } else { "unparsed" });
     }
     let query = matches!(
         (verb, sub),
@@ -608,7 +616,7 @@ pub fn judge(resource: &Value, args: &[String], tool: Option<&str>) -> Option<&'
         ("repo", "archive" | "edit") | ("release", "delete") | ("run", "delete") | ("workflow", "disable")
     ) || verb == "pr" && args.iter().any(|word| word == "--admin");
     if dangerous {
-        return Some(if read_only { "cli-write" } else { "github-dangerous" });
+        return Some("github-dangerous");
     }
     let write = matches!(
         (verb, sub),
@@ -622,7 +630,7 @@ pub fn judge(resource: &Value, args: &[String], tool: Option<&str>) -> Option<&'
             | ("label", "create" | "edit")
     );
     if write {
-        return read_only.then_some("cli-write");
+        return if routine_options(args) { (!auto_ops).then_some("cli-write") } else { Some("unparsed") };
     }
     Some("unparsed")
 }
@@ -650,11 +658,11 @@ mod tests {
             vec!["api", "orgs/acme/repos"],
             vec!["secret", "list", "-R", "acme/app"],
         ] {
-            assert_eq!(judge(&resource("read-only"), &args(&words), None), None, "{words:?}");
+            assert_eq!(judge(&resource("confirm-changes"), &args(&words), None), None, "{words:?}");
         }
         assert_eq!(
             judge(
-                &resource("read-only"),
+                &resource("confirm-changes"),
                 &args(&["pr", "merge", "1", "-R", "acme/app"]),
                 None
             ),
@@ -662,20 +670,20 @@ mod tests {
         );
         assert_eq!(
             judge(
-                &resource("standard"),
+                &resource("auto-ops"),
                 &args(&["pr", "merge", "1", "-R", "acme/app"]),
                 None
             ),
             None
         );
         assert_eq!(
-            judge(&resource("standard"), &args(&["repo", "archive", "acme/app"]), None),
+            judge(&resource("auto-ops"), &args(&["repo", "archive", "acme/app"]), None),
             Some("github-dangerous")
         );
     }
     #[test]
     fn credentials_and_repository_delete_are_never_approvable() {
-        for mode in ["read-only", "standard"] {
+        for mode in ["confirm-changes", "auto-ops"] {
             for words in [
                 vec!["auth", "token"],
                 vec!["auth", "status", "--no-refresh", "--show-token"],
@@ -709,23 +717,23 @@ mod tests {
     fn get_is_not_inherently_safe_and_host_owner_scope_are_checked() {
         assert_eq!(
             judge(
-                &resource("standard"),
+                &resource("auto-ops"),
                 &args(&["api", "repos/acme/app/actions/artifacts/1/zip"]),
                 None
             ),
             Some("unparsed")
         );
         assert_eq!(
-            judge(&resource("read-only"), &args(&["repo", "view", "other/app"]), None),
+            judge(&resource("confirm-changes"), &args(&["repo", "view", "other/app"]), None),
             Some("cli-scope")
         );
         assert_eq!(
-            judge(&resource("standard"), &args(&["repo", "view", "acme/private"]), None),
+            judge(&resource("auto-ops"), &args(&["repo", "view", "acme/private"]), None),
             Some("cli-scope")
         );
         assert_eq!(
             judge(
-                &resource("standard"),
+                &resource("auto-ops"),
                 &args(&["api", "--hostname", "elsewhere.example", "repos/acme/app"]),
                 None
             ),
@@ -733,7 +741,7 @@ mod tests {
         );
         assert_eq!(
             judge(
-                &resource("standard"),
+                &resource("auto-ops"),
                 &args(&["api", "repos/other/app", "-R", "acme/app"]),
                 None
             ),
@@ -742,7 +750,7 @@ mod tests {
     }
     #[test]
     fn future_auto_targets_require_a_complete_snapshot_and_manual_cannot_expand() {
-        let mut value = resource("standard");
+        let mut value = resource("auto-ops");
         assert_eq!(judge(&value, &args(&["repo", "view", "acme/new"]), None), None);
         value["github"]["envStates"]["windows"]["status"] = "partial".into();
         assert_eq!(
@@ -775,13 +783,13 @@ mod tests {
             ],
         ] {
             assert_eq!(
-                target(&resource("standard"), &args(&words), Some("git")),
+                target(&resource("auto-ops"), &args(&words), Some("git")),
                 Err("cli-scope")
             );
         }
         assert_eq!(
             target(
-                &resource("standard"),
+                &resource("auto-ops"),
                 &args(&["push", "--force", "https://github.com/other/app.git", "feature"]),
                 Some("git")
             ),
@@ -789,7 +797,7 @@ mod tests {
         );
         assert_eq!(
             target(
-                &resource("standard"),
+                &resource("auto-ops"),
                 &args(&["push", "--force", "https://github.com/acme/app.git", "feature"]),
                 Some("git")
             ),
@@ -807,14 +815,14 @@ mod tests {
             vec!["push", "-f", "--all", "origin"],
         ] {
             assert_eq!(
-                judge(&resource("standard"), &args(&words), Some("git")),
+                judge(&resource("auto-ops"), &args(&words), Some("git")),
                 Some("github-default-force"),
                 "{words:?}"
             );
         }
         assert_eq!(
             judge(
-                &resource("standard"),
+                &resource("auto-ops"),
                 &args(&["push", "--force", "origin", "HEAD:feature"]),
                 Some("git")
             ),
@@ -822,19 +830,19 @@ mod tests {
         );
         assert_eq!(
             judge(
-                &resource("read-only"),
+                &resource("confirm-changes"),
                 &args(&["push", "--force", "origin", "HEAD:feature"]),
                 Some("git")
             ),
-            Some("cli-write")
+            Some("github-dangerous")
         );
         assert_eq!(
-            judge(&resource("read-only"), &args(&["push", "origin", "main"]), Some("git")),
+            judge(&resource("confirm-changes"), &args(&["push", "origin", "main"]), Some("git")),
             None
         );
         assert_eq!(
             judge(
-                &resource("read-only"),
+                &resource("confirm-changes"),
                 &args(&["commit", "-m", "ordinary"]),
                 Some("git")
             ),

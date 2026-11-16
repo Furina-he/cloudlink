@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::Detail;
+use super::delivery::AgentBrand;
 use super::env::EnvId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -96,6 +97,37 @@ pub enum OperationSource {
     Runner,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export, export_to = "guard.ts")]
+pub enum InvocationProvenance {
+    Hook,
+    SelfReported,
+    Unknown,
+}
+
+/// Display metadata, never an authorization input. Missing historical metadata stays unknown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, export_to = "guard.ts")]
+pub struct InvocationSource {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent: Option<AgentBrand>,
+    pub provenance: InvocationProvenance,
+}
+
+impl InvocationSource {
+    pub fn valid(self) -> bool {
+        matches!(
+            (self.provenance, self.agent),
+            (InvocationProvenance::Hook, Some(AgentBrand::ClaudeCode))
+                | (InvocationProvenance::SelfReported, Some(_))
+                | (InvocationProvenance::Unknown, None)
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "guard.ts")]
@@ -114,6 +146,9 @@ pub struct Operation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub source: Option<OperationSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub caller: Option<InvocationSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub checked: Option<bool>,

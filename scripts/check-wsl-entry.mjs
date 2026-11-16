@@ -70,8 +70,8 @@ try {
   const configPath = join(data, "routes/ssh.conf")
   await writeFile(configPath, config, { flag: "wx" })
   const envId = `wsl:${distro}`, assetId = "ast_wsl_fixture"
-  const policy = { id: assetId, kind: "vps", handle: alias, mode: "read-only", production: true, envIds: [envId], hosts: ["127.0.0.1"] }
-  const route = { assetId, envId, kind: "vps", enabled: true, production: true, mode: "read-only", distro,
+  const policy = { id: assetId, kind: "vps", handle: alias, mode: "confirm-changes", production: true, envIds: [envId], hosts: ["127.0.0.1"] }
+  const route = { assetId, envId, kind: "vps", enabled: true, production: true, mode: "confirm-changes", distro,
     sshPath: "/usr/bin/ssh", alias, configPath: winPath(configPath), configHash: hash(Buffer.from(config)), policy }
   await writeFile(join(data, "routes/.cloudlink.json"), JSON.stringify({ managedBy: "cloudlink", kind: "execution-routes", files: { "ssh.conf": route.configHash } }), { flag: "wx" })
   await writeFile(join(data, "routes/manifest.json"), JSON.stringify({ managedBy: "cloudlink", kind: "execution-routes", version: 1,

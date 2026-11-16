@@ -22,13 +22,16 @@ fn preview(assets: &[Asset], env_id: &EnvId, runner: &str) -> CompilePreview {
 }
 
 #[test]
-fn both_production_modes_use_stable_id_and_nonproduction_keeps_ssh() {
-    for mode in [Mode::ReadOnly, Mode::Standard] {
+fn both_modes_use_stable_runner_ids_regardless_of_production() {
+    for mode in [Mode::ConfirmChanges, Mode::AutoOps] {
         let mut server = testkit::hk_edge();
         server.agent.mode = mode;
         let id = server.id.clone();
+        let mut dev = testkit::dev_box();
+        dev.agent.mode = mode;
+        let dev_id = dev.id.clone();
         let p = preview(
-            &[Asset::Vps(server), Asset::Vps(testkit::dev_box())],
+            &[Asset::Vps(server), Asset::Vps(dev)],
             &EnvId::windows(),
             "C:/fixture/bin/cloudlink-guard.exe",
         );
@@ -46,7 +49,7 @@ fn both_production_modes_use_stable_id_and_nonproduction_keeps_ssh() {
                 .find(|file| file.path.ends_with("dev-box.md"))
                 .unwrap()
                 .content
-                .contains("ssh dev-box")
+                .contains(&format!("exec --env 'windows' --asset '{dev_id}'"))
         );
         assert!(production.contains("put --env 'windows'"));
         assert!(production.contains("get --env 'windows'"));
@@ -126,8 +129,11 @@ fn artifact_explains_wait_expiry_no_replay_and_verified_exit_boundary() {
         assert!(skill.contains(phrase), "missing {phrase}");
     }
     assert!(p.budget.body_lines <= 100, "{}", p.budget.body_lines);
-    assert_eq!(render::TEMPLATE_VERSION, 2);
-    assert!(render::HEALTH_CHECK.contains("do not run the `ssh <alias>` prefix"));
+    assert_eq!(render::TEMPLATE_VERSION, 3);
+    assert!(render::HEALTH_CHECK.contains("Do not replace that entry with direct SSH"));
+    assert!(skill.contains("confirm-changes"));
+    assert!(skill.contains("auto-ops"));
+    assert!(skill.contains("display-only self-report, never approval"));
 }
 
 #[test]

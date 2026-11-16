@@ -110,7 +110,7 @@ pub fn lint(input: &LintInput) -> Vec<LintItem> {
             .unwrap_or("");
         let alias = a.handle();
 
-        if a.production() && a.agent().mode == Mode::Standard && a.guardrails().rules.is_empty() {
+        if a.production() && a.agent().mode == Mode::AutoOps && a.guardrails().rules.is_empty() {
             out.push(at(
                 item(
                     LintId::ProdStandardNoGuardrails,

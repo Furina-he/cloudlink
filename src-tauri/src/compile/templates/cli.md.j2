@@ -46,7 +46,7 @@ Excluded stable repository IDs: {{ github_excluded | join(", ") }}.
 {% else %}
 Manual scope: only the selected stable repository IDs represented below. Historical selections never expand automatically; an unverified owner must be confirmed in CloudLink, not inferred from names.
 {% endif %}
-Partial, offline or denied refreshes preserve known history and cannot enlarge authorization. Refresh through this read-only metadata entry before relying on a new repository, changed identity or deployment relation; failure is not permission to switch accounts or broaden scope:
+A valid login does not mean the repository scope was completely verified. Partial, offline or denied refreshes preserve known history and cannot enlarge authorization. Refresh through this read-only metadata entry before relying on a new repository, changed identity or deployment relation; failure is not permission to switch accounts or broaden scope:
 
     {{ discover }}
 {% if discover_ps %}

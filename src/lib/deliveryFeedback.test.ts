@@ -37,6 +37,19 @@ describe("P8 真实送达反馈", () => {
     expect(deliveryOutcome("asset", ["a"], true, { ...snapshot, deliveries: [mismatch] }, [a, b]).problems[0].id).toBe("shared-selection-mismatch")
   })
 
+  it("共用副本成功不代表未进入交集的资源已送达，独立目录仍照常计数", () => {
+    const shared = target("shared"), independent = target("independent")
+    const copy = { ...delivery(shared), assetIds: ["other-resource"], statusDetail: { id: "shared-selection-mismatch" } }
+    const snapshot = { inclusions: [inclusion(shared), inclusion(independent)], deliveries: [copy, { ...delivery(independent), assetIds: ["asset"] }], statuses: [] }
+    expect(countDeliveredForAsset("asset", snapshot.inclusions, snapshot.deliveries, [shared, independent])).toBe(1)
+    const outcome = deliveryOutcome("asset", [shared.agentKey, independent.agentKey], true, snapshot, [shared, independent])
+    expect(outcome.complete).toBe(false)
+    expect(outcome.problems.map((problem) => problem.id)).toEqual(["shared-selection-mismatch"])
+    const provided = { ...copy, assetIds: ["asset"] }
+    expect(deliveryOutcome("asset", [shared.agentKey], true, { ...snapshot, deliveries: [provided] }, [shared]).complete).toBe(true)
+    expect(deliveryOutcome("asset", [shared.agentKey], false, { ...snapshot, inclusions: [inclusion(shared, false)] }, [shared]).complete).toBe(true)
+  })
+
   it("未列入、写入失败和部分成功分别反馈", () => {
     const a = target("a"), b = target("b"), c = target("c")
     const snapshot = { inclusions: [inclusion(a), { ...inclusion(b, false), reason: { id: "no-key-in-env" as const } }, inclusion(c)], deliveries: [delivery(a), delivery(b), { ...delivery(c, "broken"), statusDetail: { id: "path-unavailable" } }], statuses: [] }

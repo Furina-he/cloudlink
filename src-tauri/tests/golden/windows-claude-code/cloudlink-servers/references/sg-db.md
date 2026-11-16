@@ -1,6 +1,6 @@
 # sg-db — Singapore database
 
-> Production | Mode: standard | Snapshot: 2026-10-28
+> Production | Mode: auto-ops | Snapshot: 2026-10-28
 
 ## Connect
 Pass exactly one quoted remote command after `--`; the stable ID maps to the private SSH configuration. Do not replace this entry with a direct alias:
@@ -15,7 +15,7 @@ PowerShell:
 
 ## Guardrails (must follow)
 1. Never run DROP, TRUNCATE or DELETE without WHERE
-2. Never stop or restart the `postgresql` service (critical)
+2. Stopping or restarting the `postgresql` service is high risk (critical); while CloudLink runs, request one-time approval through its runner
 
 ## Key directories
 | Key | Path | Purpose |

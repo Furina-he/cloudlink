@@ -48,7 +48,7 @@ interface AssetState {
   /** 立即生效，不经过保存（PRD 6.4）。失败时回滚并抛出 */
   /** 授权与共用成员、实际送达以后端完整快照为准（P8a）。 */
   setDistribute: (id: string, agentKey: string, on: boolean) => Promise<DistributeResult>
-  setMode: (id: string, mode: Mode) => Promise<void>
+  setMode: (id: string, mode: Mode, beforeSend?: (latest: Asset) => void) => Promise<void>
   /** 范围勾选立即生效（PRD 6.4）；乐观更新，失败时恢复 */
   setCliScope: (id: string, selectedIds: string[]) => Promise<void>
   saveGithubScope: (req: GithubScopeSaveRequest) => Promise<SaveResult>
@@ -163,7 +163,10 @@ export const useAssetStore = create<AssetState>()((set, get) => {
       }
     }),
 
-    setMode: (id, mode) => enqueue(id, async () => {
+    setMode: (id, mode, beforeSend) => enqueue(id, async () => {
+      const latest = get().byId[id]
+      if (!latest) throw { id: "not-found" } satisfies IpcError
+      beforeSend?.(latest)
       let result: SaveResult
       try {
         result = await ipc.setMode(id, mode)
@@ -295,7 +298,12 @@ export function selectCliAccount(asset: Pick<CliAsset, "cli" | "account">): stri
 export function selectCanDistribute(asset: Asset): { ok: true } | { ok: false; reason: DistributeBlockReason } {
   if (asset.type === "cli") {
     const ready = Object.values(asset.cli.envStates).some((s) => s && cliEnvStatus(s) === "ready")
-    return ready ? { ok: true } : { ok: false, reason: "cli-not-ready" }
+    if (!ready) return { ok: false, reason: "cli-not-ready" }
+    if (asset.cliProvider === "github" && !Object.entries(asset.cli.envStates).some(([envId, state]) => {
+      const snapshot = asset.github?.envStates[envId as EnvId]
+      return state && cliEnvStatus(state) === "ready" && asset.github?.owner && !asset.github.migrationPending && snapshot?.status === "complete" && !!snapshot.identity && snapshot.owner?.id === asset.github.owner.id
+    })) return { ok: false, reason: "github-scope-unverified" }
+    return { ok: true }
   }
   const { connection } = asset
   if (connection.source === "managed" && connection.auth?.method === "password") {
@@ -307,7 +315,7 @@ export function selectCanDistribute(asset: Asset): { ok: true } | { ok: false; r
 }
 
 /** 档位闸刀的琥珀色提醒（DESIGN.md Breaker Row）：生产资源处于标准运维 */
-export const isProdWritable = (a: Pick<Asset, "production" | "agent">) => a.production && a.agent.mode === "standard"
+export const isProdWritable = (a: Pick<Asset, "production" | "agent">) => a.production && a.agent.mode === "auto-ops"
 
 /** 资源行和详情的连接状态。分发时一定验证过，所以「分发给了 Agent 却没有验证结果」就是连接改过（F-106 AC4） */
 export type ConnState = "connected" | "unverified" | "failed" | "changed"

@@ -160,11 +160,7 @@ impl Backend {
                     summary: input.summary,
                     agent: old.map(|s| s.agent.clone()).unwrap_or(AssetAgent {
                         agents: Vec::new(),
-                        mode: if input.production {
-                            Mode::ReadOnly
-                        } else {
-                            self.get_settings()?.default_mode
-                        },
+                        mode: Mode::ConfirmChanges,
                     }),
                     guardrails: input.guardrails,
                     notes: input.notes,
@@ -319,11 +315,7 @@ impl Backend {
                     summary: input.summary,
                     agent: old.map(|a| a.agent.clone()).unwrap_or(AssetAgent {
                         agents: Vec::new(),
-                        mode: if input.production {
-                            Mode::ReadOnly
-                        } else {
-                            self.get_settings()?.default_mode
-                        },
+                        mode: Mode::ConfirmChanges,
                     }),
                     guardrails: input.guardrails,
                     notes: input.notes,
@@ -480,16 +472,16 @@ impl Backend {
         let _edit = self.edit()?;
         let mut switched = Vec::new();
         for mut asset in self.list_assets()? {
-            if !asset.production() || asset.agent().mode != Mode::Standard {
+            if !asset.production() || asset.agent().mode != Mode::AutoOps {
                 continue;
             }
-            asset.agent_mut().mode = Mode::ReadOnly;
+            asset.agent_mut().mode = Mode::ConfirmChanges;
             self.database()?.upsert_asset(&asset)?;
             self.activity(
                 ActivityKind::Mode,
                 ActivityMessageId::ModeChanged,
                 Some(asset.id()),
-                params! {"alias" => asset.handle(), "mode" => Mode::ReadOnly.as_str()},
+                params! {"alias" => asset.handle(), "mode" => Mode::ConfirmChanges.as_str()},
                 true,
             )?;
             switched.push(asset.name().to_string());
@@ -514,8 +506,7 @@ impl Backend {
         }
         let _edit = self.edit_at(epoch)?;
         let mut asset = self.database()?.require_asset(asset_id)?;
-        let plan = self.delivery_plan()?;
-        let affected_agent_keys = plan.affected_keys(agent_key);
+        let affected_agent_keys = vec![agent_key.to_string()];
         if on {
             if !self
                 .list_targets()?
@@ -534,6 +525,20 @@ impl Backend {
                     Some("password-only")
                 }
                 Asset::Vps(s) if !s.connection.verified.as_ref().is_some_and(|v| v.ok) => Some("unverified"),
+                Asset::Cli(c) if c.cli_provider == CliProvider::Github => {
+                    let login_ready = |s: &CliEnvState| s.installed && s.authenticated && !s.expired;
+                    if c.cli
+                        .env_states
+                        .iter()
+                        .any(|(env_id, state)| login_ready(state) && c.github_scope_ready(env_id))
+                    {
+                        None
+                    } else if c.cli.env_states.values().any(login_ready) {
+                        Some("github-scope-unverified")
+                    } else {
+                        Some("cli-not-ready")
+                    }
+                }
                 Asset::Cli(c)
                     if !c.cli.env_states.values().any(|s| {
                         s.installed
@@ -563,13 +568,6 @@ impl Backend {
             asset.agent_mut().agents.extend(affected_agent_keys.iter().cloned());
         }
         self.database()?.upsert_asset(&asset)?;
-        self.shared_mismatches
-            .lock()
-            .map_err(|_| AppError::internal("sharing state unavailable"))?
-            .retain(|id| {
-                plan.unit_for(id)
-                    .is_none_or(|unit| !unit.keys().iter().any(|key| affected_agent_keys.contains(key)))
-            });
         let statuses = self.publish_locked()?;
         let result = self.save_result(asset, statuses)?;
         Ok(DistributeResult {
@@ -607,7 +605,7 @@ impl Backend {
                     summary: String::new(),
                     agent: AssetAgent {
                         agents: Vec::new(),
-                        mode: Mode::ReadOnly,
+                        mode: Mode::ConfirmChanges,
                     },
                     guardrails: Guardrails::default(),
                     notes: String::new(),

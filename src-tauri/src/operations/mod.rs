@@ -124,6 +124,13 @@ fn parse_operation(raw: &[u8], assets: &[Asset], envs: &[EnvId], now: i64) -> Op
     {
         return None;
     }
+    // Do not infer a brand from historical source=hook or a delivery directory. A claimed
+    // hook identity on another channel is unknown; recognized self-reports remain display only.
+    op.caller = op.caller.filter(|caller| {
+        caller.valid()
+            && (caller.provenance != crate::model::guard::InvocationProvenance::Hook
+                || op.source == Some(crate::model::guard::OperationSource::Hook))
+    });
     if op.source == Some(crate::model::guard::OperationSource::Runner) {
         if op.checked != Some(true)
             || op

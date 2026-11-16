@@ -46,7 +46,10 @@ test("原审批优先于折叠笔记，三条命令都完整呈现且来源不�
   await expect(third.locator("code")).toHaveText(
     "sh -c 'cd /opt/apps/api && ./deploy.sh --production'"
   )
-  await expect(third).toContainText("未识别来源")
+  await expect(third).toContainText("未知来源")
+  await expect(third.getByRole("img", { name: "未知来源", exact: true })).toBeVisible()
+  await expect(page.locator("#execution-req_mock_0").getByRole("img", { name: "Codex（自报）", exact: true })).toBeVisible()
+  await expect(page.locator("#execution-req_mock_1").getByRole("img", { name: "Claude Code（自报）", exact: true })).toBeVisible()
   expect(errors).toEqual([])
 })
 
@@ -85,16 +88,23 @@ test("允许一次只改变许可状态，原调用继续才运行；重复继�
     exitCode: 0,
   })
   await expect(card.getByRole("status")).toHaveText("执行成功")
+  await expect(card.getByRole("img", { name: "Codex（自报）", exact: true })).toBeVisible()
+  const log = page.locator('section[aria-labelledby="feed-log"]').getByRole("listitem").filter({ hasText: "docker compose down -v" })
+  await expect(log.getByRole("img", { name: "Codex（自报）", exact: true })).toBeVisible()
+  await expect(log).toContainText("CloudLink 执行入口")
+  await expect(log).toContainText("执行成功")
+  const requests = await fixtureCommand(page, "list_execution_requests", {}) as { requestId: string; caller?: unknown; sessionId?: string }[]
+  expect(requests.find((request) => request.requestId === "req_mock_0")).toMatchObject({ caller: { agent: "codex", provenance: "self-reported" }, sessionId: "codex-mock-thread" })
 })
 
-test("拒绝沿用原卡片，切只读使尚未启动许可取消", async ({ page }) => {
+test("拒绝沿用原卡片，切确认变更使尚未启动许可取消", async ({ page }) => {
   await activity(page)
   const first = page.locator("#execution-req_mock_0")
   await first.getByRole("button", { name: "拒绝", exact: true }).click()
   await expect(first.getByRole("status")).toHaveText("已拒绝，未执行")
   await fixtureCommand(page, "set_mode", {
     assetId: "ast_sg_db",
-    mode: "read-only",
+    mode: "confirm-changes",
   })
   await expect(
     page.getByRole("button", { name: "允许一次", exact: true })

@@ -168,44 +168,35 @@ impl Plan {
         self.units.iter().find(|u| u.targets.iter().any(|t| t.id == target_id))
     }
 
-    /// Agent 开关跨环境，本次明确操作同步它经过的所有同环境共用组。
-    pub fn affected_keys(&self, key: &str) -> Vec<String> {
-        let mut keys = BTreeSet::from([key.to_string()]);
-        loop {
-            let before = keys.len();
-            for unit in &self.units {
-                let members = unit.active_keys();
-                if members.iter().any(|k| keys.contains(k)) {
-                    keys.extend(members);
-                }
-            }
-            if keys.len() == before {
-                return keys.into_iter().collect();
-            }
+    /// One Agent key can own multiple physical directories with different intersections.
+    /// Preserve the legacy source path unless it would alias another unit's source/authority.
+    pub fn source_key(&self, unit: &Unit) -> String {
+        if self.units.iter().any(|other| {
+            other.id() != unit.id() && other.env_id == unit.env_id && other.owner().agent_key == unit.owner().agent_key
+        }) {
+            let parent = paths::comparison(&unit.parent).to_string_lossy().into_owned();
+            format!(
+                "unit-{}",
+                crate::compile::publish::tree_hash([("parent", parent.as_bytes())])
+            )
+        } else {
+            unit.owner().agent_key.clone()
         }
     }
 
-    /// 初次发现不一致只收窄到交集；记录受影响目标供既有状态位置提示。
-    pub fn normalize_choices(&self, assets: &mut [Asset]) -> BTreeSet<String> {
+    /// A shared copy constrains content, never the persisted choices or other environments.
+    pub fn selection_mismatches(&self, assets: &[Asset]) -> BTreeSet<String> {
         let mut affected = BTreeSet::new();
-        for asset in assets {
-            loop {
-                let mut changed = false;
-                for unit in &self.units {
-                    let keys = unit.active_keys();
-                    if keys.len() < 2 {
-                        continue;
-                    }
-                    let chosen = keys.iter().filter(|k| asset.agent().agents.contains(k)).count();
-                    if chosen > 0 && chosen < keys.len() {
-                        asset.agent_mut().agents.retain(|k| !keys.contains(k));
-                        affected.extend(unit.targets.iter().map(|t| t.id.clone()));
-                        changed = true;
-                    }
-                }
-                if !changed {
-                    break;
-                }
+        for unit in &self.units {
+            let keys = unit.active_keys();
+            if keys.len() < 2 {
+                continue;
+            }
+            if assets.iter().any(|asset| {
+                let chosen = keys.iter().filter(|key| asset.agent().agents.contains(key)).count();
+                chosen > 0 && chosen < keys.len()
+            }) {
+                affected.extend(unit.targets.iter().map(|target| target.id.clone()));
             }
         }
         affected

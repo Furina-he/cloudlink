@@ -85,6 +85,20 @@ describe("能否分发给新的 Agent（F-303 AC1）", () => {
     expect(selectCanDistribute(failed)).toEqual({ ok: false, reason: "failed" })
   })
 
+  it("GitHub 登录有效不等于范围完整，缺失或部分范围不能扩大分发", () => {
+    const github = { ...(byId.ast_github as CliAsset), cli: { ...(byId.ast_github as CliAsset).cli, envStates: { windows: env({ account: "operator" }) } } }
+    expect(cliEnvStatus(github.cli.envStates.windows!)).toBe("ready")
+    expect(selectCanDistribute(github)).toEqual({ ok: false, reason: "github-scope-unverified" })
+    const owner = { id: "O_team", login: "example-team", kind: "organization" as const }
+    const config = { host: "github.com", owner, mode: "manual" as const, selectedRepoIds: [], excludedRepoIds: [], revision: 1, migrationPending: false, envStates: { windows: { status: "complete" as const, owner, identity: { id: "U_operator", login: "operator", host: "github.com" }, repos: [], checkedAt: fx.ago(fx.MIN) } } }
+    expect(selectCanDistribute({ ...github, github: config })).toEqual({ ok: true })
+    for (const status of ["partial", "offline", "denied"] as const) {
+      const incomplete = { ...github, github: { ...config, envStates: { windows: { ...config.envStates.windows, status } } } }
+      expect(selectCliProblem(incomplete)).toBeNull()
+      expect(selectCanDistribute(incomplete)).toEqual({ ok: false, reason: "github-scope-unverified" })
+    }
+  })
+
   it("云平台：至少一个运行环境已就绪即可；全部未就绪时说明原因", () => {
     expect(selectCanDistribute(cloudflare)).toEqual({ ok: true })
     expect(selectCanDistribute(vercel)).toEqual({ ok: true })

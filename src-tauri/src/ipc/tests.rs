@@ -392,6 +392,32 @@ fn server_input(server: &ServerAsset, id: Option<&str>) -> ServerAssetInput {
     }
 }
 
+#[test]
+fn real_use_new_resources_default_to_confirmation_regardless_of_production_or_saved_default() {
+    let fixture = Fixture::with_runner(Arc::new(MetadataRunner::default()), false);
+    let mut settings = fixture.backend.get_settings().unwrap();
+    settings.default_mode = Mode::AutoOps;
+    fixture.backend.database().unwrap().put_settings(&settings).unwrap();
+    for production in [false, true] {
+        let mut server = fixture.server();
+        server.connection.ssh_alias = if production {
+            "new-production"
+        } else {
+            "new-development"
+        }
+        .into();
+        let mut input = server_input(&server, None);
+        input.production = production;
+        let result = fixture.backend.save_asset(AssetInput::Vps(input)).unwrap();
+        assert_eq!(result.asset.agent().mode, Mode::ConfirmChanges);
+        let mut input = cli_input(if production { ACCOUNT_B } else { ACCOUNT_A }, None);
+        input.production = production;
+        let result = fixture.backend.save_asset(AssetInput::Cli(input)).unwrap();
+        assert_eq!(result.asset.agent().mode, Mode::ConfirmChanges);
+    }
+    fixture.assert_neighbors_untouched();
+}
+
 fn cli_input(account: &str, scope: Option<Vec<CliScopeItem>>) -> CliAssetInput {
     CliAssetInput {
         tag: CliTag::Tag,
@@ -1620,67 +1646,149 @@ fn p8_shared_target(fixture: &Fixture) -> Target {
         .unwrap()
 }
 
+#[test]
+fn real_use_same_agent_in_shared_and_independent_directories_keeps_each_copy_isolated() {
+    let fixture = Fixture::new();
+    let saved = fixture.seed_ready_server();
+    let shared_path = fixture.paths.user_home.join(".a-shared/skills");
+    let independent_path = fixture.paths.user_home.join(".z-independent/skills");
+    fs::create_dir_all(&shared_path).unwrap();
+    fs::create_dir_all(&independent_path).unwrap();
+    let add = |label: &str, path: &Path| {
+        fixture
+            .backend
+            .add_custom_target(AddCustomTargetRequest {
+                env_id: EnvId::windows(),
+                label: label.into(),
+                path: path.to_string_lossy().into_owned(),
+            })
+            .unwrap()
+    };
+    let first = add("A", &shared_path);
+    let other = add("B", &shared_path);
+    let independent = add("A", &independent_path);
+    assert_eq!(first.agent_key, independent.agent_key);
+
+    let result = fixture
+        .backend
+        .set_distribute(saved.id(), &first.agent_key, true)
+        .unwrap();
+    assert_eq!(result.affected_agent_keys, vec![first.agent_key.clone()]);
+    assert!(!result.asset.agent().agents.contains(&other.agent_key));
+    let shared_destination = fixture.destination(&first);
+    let independent_destination = fixture.destination(&independent);
+    assert!(!shared_destination.exists(), "B must not receive A's independent copy");
+    assert!(independent_destination.join("SKILL.md").is_file());
+    let choices = result.asset.agent().agents.clone();
+    for _ in 0..2 {
+        let checked = fixture.backend.check_deliveries().unwrap();
+        let shared = checked.iter().find(|d| d.target_id == first.id).unwrap();
+        let single = checked.iter().find(|d| d.target_id == independent.id).unwrap();
+        assert_eq!(shared.status, DeliveryStatus::Missing);
+        assert_eq!(single.status, DeliveryStatus::Ok);
+        assert_eq!(single.asset_ids, Some(vec![saved.id().to_string()]));
+        assert!(!shared_destination.exists());
+        assert!(independent_destination.join("SKILL.md").is_file());
+        assert_eq!(
+            fixture
+                .backend
+                .database()
+                .unwrap()
+                .require_asset(saved.id())
+                .unwrap()
+                .agent()
+                .agents,
+            choices
+        );
+    }
+
+    fixture
+        .backend
+        .set_distribute(saved.id(), &other.agent_key, true)
+        .unwrap();
+    assert!(shared_destination.join("SKILL.md").is_file());
+    assert!(independent_destination.join("SKILL.md").is_file());
+    let marker = publish::read_marker(&shared_destination).unwrap();
+    assert!(marker.agent_keys.contains(&first.agent_key));
+    assert!(marker.agent_keys.contains(&other.agent_key));
+    fixture
+        .backend
+        .set_distribute(saved.id(), &other.agent_key, false)
+        .unwrap();
+    assert!(!shared_destination.exists());
+    assert!(independent_destination.join("SKILL.md").is_file());
+    fixture
+        .backend
+        .set_distribute(saved.id(), &first.agent_key, false)
+        .unwrap();
+    assert!(!shared_destination.exists());
+    assert!(!independent_destination.exists());
+    fixture.assert_neighbors_untouched();
+}
+
 #[cfg(any(windows, unix))]
 #[test]
-fn p8_shared_directory_uses_intersection_then_one_explicit_switch_aligns_members() {
+fn p8_shared_directory_only_changes_the_clicked_choice_and_writes_the_intersection() {
     let fixture = Fixture::new();
     let saved = fixture.seed_ready_server();
     let primary = fixture.target();
     let shared = p8_shared_target(&fixture);
+    let choices = fixture
+        .backend
+        .database()
+        .unwrap()
+        .require_asset(saved.id())
+        .unwrap()
+        .agent()
+        .agents
+        .clone();
     assert!(
-        fixture
-            .backend
-            .database()
-            .unwrap()
-            .require_asset(saved.id())
-            .unwrap()
-            .agent()
-            .agents
-            .is_empty()
+        choices.contains(&primary.agent_key),
+        "a shared copy must never rewrite the user's choice"
     );
+    assert!(!choices.contains(&shared.agent_key));
     assert!(
         !fixture.destination(&primary).exists(),
-        "discovering a sharer must not expand grants"
+        "the new shared member has not opted in"
     );
-    let mismatches: Vec<_> = fixture
+    for _ in 0..2 {
+        let checked = fixture.backend.check_deliveries().unwrap();
+        assert_eq!(
+            checked
+                .iter()
+                .filter(|d| (d.target_id == primary.id || d.target_id == shared.id)
+                    && d.status == DeliveryStatus::Missing
+                    && d.status_detail
+                        .as_ref()
+                        .is_some_and(|detail| detail.id == "shared-selection-mismatch"))
+                .count(),
+            2
+        );
+        assert_eq!(
+            fixture
+                .backend
+                .database()
+                .unwrap()
+                .require_asset(saved.id())
+                .unwrap()
+                .agent()
+                .agents,
+            choices
+        );
+    }
+    let first = fixture
         .backend
-        .list_deliveries()
-        .unwrap()
-        .into_iter()
-        .filter(|d| d.target_id == primary.id || d.target_id == shared.id)
-        .collect();
-    assert_eq!(
-        mismatches.len(),
-        2,
-        "an empty intersection still keeps every mismatch row"
-    );
-    assert!(mismatches.iter().all(|d| {
-        d.status == DeliveryStatus::Missing
-            && d.status_detail
-                .as_ref()
-                .is_some_and(|detail| detail.id == "shared-selection-mismatch")
-    }));
-    let checked = fixture.backend.check_deliveries().unwrap();
-    assert_eq!(
-        checked
-            .iter()
-            .filter(|d| (d.target_id == primary.id || d.target_id == shared.id)
-                && d.status_detail
-                    .as_ref()
-                    .is_some_and(|detail| detail.id == "shared-selection-mismatch"))
-            .count(),
-        2,
-        "health checks must not drop the empty-source mismatch"
-    );
+        .set_distribute(saved.id(), &primary.agent_key, true)
+        .unwrap();
+    assert_eq!(first.affected_agent_keys, vec![primary.agent_key.clone()]);
+    assert_eq!(first.asset.agent().agents, choices);
+    assert!(!fixture.destination(&primary).exists());
 
     let result = fixture
         .backend
         .set_distribute(saved.id(), &shared.agent_key, true)
         .unwrap();
-    assert_eq!(
-        result.affected_agent_keys,
-        vec![primary.agent_key.clone(), shared.agent_key.clone()]
-    );
+    assert_eq!(result.affected_agent_keys, vec![shared.agent_key.clone()]);
     assert!(result.asset.agent().agents.contains(&primary.agent_key));
     assert!(result.asset.agent().agents.contains(&shared.agent_key));
     let delivered: Vec<_> = result
@@ -1689,13 +1797,11 @@ fn p8_shared_directory_uses_intersection_then_one_explicit_switch_aligns_members
         .filter(|d| d.status == DeliveryStatus::Ok)
         .collect();
     assert_eq!(delivered.len(), 2);
-    assert!(
-        delivered.iter().all(|d| d
-            .status_detail
+    assert!(delivered.iter().all(|d| {
+        d.asset_ids
             .as_ref()
-            .is_some_and(|detail| detail.id == "shared-directory")),
-        "an explicit switch clears the mismatch, not the shared-directory explanation"
-    );
+            .is_some_and(|ids| ids.contains(&saved.id().to_string()))
+    }));
     assert_eq!(
         delivered
             .iter()
@@ -1705,7 +1811,8 @@ fn p8_shared_directory_uses_intersection_then_one_explicit_switch_aligns_members
         1
     );
     let marker = publish::read_marker(&fixture.destination(&primary)).unwrap();
-    assert_eq!(marker.agent_keys, result.affected_agent_keys);
+    assert!(marker.agent_keys.contains(&primary.agent_key));
+    assert!(marker.agent_keys.contains(&shared.agent_key));
     assert!(
         !fixture.source(&shared).exists(),
         "a shared directory has no duplicate source"
@@ -1715,9 +1822,15 @@ fn p8_shared_directory_uses_intersection_then_one_explicit_switch_aligns_members
         .backend
         .set_distribute(saved.id(), &primary.agent_key, false)
         .unwrap();
+    assert_eq!(off.affected_agent_keys, vec![primary.agent_key.clone()]);
     assert!(!off.asset.agent().agents.contains(&primary.agent_key));
-    assert!(!off.asset.agent().agents.contains(&shared.agent_key));
+    assert!(off.asset.agent().agents.contains(&shared.agent_key));
     assert!(!fixture.destination(&primary).exists());
+    fixture
+        .backend
+        .set_distribute(saved.id(), &primary.agent_key, true)
+        .unwrap();
+    assert!(fixture.destination(&primary).join("SKILL.md").exists());
     fixture.assert_neighbors_untouched();
 }
 

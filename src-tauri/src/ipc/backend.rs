@@ -646,8 +646,13 @@ impl Backend {
         let unit = plan
             .unit_for(&target.id)
             .ok_or_else(|| AppError::ipc(IpcErrorId::TargetExists))?;
-        let (marker, files) = deliver::load_source(&self.paths, &target.env_id, &unit.owner().agent_key)?
-            .ok_or_else(|| AppError::ipc(IpcErrorId::SourceMissing))?;
+        let (marker, files) = deliver::load_source_with_key(
+            &self.paths,
+            &target.env_id,
+            &unit.owner().agent_key,
+            &plan.source_key(unit),
+        )?
+        .ok_or_else(|| AppError::ipc(IpcErrorId::SourceMissing))?;
         let (_, saved) = deliver::take_over_unit(&self.paths, &env, &target, unit, &files, &marker)?;
         self.publish_locked()?;
         let delivery = self

@@ -1,6 +1,5 @@
 // 手写契约（PRD F-306、F-307、8.6）：Claude Code 护栏与操作记录
 import type { EnvId } from "./env"
-import type { ExecutionState } from "./execution"
 
 export type GuardState = "active" | "not-installed" | "broken" | "unavailable"
 
@@ -58,25 +57,7 @@ export type GuardReasonId =
   | "github-dangerous"
 
 /** 护栏判定过的一条命令（F-307） */
-export interface Operation {
-  id: string
-  assetId: string
-  envId: EnvId
-  at: string
-  sessionId: string
-  cwd: string
-  /** 已脱敏 */
-  command: string
-  decision: OperationDecision
-  reasonId?: GuardReasonId
-  source?: OperationSource
-  checked?: boolean
-  executionState?: ExecutionState
-  requestId?: string
-  epoch?: string
-  exitCode?: number
-  durationMs?: number
-}
+export type { Operation, InvocationSource, InvocationProvenance } from "./generated/guard"
 
 export interface OperationQuery {
   assetId?: string

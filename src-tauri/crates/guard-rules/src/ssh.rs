@@ -405,7 +405,12 @@ fn read_only(words: &[String], depth: usize) -> bool {
     let args = &words[1..];
     let has = |needle: &str| args.iter().any(|a| a == needle);
     let first = args.first().map(String::as_str).unwrap_or("");
+    if firewall_query(words) {
+        return true;
+    }
     match name {
+        "pwd" => args.is_empty(),
+        "cd" => args.len() == 1 && !args[0].starts_with('-'),
         "uptime" | "nproc" | "free" | "df" | "du" | "ls" | "stat" | "cat" | "head" | "tail" | "less" | "grep"
         | "wc" | "ps" | "ss" | "netstat" | "uname" | "id" | "whoami" | "lsblk" | "findmnt" | "echo" | "which" => {
             !args
@@ -580,13 +585,46 @@ fn read_only(words: &[String], depth: usize) -> bool {
     }
 }
 
-pub(crate) fn judge(remote: &str, standard: bool, critical: &[String], outer_unsafe: bool) -> Option<&'static str> {
-    judge_inner(remote, standard, critical, outer_unsafe, 0)
+/// The short, auditable auto-operations allowlist. Everything else remains an
+/// approval candidate after credential/high-risk checks, even if it tokenizes.
+fn routine_change(words: &[String]) -> bool {
+    let Some(name) = words.first().map(|word| shell::binary(word)) else { return false };
+    let args = &words[1..];
+    match name {
+        "docker" => match args.first().map(String::as_str) {
+            Some("start" | "restart" | "stop") => shell::checked_arguments(&args[1..], &[], &["--time", "-t"])
+                .is_some_and(|targets| !targets.is_empty()),
+            Some("pull") => shell::checked_arguments(&args[1..], &["--quiet", "-q"], &["--platform"])
+                .is_some_and(|targets| targets.len() == 1),
+            Some("compose") => {
+                let Some(parts) = shell::checked_arguments(
+                    &args[1..],
+                    &["-d", "--detach", "--build", "--no-build", "--no-deps", "--wait", "--force-recreate", "--no-recreate", "--quiet", "-q"],
+                    &["-f", "--file", "-p", "--project-name", "--project-directory", "--profile", "--timeout", "-t", "--wait-timeout", "--pull", "--policy"],
+                ) else { return false };
+                matches!(parts.first(), Some(&"up" | &"start" | &"restart" | &"pull"))
+            }
+            _ => false,
+        },
+        "docker-compose" => {
+            let mut normalized = vec!["docker".into(), "compose".into()];
+            normalized.extend_from_slice(args);
+            routine_change(&normalized)
+        }
+        "systemctl" => shell::checked_arguments(args, &["--user", "--system", "--no-block", "--quiet", "-q"], &[])
+            .is_some_and(|parts| parts.len() >= 2 && matches!(parts[0], "start" | "restart" | "reload" | "try-restart")),
+        "nginx" => args.len() == 2 && args[0] == "-s" && args[1] == "reload",
+        _ => false,
+    }
+}
+
+pub(crate) fn judge(remote: &str, auto_ops: bool, critical: &[String], outer_unsafe: bool) -> Option<&'static str> {
+    judge_inner(remote, auto_ops, critical, outer_unsafe, 0)
 }
 
 fn judge_inner(
     remote: &str,
-    standard: bool,
+    auto_ops: bool,
     critical: &[String],
     outer_unsafe: bool,
     depth: usize,
@@ -595,7 +633,7 @@ fn judge_inner(
         return Some("unparsed");
     }
     if remote.trim().is_empty() {
-        return (!standard).then_some("interactive");
+        return Some("interactive");
     }
     let parsed = shell::parse(remote);
     for simple in &parsed.commands {
@@ -613,7 +651,7 @@ fn judge_inner(
             return Some("ssh-config");
         }
     }
-    // Scan literal nested expansions too, even though an opaque standard-mode command can pass.
+    // Red lines inside literal expansions must not become approvable opaque commands.
     for embedded in &parsed.embedded {
         if let Some(reason) = judge_inner(embedded, true, critical, false, depth + 1)
             && reason != "unparsed"
@@ -625,16 +663,17 @@ fn judge_inner(
     if unsupported {
         return Some("unparsed");
     }
-    if !standard
-        && parsed
-            .commands
-            .iter()
-            .any(|simple: &Simple| shell::writes_redirect(simple) || !read_only(&simple.words, 0))
-    {
-        return Some("read-only");
-    }
     if parsed.commands.is_empty() {
         return Some("unparsed");
     }
-    None
+    let changes: Vec<&Simple> = parsed.commands.iter().filter(|simple| {
+        shell::writes_redirect(simple) || !read_only(&simple.words, 0)
+    }).collect();
+    if changes.is_empty() {
+        return None;
+    }
+    if changes.iter().any(|simple| shell::writes_redirect(simple) || !routine_change(&simple.words)) {
+        return Some("unparsed");
+    }
+    (!auto_ops).then_some("read-only")
 }

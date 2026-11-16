@@ -66,7 +66,7 @@ export function PrefRow({
       className={cn(
         "flex min-h-[50px] gap-4 px-3.5 py-2.5",
         block ? "flex-col gap-2" : "items-center",
-        warn && "bg-warning/10",
+        warn && "bg-warning/5",
         className
       )}
     >

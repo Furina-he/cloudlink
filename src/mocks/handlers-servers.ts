@@ -8,7 +8,7 @@ import { handleOf, selectCanDistribute } from "@/stores/assets"
 import { startProbe } from "./handlers-probe"
 import { prepareGithubCreate } from "./handlers-github"
 import { cancelMockExecutions } from "./handlers-execution"
-import { assetById, compileUnits, db, fail, logActivity, newId, now, recompile, saveSnapshot, serverById, sharedAgentKeys } from "./state"
+import { assetById, compileUnits, db, fail, logActivity, newId, now, recompile, saveSnapshot, serverById } from "./state"
 
 /** 已保存服务器的连接参数，与前端表单交给 save_asset 的形状一致（签名比对用） */
 export const connInputOf = connectionInputOf
@@ -80,7 +80,7 @@ function saveCli(input: CliAssetInput) {
       envStates: Object.fromEntries(envs.map((e) => [e, db.cliMachine[input.cliProvider][e] ?? { installed: false, authenticated: false, expired: false, checkedAt: now() }])),
       scope: input.scope ?? [],
     },
-    agent: prev?.agent ?? { agents: [], mode: input.production ? "read-only" : db.settings.defaultMode },
+    agent: prev?.agent ?? { agents: [], mode: "confirm-changes" },
     createdAt: prev?.createdAt ?? now(),
     updatedAt: now(),
   }
@@ -107,7 +107,7 @@ function saveServer(input: ServerAssetInput) {
     id: saved?.id ?? newId("ast"),
     connection: buildConnection(input.connection, saved),
     // 新建时：生产为只读巡检，其他取设置中的默认档位（F-202 AC2）
-    agent: saved?.agent ?? { agents: [], mode: input.production ? "read-only" : db.settings.defaultMode },
+    agent: saved?.agent ?? { agents: [], mode: "confirm-changes" },
     probe: saved?.probe ?? { lastRunId: null, lastSuccessAt: null, status: "never" },
     createdAt: saved?.createdAt ?? now(),
     updatedAt: now(),
@@ -160,7 +160,7 @@ function importHosts(hosts: ImportHost[], probeAfter: boolean) {
         resolved: info?.hostname ? { hostname: info.hostname, user: info.user ?? "", port: info.port ?? 22, proxyJump: null, resolvedAt: now() } : null,
         verified: null,
       },
-      agent: { agents: [], mode: db.settings.defaultMode },
+      agent: { agents: [], mode: "confirm-changes" },
       facts: {},
       paths: [],
       services: [],
@@ -187,7 +187,7 @@ function setDistribute(id: string, agentKey: string, on: boolean) {
   if (!db.targets.some((t) => t.agentKey === agentKey)) fail("not-found")
   const can = selectCanDistribute(asset)
   if (on && !can.ok) fail("cannot-distribute", { reason: can.reason })
-  const affectedAgentKeys = sharedAgentKeys(agentKey)
+  const affectedAgentKeys = [agentKey]
   const rest = asset.agent.agents.filter((k) => !affectedAgentKeys.includes(k))
   const next = on ? [...rest, ...affectedAgentKeys] : rest
   if (JSON.stringify([...asset.agent.agents].sort()) !== JSON.stringify([...next].sort())) cancelMockExecutions(id)
@@ -206,11 +206,11 @@ function setMode(id: string, mode: Mode) {
 
 /** F-407 AC2：只动处于标准运维的生产资源 */
 function allReadOnly() {
-  const list = db.assets.filter((a) => a.production && a.agent.mode === "standard")
+  const list = db.assets.filter((a) => a.production && a.agent.mode === "auto-ops")
   for (const a of list) {
     cancelMockExecutions(a.id)
-    a.agent.mode = "read-only"
-    logActivity({ kind: "mode", assetId: a.id, messageId: "mode-changed", params: { alias: handleOf(a), mode: "read-only" }, ok: true })
+    a.agent.mode = "confirm-changes"
+    logActivity({ kind: "mode", assetId: a.id, messageId: "mode-changed", params: { alias: handleOf(a), mode: "confirm-changes" }, ok: true })
   }
   if (list.length > 0) recompile()
   return list.map((a) => a.name)

@@ -41,7 +41,7 @@ pub fn hk_edge() -> ServerAsset {
                 .into(),
         agent: AssetAgent {
             agents: vec!["claude-code".into(), "universal".into()],
-            mode: Mode::ReadOnly,
+            mode: Mode::ConfirmChanges,
         },
         guardrails: Guardrails {
             rules: vec![
@@ -158,7 +158,7 @@ pub fn sg_db() -> ServerAsset {
         summary: "PostgreSQL and Redis for the API".into(),
         agent: AssetAgent {
             agents: vec!["claude-code".into(), "universal".into()],
-            mode: Mode::Standard,
+            mode: Mode::AutoOps,
         },
         guardrails: Guardrails {
             rules: vec![rule("r1", "Never run DROP, TRUNCATE or DELETE without WHERE")],
@@ -258,7 +258,7 @@ pub fn dev_box() -> ServerAsset {
         summary: "Development machine".into(),
         agent: AssetAgent {
             agents: vec!["claude-code".into()],
-            mode: Mode::Standard,
+            mode: Mode::AutoOps,
         },
         guardrails: Guardrails::default(),
         notes: String::new(),
@@ -318,7 +318,7 @@ pub fn cloudflare() -> CliAsset {
         summary: "DNS for the main domains and the edge API gateway Worker".into(),
         agent: AssetAgent {
             agents: vec!["claude-code".into()],
-            mode: Mode::ReadOnly,
+            mode: Mode::ConfirmChanges,
         },
         guardrails: Guardrails::default(),
         notes: String::new(),
@@ -412,7 +412,7 @@ pub fn github() -> CliAsset {
         summary: "Source for the shop front end and the API".into(),
         agent: AssetAgent {
             agents: vec!["claude-code".into()],
-            mode: Mode::ReadOnly,
+            mode: Mode::ConfirmChanges,
         },
         guardrails: Guardrails::default(),
         notes: String::new(),

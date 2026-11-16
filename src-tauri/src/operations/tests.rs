@@ -37,6 +37,7 @@ fn operation(id: &str, at: &str) -> Operation {
         decision: OperationDecision::Allowed,
         reason_id: None,
         source: None,
+        caller: None,
         checked: None,
         execution_state: None,
         request_id: None,
@@ -96,6 +97,57 @@ fn operation_and_activity_are_imported_once_and_both_are_fully_redacted() {
     assert_eq!(denied_today(&db, &EnvId::windows(), now).unwrap(), 1);
     assert!(ingest(&paths, &db, &[EnvId::windows()], now).unwrap().is_empty());
     assert!(db.ingest_claims("operation").unwrap().is_empty());
+}
+
+#[test]
+fn imported_callers_are_preserved_but_historical_hook_records_stay_unknown() {
+    use crate::model::delivery::AgentBrand;
+    use crate::model::guard::{InvocationProvenance, InvocationSource, OperationSource};
+
+    let (_temp, paths, db, now) = setup();
+    let mut historical = operation("op_old_hook", &time::format_rfc3339(now));
+    historical.source = Some(OperationSource::Hook);
+    append(&paths, &historical);
+    let mut hook = operation("op_known_hook", &time::format_rfc3339(now));
+    hook.source = Some(OperationSource::Hook);
+    hook.caller = Some(InvocationSource {
+        agent: Some(AgentBrand::ClaudeCode),
+        provenance: InvocationProvenance::Hook,
+    });
+    append(&paths, &hook);
+    let mut runner = operation("exec_req_source", &time::format_rfc3339(now));
+    runner.source = Some(OperationSource::Runner);
+    runner.caller = Some(InvocationSource {
+        agent: Some(AgentBrand::Codex),
+        provenance: InvocationProvenance::SelfReported,
+    });
+    runner.checked = Some(true);
+    runner.request_id = Some("req_source".into());
+    runner.epoch = Some("fixture-epoch".into());
+    runner.execution_state = Some(crate::model::execution::ExecutionState::Succeeded);
+    runner.exit_code = Some(0);
+    runner.duration_ms = Some(42);
+    append(&paths, &runner);
+    ingest(&paths, &db, &[EnvId::windows()], now).unwrap();
+    let records = all(&db);
+    assert_eq!(records.len(), 3);
+    assert!(
+        records
+            .iter()
+            .find(|op| op.id == historical.id)
+            .unwrap()
+            .caller
+            .is_none()
+    );
+    assert_eq!(records.iter().find(|op| op.id == hook.id).unwrap().caller, hook.caller);
+    assert_eq!(
+        records.iter().find(|op| op.id == runner.id).unwrap().caller,
+        runner.caller
+    );
+    assert_eq!(
+        records.iter().find(|op| op.id == runner.id).unwrap().session_id,
+        runner.session_id
+    );
 }
 
 #[test]

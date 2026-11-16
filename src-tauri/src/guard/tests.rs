@@ -364,7 +364,7 @@ fn policy_tracks_modes_and_selected_scopes_without_secrets_or_private_paths() {
     let (_temporary, paths, _environment) = fixture();
     let mut server = testkit::hk_edge();
     let mut cli = testkit::cloudflare();
-    server.agent.mode = Mode::Standard;
+    server.agent.mode = Mode::AutoOps;
     server.agent.agents.clear();
     server.notes = "do not export this note password=never".into();
     cli.cli.scope.iter_mut().for_each(|scope| scope.selected = false);
@@ -372,7 +372,7 @@ fn policy_tracks_modes_and_selected_scopes_without_secrets_or_private_paths() {
     let text = fs::read_to_string(paths.data_dir.join("guard/policy.json")).unwrap();
     let value: Value = serde_json::from_str(&text).unwrap();
     assert!(guard_rules::policy_valid(&value));
-    assert_eq!(value["resources"][0]["mode"], "standard");
+    assert_eq!(value["resources"][0]["mode"], "auto-ops");
     assert!(
         value["resources"][0]["hosts"]
             .as_array()
@@ -407,7 +407,7 @@ fn policy_current_rejects_stale_modes_accounts_and_scope() {
     let assets = vec![Asset::Vps(testkit::hk_edge()), Asset::Cli(testkit::cloudflare())];
     assert!(policy_current(&paths, &assets));
     let mut mode = assets.clone();
-    mode[0].agent_mut().mode = Mode::Standard;
+    mode[0].agent_mut().mode = Mode::AutoOps;
     assert!(!policy_current(&paths, &mode));
     let mut account = assets.clone();
     let Asset::Cli(cli) = &mut account[1] else {
