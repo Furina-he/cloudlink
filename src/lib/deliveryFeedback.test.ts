@@ -59,6 +59,17 @@ describe("P8 真实送达反馈", () => {
     expect(outcome.problems.map((p) => p.id)).toEqual(["no-key-in-env", "path-unavailable"])
   })
 
+  it.each(["no-key-in-env", "include-missing", "not-written"] as const)("未列入的 %s 原因不能被实际副本的资源清单掩盖", (id) => {
+    const t = target("one")
+    const snapshot = { inclusions: [{ ...inclusion(t, false), reason: { id } }], deliveries: [{ ...delivery(t), assetIds: ["other-resource"] }], statuses: [] }
+    for (const d of [snapshot.deliveries[0], { ...snapshot.deliveries[0], statusDetail: { id: "shared-selection-mismatch" } }]) {
+      const outcome = deliveryOutcome("asset", [t.agentKey], true, { ...snapshot, deliveries: [d] }, [t])
+      expect(outcome.count).toBe(0)
+      expect(outcome.complete).toBe(false)
+      expect(outcome.problems.map((problem) => problem.id)).toEqual([id])
+    }
+  })
+
   it("撤回只需从副本移除这项资源，共用副本仍供其他资源或成员使用", () => {
     const a = target("a")
     const snapshot = { inclusions: [inclusion(a, false)], deliveries: [delivery(a)], statuses: [] }

@@ -881,7 +881,7 @@ mod tests {
     fn untagged_asset_respects_type_literal() {
         let cli = serde_json::json!({
             "type": "cli", "id": "ast_1", "name": "Cloudflare", "production": true, "summary": "",
-            "agent": { "agents": [], "mode": "read-only" }, "guardrails": { "rules": [] }, "notes": "",
+            "agent": { "agents": [], "mode": "confirm-changes" }, "guardrails": { "rules": [] }, "notes": "",
             "createdAt": "2026-11-01T00:00:00Z", "updatedAt": "2026-11-01T00:00:00Z",
             "cliProvider": "cloudflare", "handle": "cloudflare", "account": null,
             "cli": { "binary": "wrangler", "envStates": {}, "scope": [] }

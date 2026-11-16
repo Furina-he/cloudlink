@@ -161,7 +161,7 @@ mod tests {
         assert!(github.owner.is_none() && github.migration_pending);
         assert_eq!(github.selected_repo_ids, ["repo:A", "repo:B"]);
         assert_eq!(cli.cli.scope.len(), 3);
-        assert_eq!(cli.agent.mode, crate::model::asset::Mode::AutoOps);
+        assert_eq!(cli.agent.mode, crate::model::asset::Mode::ConfirmChanges);
         assert_eq!(cli.agent.agents, ["claude-code"]);
     }
 

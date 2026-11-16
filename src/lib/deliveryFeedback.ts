@@ -32,8 +32,8 @@ export function deliveryOutcome(assetId: string, agentKeys: string[], on: boolea
     const inc = snapshot.inclusions.find((i) => i.assetId === assetId && i.envId === target.envId && i.agentKey === target.agentKey)
     const blocked = snapshot.statuses.some((s) => s.envId === target.envId && s.agentKey === target.agentKey && s.blocked)
     let id: string | undefined, params: DeliveryProblem["params"]
-    if (on && d?.statusDetail?.id === "shared-selection-mismatch" && !d.assetIds?.includes(assetId)) { id = d.statusDetail.id; params = d.statusDetail.params }
-    else if (on && d?.status === "ok" && d.assetIds && !d.assetIds.includes(assetId)) id = "shared-selection-mismatch"
+    if (on && inc?.included && d?.statusDetail?.id === "shared-selection-mismatch" && !d.assetIds?.includes(assetId)) { id = d.statusDetail.id; params = d.statusDetail.params }
+    else if (on && inc?.included && d?.status === "ok" && d.assetIds && !d.assetIds.includes(assetId)) id = "shared-selection-mismatch"
     else if (d && d.status !== "ok" && !(!on && ["missing", "shared"].includes(d.status))) { id = d.statusDetail?.id ?? d.status; params = d.statusDetail?.params }
     else if (!on && inc?.included) id = "withdraw-failed"
     else if (on && blocked) id = "compile-blocked"

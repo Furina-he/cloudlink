@@ -267,6 +267,12 @@ impl Fixture {
         publish::output_dir(&self.paths.compiled_dir(), &target.env_id, &target.agent_key)
     }
 
+    fn current_source(&self, target: &Target) -> PathBuf {
+        let plan = self.backend.delivery_plan().unwrap();
+        let unit = plan.unit_for(&target.id).unwrap();
+        publish::output_dir(&self.paths.compiled_dir(), &unit.env_id, &plan.source_key(unit))
+    }
+
     fn replace_owned_file(&self, directory: &Path, target: &Target, name: &str, content: &[u8]) {
         // 目的地经过 canonicalize 后会展开 8.3 短名（runneradmin → RUNNER~1），编译源没有；
         // 两侧都按同一形式比较，仍然只允许改动隔离临时根里的文件。
@@ -1413,7 +1419,11 @@ fn exercise_asset_withdrawal_during_blocked_compile(delete: bool) {
     );
 
     clear_blocking_notes(&fixture, primary.id());
+    let source = fixture.current_source(&target);
+    let additional_source = fixture.current_source(&additional);
+    assert_ne!(source, additional_source);
     let fresh = tree_bytes(&source);
+    assert_eq!(tree_bytes(&additional_source), fresh);
     assert_ne!(fresh, last_success);
     assert!(!fresh.contains_key(Path::new("references/secondary-box.md")));
     assert_eq!(tree_bytes(&fixture.destination(&target)), fresh);
@@ -1496,7 +1506,11 @@ fn each_revoked_export_flag_withdraws_old_copy_while_another_server_blocks_compi
         let additional = assert_blocked_withdrawal_cannot_restore_old_copy(&fixture, &target, &last_success);
 
         clear_blocking_notes(&fixture, primary.id());
+        let source = fixture.current_source(&target);
+        let additional_source = fixture.current_source(&additional);
+        assert_ne!(source, additional_source);
         let fresh = tree_bytes(&source);
+        assert_eq!(tree_bytes(&additional_source), fresh);
         let hidden = String::from_utf8(fresh[Path::new("references/export-box.md")].clone()).unwrap();
         assert!(!hidden.contains(exported_text), "revoked {export} export was retained");
         assert_eq!(tree_bytes(&fixture.destination(&target)), fresh);
@@ -1551,7 +1565,11 @@ fn shrinking_cli_scope_withdraws_old_copy_while_another_asset_blocks_compile() {
     let additional = assert_blocked_withdrawal_cannot_restore_old_copy(&fixture, &target, &last_success);
 
     clear_blocking_notes(&fixture, primary.id());
+    let source = fixture.current_source(&target);
+    let additional_source = fixture.current_source(&additional);
+    assert_ne!(source, additional_source);
     let fresh = tree_bytes(&source);
+    assert_eq!(tree_bytes(&additional_source), fresh);
     let restricted_scope = String::from_utf8(fresh[Path::new("references/cloudflare.md")].clone()).unwrap();
     assert!(restricted_scope.contains("example.test"));
     assert!(!restricted_scope.contains("gateway"));
