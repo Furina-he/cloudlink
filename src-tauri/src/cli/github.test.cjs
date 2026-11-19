@@ -51,10 +51,11 @@ with patch.dict(os.environ,{},clear=True), patch('subprocess.run',fake):
 }
 
 function powershell(owner, mode, source = psSource) {
-  const at = source.search(/\r?\ntry \{\r?\n  if \(/);
+  const at = source.search(/\r?\ntry \{\r?\n  Update-ClPath\r?\n/);
   assert.ok(at > 0);
   const fake = `
 $clOperation='github-scope';$clProvider='github';$clBinary='ClFake';$clAccount='${owner}';$clHost='github.com';$script:mode='${mode}'
+function Get-ClSystemPath { @() }
 function ClFake {
   if (($args[0..4] -join ' ') -ne 'api --hostname github.com --method GET') { throw 'unsafe-call' }
   $endpoint=$args[5]

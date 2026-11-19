@@ -19,8 +19,18 @@ $clStarted = [DateTime]::UtcNow
 $clMaxItems = 500
 $clMaxPages = 10
 $clMaxBytes = 1048576
+$clCfApi = 'https://api.cloudflare.com/client/v4'
 $clGhOwner = '^[A-Za-z0-9][A-Za-z0-9-]{0,38}$'
 function Throw-Cl([string]$id) { throw $id }
+# A CLI installed after CloudLink started is on the registry PATH, not on the one this process
+# inherited. Inherited entries keep their order; the registry only adds what is missing.
+function Get-ClSystemPath { @([Environment]::GetEnvironmentVariable('Path','Machine'),[Environment]::GetEnvironmentVariable('Path','User')) }
+function Update-ClPath {
+  try {
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $env:Path=@((@($env:Path)+@(Get-ClSystemPath)) -join ';' -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $seen.Add($_.TrimEnd('\')) }) -join ';'
+  } catch {}
+}
 function Get-ClTimeout {
   $left = 25 - ([DateTime]::UtcNow - $clStarted).TotalSeconds
   if ($left -le 0) { Throw-Cl 'cli-scope-failed' }
@@ -135,7 +145,7 @@ function Project-ClIdentity($data) {
 function Get-ClCf([string]$path, $query) {
   if ($path -notmatch '^/zones$|^/zones/[a-fA-F0-9]{32}/dns_records$|^/accounts/[a-fA-F0-9]{32}/(workers/scripts|pages/projects)$') { Throw-Cl 'cli-scope-failed' }
   $pairs = @($query.GetEnumerator() | ForEach-Object { [Uri]::EscapeDataString([string]$_.Key) + '=' + [Uri]::EscapeDataString([string]$_.Value) })
-  $url = 'https://api.cloudflare.com/client/v4' + $path + '?' + ($pairs -join '&')
+  $url = $clCfApi + $path + '?' + ($pairs -join '&')
   $request = [Net.HttpWebRequest]::CreateHttp($url)
   $request.Method = 'GET'
   $request.AllowAutoRedirect = $false
@@ -145,7 +155,10 @@ function Get-ClCf([string]$path, $query) {
   $request.Accept = 'application/json'
   try { $response = $request.GetResponse() }
   catch {
-    $failedResponse = $_.Exception.Response
+    # PowerShell wraps a failed .NET call, so the HTTP status sits on an inner WebException.
+    $failure = $_.Exception
+    while ($failure -and $failure -isnot [Net.WebException]) { $failure = $failure.InnerException }
+    $failedResponse = if ($failure) { $failure.Response } else { $null }
     try {
       if ($failedResponse -and [int]$failedResponse.StatusCode -in @(401,403)) { Throw-Cl 'cli-scope-permission' }
       if ($failedResponse -and [int]$failedResponse.StatusCode -eq 404 -and $path -match '^/accounts/[^/]+/(workers/scripts|pages/projects)$') {
@@ -175,10 +188,12 @@ function Get-ClCf([string]$path, $query) {
     } finally { $memory.Dispose(); $stream.Dispose() }
   } finally { $response.Dispose() }
 }
-function Get-ClCfList([string]$path, $query) {
+function Get-ClCfList([string]$path, $query, [int]$size = 100) {
   $all = [Collections.Generic.List[object]]::new()
-  for ($page=1; $page -le $clMaxPages; $page++) {
-    $query.page=$page; $query.per_page=100
+  # A smaller page size gets more requests, so every list keeps the same item ceiling.
+  $limit = [Math]::Ceiling($clMaxPages * 100 / $size)
+  for ($page=1; $page -le $limit; $page++) {
+    $query.page=$page; $query.per_page=$size
     $data=Get-ClCf $path $query
     foreach ($item in $data.result) {
       if ($all.Count -ge 1000) { Throw-Cl 'cli-scope-failed' }
@@ -186,7 +201,7 @@ function Get-ClCfList([string]$path, $query) {
     }
     $total=$data.result_info.total_pages
     if ($null -ne $total -and ([string]$total -notmatch '^[0-9]{1,16}$' -or [decimal]$total -gt 9007199254740991)) { Throw-Cl 'cli-scope-failed' }
-    if (($null -ne $total -and $page -ge $total) -or ($null -eq $total -and @($data.result).Count -lt 100)) { return ,$all.ToArray() }
+    if (($null -ne $total -and $page -ge $total) -or ($null -eq $total -and @($data.result).Count -lt $size)) { return ,$all.ToArray() }
   }
   Throw-Cl 'cli-scope-failed'
 }
@@ -288,6 +303,7 @@ function Get-ClGithub {
   return $result
 }
 try {
+  Update-ClPath
   if ($clProvider -eq 'github' -and $clOperation -in @('github-scope','github-owners')) {
     $clResult=Get-ClGithub
   } elseif ($clOperation -eq 'discover') {
@@ -408,12 +424,22 @@ try {
       $auth=$null
       try {
         $zones=Get-ClCfList '/zones' @{'account.id'=$clAccount}
+        $dnsReadable=$true
         foreach ($zone in $zones) {
           if ($zone.account.id -ne $clAccount -or $zone.id -notmatch '^[a-fA-F0-9]{32}$') { Throw-Cl 'cli-scope-failed' }
           $addresses=[Collections.Generic.List[string]]::new()
-          foreach ($type in @('A','AAAA')) {
-            $records=Get-ClCfList ('/zones/'+$zone.id+'/dns_records') @{type=$type}
-            foreach ($record in $records) { if ($record.content -is [string] -and $record.content -and $addresses.Count -lt 500) { $addresses.Add($record.content) } }
+          if ($dnsReadable) {
+            try {
+              foreach ($type in @('A','AAAA')) {
+                $records=Get-ClCfList ('/zones/'+$zone.id+'/dns_records') @{type=$type}
+                foreach ($record in $records) { if ($record.content -is [string] -and $record.content -and $addresses.Count -lt 500) { $addresses.Add($record.content) } }
+              }
+            } catch {
+              # Addresses only link a zone to a recorded server. A login that lists zones but
+              # may not read their records (wrangler login has no such scope) keeps its catalog.
+              if ($_.Exception.Message -ne 'cli-scope-permission') { throw }
+              $dnsReadable=$false
+            }
           }
           Add-ClItem @{id=('zone:'+$zone.id);kind='zone';name=(Clean-Cl $zone.name);addresses=@($addresses.ToArray())}
         }
@@ -423,7 +449,8 @@ try {
           $workerId=if ($worker.tag -is [string] -and $worker.tag) { $worker.tag } else { $worker.id }
           Add-ClItem @{id=('worker:'+$workerId);kind='worker';name=(Clean-Cl $worker.id)}
         }
-        $pages=Get-ClCfList ('/accounts/'+$clAccount+'/pages/projects') @{}
+        # Pages rejects a per_page above 10 with HTTP 400 (error 8000024).
+        $pages=Get-ClCfList ('/accounts/'+$clAccount+'/pages/projects') @{} 10
         foreach ($project in $pages) {
           $source=$project.source.config
           $repoSource=if ($project.source.type -ceq 'github') {Project-ClGithubSource @{type='github';owner=$source.owner;repo_name=$source.repo_name;repo_id=$source.repo_id}} else {$null}

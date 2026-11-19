@@ -429,7 +429,7 @@ test.describe("云平台 CLI（PRD 6.5 分支 B、F-104）", () => {
     await expect(envs.getByRole("listitem").filter({ hasText: "WSL Ubuntu-24.04" })).toContainText("tenancy-demo")
     // 安装指引：默认 winget，可以换成 pip，并注明要先装 Python
     const guide = envs.getByRole("listitem").filter({ hasText: "Windows" }).getByRole("group", { name: "安装指引" })
-    await expect(guide).toContainText("winget install Oracle.OCICLI")
+    await expect(guide).toContainText("winget install --exact --id Oracle.OCI-CLI")
     await guide.getByRole("radio", { name: "pip" }).or(guide.getByRole("button", { name: "pip" })).click()
     await expect(guide).toContainText("pip install oci-cli")
     await expect(guide).toContainText("需要先装好 Python 3")

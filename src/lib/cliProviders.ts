@@ -49,8 +49,9 @@ export function installMethods(provider: CliProvider, envId: EnvId): InstallMeth
     ]
   }
   const pip: InstallMethod = { id: "pip", label: "pip", command: "pip install oci-cli", requires: "python" }
+  // winget 里的包名是 Oracle.OCI-CLI（2026-11-19 对照 winget 源核实）；写成 Oracle.OCICLI 找不到包
   return envId === "windows"
-    ? [{ id: "winget", label: "winget", command: "winget install Oracle.OCICLI" }, pip]
+    ? [{ id: "winget", label: "winget", command: "winget install --exact --id Oracle.OCI-CLI" }, pip]
     : [{ id: "script", label: "install.sh", command: OCI_INSTALL_UNIX }, pip]
 }
 

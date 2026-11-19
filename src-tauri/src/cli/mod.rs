@@ -579,7 +579,7 @@ pub fn terminal_command_allowed(env: &EnvContext, command: &str) -> bool {
         || if env.is_windows() {
             matches!(
                 command,
-                "winget install Oracle.OCICLI" | "winget install --id GitHub.cli"
+                "winget install --exact --id Oracle.OCI-CLI" | "winget install --id GitHub.cli"
             )
         } else {
             command

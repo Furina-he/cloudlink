@@ -372,7 +372,11 @@ fn terminal_allowlist_rejects_injection_and_wrong_platform_installers() {
                 .is_ipc(IpcErrorId::TerminalCommandInvalid)
         );
     }
-    assert!(!terminal_command_allowed(&envs[1], "winget install Oracle.OCICLI"));
+    let oci_winget = "winget install --exact --id Oracle.OCI-CLI";
+    assert!(terminal_command_allowed(&envs[0], oci_winget));
+    assert!(!terminal_command_allowed(&envs[1], oci_winget));
+    // The package ID that winget does not know must not come back.
+    assert!(!terminal_command_allowed(&envs[0], "winget install Oracle.OCICLI"));
     assert!(terminal_command_allowed(&envs[0], "gh auth login") && terminal_command_allowed(&envs[1], "gh auth login"));
     assert!(terminal_command_allowed(&envs[0], "winget install --id GitHub.cli"));
     assert!(!terminal_command_allowed(&envs[1], "winget install --id GitHub.cli"));

@@ -161,31 +161,44 @@ async function main() {
     }
     return data;
   }
-  async function list(path, query, map) {
-    for (let page = 1; page <= MAX_PAGES; page++) {
-      const data = await get(path, { ...query, page, per_page: 100 });
+  async function list(path, query, map, size = 100) {
+    // A smaller page size gets more requests, so every list keeps the same item ceiling.
+    for (let page = 1; page <= Math.ceil(MAX_PAGES * 100 / size); page++) {
+      const data = await get(path, { ...query, page, per_page: size });
       for (const item of data.result) await map(item);
       const total = data.result_info && data.result_info.total_pages;
       if (total != null && (!Number.isSafeInteger(total) || total < 0)) fail("cli-scope-failed");
-      if (total != null ? page >= total : data.result.length < 100) return;
+      if (total != null ? page >= total : data.result.length < size) return;
     }
     fail("cli-scope-failed");
   }
   try {
+    let dnsReadable = true;
     await list("/zones", { "account.id": account }, async zone => {
       if (!zone.account || zone.account.id !== account || !/^[a-fA-F0-9]{32}$/.test(zone.id)) fail("cli-scope-failed");
       const addresses = [];
-      await list("/zones/" + zone.id + "/dns_records", { type: "A" }, record => { if (typeof record.content === "string") addresses.push(record.content); });
-      await list("/zones/" + zone.id + "/dns_records", { type: "AAAA" }, record => { if (typeof record.content === "string") addresses.push(record.content); });
+      if (dnsReadable) {
+        try {
+          for (const type of ["A", "AAAA"]) {
+            await list("/zones/" + zone.id + "/dns_records", { type }, record => { if (typeof record.content === "string") addresses.push(record.content); });
+          }
+        } catch (error) {
+          // Addresses only link a zone to a recorded server. A login that lists zones but
+          // may not read their records (wrangler login has no such scope) keeps its catalog.
+          if (!error || error.cloudlinkError !== "cli-scope-permission") throw error;
+          dnsReadable = false;
+        }
+      }
       add({ id: "zone:" + zone.id, kind: "zone", name: clean(zone.name), addresses: addresses.slice(0,500) });
     });
     // The Workers scripts endpoint is SinglePage; page/per_page are ignored there.
     const workers = await get("/accounts/" + account + "/workers/scripts", {});
     for (const script of workers.result) add({ id: "worker:" + (script.tag || script.id), kind: "worker", name: clean(script.id) });
+    // Pages rejects a per_page above 10 with HTTP 400 (error 8000024).
     await list("/accounts/" + account + "/pages/projects", {}, project => {
       const repoSource = project.source && githubSource({...project.source.config, type:project.source.type});
       add({ id: "pages:" + project.name, kind: "pages", name: clean(project.name), ...(repoSource ? {repoSource} : {}) });
-    });
+    }, 10);
     return { items };
   } finally { authHeaders = null; }
 }
