@@ -15,7 +15,7 @@ PowerShell:
 
 ## Guardrails (must follow)
 1. Never run DROP, TRUNCATE or DELETE without WHERE
-2. Stopping or restarting the `postgresql` service is high risk (critical); while CloudLink runs, request one-time approval through its runner
+2. Stopping or restarting the `postgresql` service is high risk (critical); request the user's one-time approval through the CloudLink runner
 
 ## Key directories
 | Key | Path | Purpose |

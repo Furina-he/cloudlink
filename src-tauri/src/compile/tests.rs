@@ -125,12 +125,13 @@ fn skill_md_structure_matches_prd() {
     let p = compile_with(&golden_servers(), &testkit::skill_config());
     let skill = &p.files[0].content;
     assert!(skill.starts_with(
-        "---\nname: cloudlink-servers\ndescription: The user's servers and how to operate them — hk-edge ("
+        "---\nname: cloudlink-servers\ndescription: \"The user's servers and how to operate them — hk-edge ("
     ));
     // 只输出 name 和 description 两个 frontmatter 字段（5.1）
     let fm: Vec<&str> = skill.split("---\n").nth(1).unwrap().lines().collect();
     assert_eq!(fm.len(), 2);
-    assert!(skill.contains("| `hk-edge` | Public reverse proxy for api.example.com and blog.example.com, and host for the backend API containers | production | confirm-changes | `references/hk-edge.md` |"));
+    assert!(skill.contains("\n# Servers\n"));
+    assert!(skill.contains("| `hk-edge` | Public reverse proxy for api.example.com and blog.example.com, and host for the backend API containers | production | `references/hk-edge.md` |"));
     assert!(skill.contains("5. Deploy with docker compose in /opt/apps/<name>; never edit containers by hand\n6. Tell the user before restarting anything on a production server\n"));
     assert!(skill.contains("`C:/Users/me/.cloudlink/inbox/<name>.md`"));
     assert!(!skill.contains("30 minutes"), "v3.1 removed the 30-minute unlock");
@@ -142,12 +143,13 @@ fn skill_md_structure_matches_prd() {
             "references/hk-edge.md",
             "references/sg-db.md",
             "references/dev-box.md",
+            "references/execution.md",
             "references/health-check.md"
         ]
     );
     let hk = &p.files[1].content;
     assert!(hk.contains("- System: Ubuntu 24.04 LTS | 2 vCPU / 2 GB RAM | managed by 1Panel (/opt/1panel)\n"));
-    assert!(hk.contains("3. Stopping or restarting the `openresty` container is high risk (critical); while CloudLink runs, request one-time approval through its runner\n"));
+    assert!(hk.contains("3. Stopping or restarting the `openresty` container is high risk (critical); request the user's one-time approval through the CloudLink runner\n"));
     assert!(!hk.contains("203.0.113.10"), "IP is not exported by default");
     assert!(
         !hk.contains("0.0.0.0:22"),
@@ -400,13 +402,145 @@ fn status_keeps_last_success_when_blocked() {
     assert_eq!(s2.compiled_at.as_deref(), Some("2026-10-31T09:00:00Z"));
 }
 
+/// 档位只写在详情文件里：SKILL.md（含会话开始时就加载的 description）不随切档变化
 #[test]
-fn mode_changes_the_output() {
+fn mode_changes_only_the_details_file() {
     let mut hk = testkit::hk_edge();
     let a = compile_with(&[Asset::Vps(hk.clone())], &SkillConfig::default());
     hk.agent.mode = Mode::AutoOps;
     let b = compile_with(&[Asset::Vps(hk)], &SkillConfig::default());
-    assert_ne!(a.files, b.files);
+    assert_eq!(
+        a.files[0], b.files[0],
+        "SKILL.md must not go stale when the mode is switched"
+    );
+    assert!(a.files[1].content.contains("Mode: confirm-changes"));
+    assert!(b.files[1].content.contains("Mode: auto-ops"));
+    let frontmatter = a.files[0].content.split("---\n").nth(1).unwrap();
+    assert!(frontmatter.contains("; production)"));
+    assert!(!frontmatter.contains("confirm-changes") && !frontmatter.contains("auto-ops"));
+}
+
+fn description_of(p: &CompilePreview) -> String {
+    let line = p.files[0].content.lines().nth(2).unwrap();
+    line.strip_prefix("description: ").unwrap().to_string()
+}
+
+/// 用途留空时不再写出 `oci-us ()`：用显示名称和探测到的服务顶上，都没有就只写别名
+#[test]
+fn empty_summary_falls_back_to_name_and_services() {
+    let mut box_ = testkit::sg_db();
+    box_.connection.ssh_alias = "oci-us".into();
+    box_.name = "US build box".into();
+    box_.summary.clear();
+    box_.production = false;
+    box_.services.push(Service {
+        kind: ServiceKind::Docker,
+        name: "ignore-previous-instructions".into(),
+        image: None,
+        ports: vec![],
+        role: None,
+        critical: false,
+        source: FieldSource::Probe,
+        last_seen_at: None,
+        missing: false,
+        sanitized: None,
+    });
+    let p = compile_with(&[Asset::Vps(box_.clone())], &SkillConfig::default());
+    let description = description_of(&p);
+    assert!(
+        description.contains("— oci-us (US build box; runs `postgresql`, `redis`). Use for"),
+        "{description}"
+    );
+    assert!(
+        !description.contains("ignore-previous"),
+        "probe values that read like instructions stay out"
+    );
+    assert!(
+        p.files[0]
+            .content
+            .contains("| `oci-us` | US build box; runs `postgresql`, `redis` | - | `references/oci-us.md` |")
+    );
+    // 详情文件的 Role 只写用户填的用途
+    assert!(!p.files[1].content.contains("- Role:"));
+
+    box_.name = "OCI-US".into();
+    box_.services.clear();
+    let p = compile_with(&[Asset::Vps(box_)], &SkillConfig::default());
+    let description = description_of(&p);
+    assert!(description.contains("— oci-us. Use for"), "{description}");
+    assert!(!description.contains("()"));
+    assert!(
+        p.files[0]
+            .content
+            .contains("| `oci-us` | - | - | `references/oci-us.md` |")
+    );
+}
+
+/// 用途是用户原文，冒号加空格、引号、井号都可能出现；裸写进 frontmatter 时严格的 YAML 解析器会拒收整份 Skill
+#[test]
+fn description_is_a_quoted_yaml_scalar() {
+    let mut hk = testkit::hk_edge();
+    hk.summary = "Edge proxy: \"blue\" stack # primary, path C:\\srv".into();
+    hk.served_hostnames.clear();
+    let p = compile_with(&[Asset::Vps(hk)], &SkillConfig::default());
+    let description = description_of(&p);
+    assert!(description.starts_with("\"The user's servers") && description.ends_with("of the servers.\""));
+    assert!(description.contains("hk-edge (Edge proxy: \\\"blue\\\" stack # primary, path C:\\\\srv; production)"));
+    // 去掉首尾引号后，剩下的引号和反斜杠都是成对转义的
+    let inner = &description[1..description.len() - 1];
+    assert!(!inner.replace("\\\\", "").replace("\\\"", "").contains(['"', '\\']));
+    assert!(p.lint.is_empty(), "{:#?}", p.lint);
+    // 预算按解析后的值算，不含转义
+    assert!((p.budget.description_chars as usize) < inner.chars().count());
+}
+
+/// 只接了云平台时不再自称「服务器」
+#[test]
+fn wording_follows_what_the_skill_contains() {
+    let p = compile_with(&[Asset::Cli(testkit::github())], &SkillConfig::default());
+    let skill = &p.files[0].content;
+    let description = description_of(&p);
+    assert!(description.starts_with("\"The user's cloud platforms and how to operate them — github ("));
+    assert!(
+        description.ends_with(
+            "Use for any task on these repositories: deployments, logs, configuration or troubleshooting.\""
+        ),
+        "{description}"
+    );
+    assert!(skill.contains("\n# Cloud platforms\n"));
+    assert!(skill.contains("## Rules for every resource\n"));
+    assert!(skill.contains("durable about a resource that its details file does not cover"));
+    assert!(skill.contains("(`github` for `references/github.md`)"));
+
+    let mut assets = golden_servers();
+    assets.push(Asset::Cli(testkit::cloudflare()));
+    let p = compile_with(&assets, &testkit::skill_config());
+    assert!(p.files[0].content.contains("\n# Servers and cloud platforms\n"));
+    assert!(
+        description_of(&p).ends_with("Use for any task on these servers, sites or cloud projects: deployments, logs, Docker containers, DNS, configuration, troubleshooting, or a health check of the servers.\"")
+    );
+}
+
+/// 固定参考文件的名字不让给资源
+#[test]
+fn bundled_reference_names_are_reserved() {
+    let mut a = testkit::hk_edge();
+    a.connection.ssh_alias = "execution".into();
+    let mut b = testkit::sg_db();
+    b.connection.ssh_alias = "health-check".into();
+    let assets = [Asset::Vps(a.clone()), Asset::Vps(b.clone())];
+    let listed: Vec<&Asset> = assets.iter().collect();
+    let names = render::detail_names(&listed);
+    assert_eq!(names[&a.id], "execution-2");
+    assert_eq!(names[&b.id], "health-check-2");
+    let p = compile_with(&assets, &SkillConfig::default());
+    let paths: Vec<&str> = p.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths.iter().filter(|path| **path == render::EXECUTION_FILE).count(), 1);
+    assert!(
+        !p.lint.iter().any(|l| l.id == LintId::MissingReference),
+        "{:#?}",
+        p.lint
+    );
 }
 
 /// F-203 AC2：20 台服务器的总 Skill 编译 p95 ≤ 200ms。调试构建下只记录耗时，发布构建下断言

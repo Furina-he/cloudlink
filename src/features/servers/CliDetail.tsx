@@ -16,7 +16,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { copy } from "@/lib/copy"
-import { detailFileOf } from "@/lib/paths"
+import { detailFileOf, isBundledReference } from "@/lib/paths"
 import { cliFormSchema, type CliFormValues } from "@/lib/schemas"
 import { cliEnvStatus, selectCanDistribute, selectCliAccount, selectCliProblem, useAssetStore } from "@/stores/assets"
 import { useCliStore } from "@/stores/cli"
@@ -44,7 +44,7 @@ function CliPreview({ asset, control, dirty }: { asset: CliAsset; control: Contr
       scope={asset.id}
       draft={{ asset: cliInputOf(values, asset) }}
       dirty={dirty}
-      fileFilter={(path) => path === "SKILL.md" || path === "references/health-check.md" || path === own}
+      fileFilter={(path) => path === "SKILL.md" || isBundledReference(path) || path === own}
       defaultFile={own}
       note={(target) => {
         const inc = inclusions.find((i) => i.envId === target.envId && i.agentKey === target.agentKey)

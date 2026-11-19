@@ -107,33 +107,79 @@ fn executable_paths_are_quoted_for_each_shell_without_truncation_or_expansion() 
 }
 
 #[test]
-fn artifact_explains_wait_expiry_no_replay_and_verified_exit_boundary() {
+fn waiting_protocol_lives_in_its_own_reference_and_the_exit_boundary_is_not_told_to_the_agent() {
     let p = preview(
         &[Asset::Vps(testkit::hk_edge())],
         &EnvId::windows(),
         "C:/fixture/bin/cloudlink-guard.exe",
     );
     let skill = &p.files[0].content;
+    let execution = &p
+        .files
+        .iter()
+        .find(|file| file.path == render::EXECUTION_FILE)
+        .expect("execution reference")
+        .content;
     for phrase in [
-        "wait --env 'windows' '<requestId.ownerToken>'",
+        "'C:/fixture/bin/cloudlink-guard.exe' wait --env 'windows' '<requestId.ownerToken>'",
+        "& 'C:/fixture/bin/cloudlink-guard.exe' wait --env 'windows' '<requestId.ownerToken>'",
+        "    'C:/fixture/bin/cloudlink-guard.exe' status\n",
+        "    & 'C:/fixture/bin/cloudlink-guard.exe' status\n",
         "90 seconds",
         "5 minutes",
         "at most once",
         "Never replay unknown",
-        "new calls still forward",
-        "checks/approval stop",
-        "unreachable live coordinator",
+        "never approves or resumes an old request",
+        "retains the original request's source",
+    ] {
+        assert!(execution.contains(phrase), "missing {phrase}");
+    }
+    // 正文只留调用约定和一句指向；等待细节按需再读
+    for phrase in [
+        "`references/execution.md`",
+        "(exit 75) is not rejection or execution failure",
+        "never resubmit it through another tool",
         "maximum 3600",
         "No TTY",
+        "confirm-changes",
+        "auto-ops",
+        "display-only self-report, never approval",
     ] {
         assert!(skill.contains(phrase), "missing {phrase}");
     }
-    assert!(p.budget.body_lines <= 100, "{}", p.budget.body_lines);
-    assert_eq!(render::TEMPLATE_VERSION, 3);
+    assert!(!skill.contains("ownerToken") && !skill.contains("5 minutes"));
+    // 检查什么时候不生效只在界面上说，不写给 Agent
+    for file in &p.files {
+        for phrase in [
+            "full exit",
+            "still forward",
+            "checks/approval stop",
+            "exit bypass",
+            "while CloudLink runs",
+            "While CloudLink runs",
+            "not a sandbox",
+        ] {
+            assert!(!file.content.contains(phrase), "{} still says {phrase}", file.path);
+        }
+    }
+    assert!(p.lint.is_empty(), "{:#?}", p.lint);
+    assert!(p.budget.body_lines <= 60, "{}", p.budget.body_lines);
+    assert_eq!(render::TEMPLATE_VERSION, 4);
     assert!(render::HEALTH_CHECK.contains("Do not replace that entry with direct SSH"));
-    assert!(skill.contains("confirm-changes"));
-    assert!(skill.contains("auto-ops"));
-    assert!(skill.contains("display-only self-report, never approval"));
+    let wsl = EnvId::parse("wsl:Ubuntu-24.04").unwrap();
+    let p = preview(
+        &[Asset::Vps(testkit::hk_edge())],
+        &wsl,
+        "/mnt/c/fixture/bin/cloudlink-guard.exe",
+    );
+    let execution = &p
+        .files
+        .iter()
+        .find(|file| file.path == render::EXECUTION_FILE)
+        .unwrap()
+        .content;
+    assert!(execution.contains("'/mnt/c/fixture/bin/cloudlink-guard.exe' wait --env 'wsl:Ubuntu-24.04'"));
+    assert!(!execution.contains("PowerShell:"));
 }
 
 #[test]

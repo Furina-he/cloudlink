@@ -7,7 +7,7 @@ import { PreviewSheet } from "@/components/app/PreviewSheet"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { copy, ipcErrorText } from "@/lib/copy"
-import { detailFileOf } from "@/lib/paths"
+import { detailFileOf, isBundledReference } from "@/lib/paths"
 import type { ServerFormValues } from "@/lib/schemas"
 import { selectInclusionsByAsset, useDeliveryStore } from "@/stores/deliveries"
 import { serverActions } from "./actions"
@@ -34,7 +34,7 @@ export function DraftPreview({ control, asset, dirty }: { control: Control<Serve
       scope={asset?.id ?? "new"}
       draft={{ asset: toAssetInput(values, asset) }}
       dirty={dirty}
-      fileFilter={(path) => path === "SKILL.md" || path === "references/health-check.md" || isOwn(path)}
+      fileFilter={(path) => path === "SKILL.md" || isBundledReference(path) || isOwn(path)}
       defaultFile={detailFileOf(alias)}
       note={(target) => {
         const inc = inclusions.find((i) => i.envId === target.envId && i.agentKey === target.agentKey)

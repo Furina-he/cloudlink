@@ -62,10 +62,10 @@ function entryLines(settings: Settings, envId: EnvId, op: string, assetId?: stri
   return ["", `    ${runnerCommand(settings, envId, op, assetId, tail)}`, ...(envId === "windows" ? ["", "PowerShell:", "", `    ${runnerCommand(settings, envId, op, assetId, tail, true)}`] : []), ""]
 }
 
-/** 详情文件名：别名转小写，非法字符换成连字符；重名时后创建的加 -2（5.3） */
+/** 详情文件名：别名转小写，非法字符换成连字符；重名时后创建的加 -2（5.3）。两份固定的参考文件占着自己的名字 */
 export function detailNames(assets: Asset[]): Map<string, string> {
   const out = new Map<string, string>()
-  const used = new Set<string>(["health-check"])
+  const used = new Set<string>(["health-check", "execution"])
   ;[...assets]
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     .forEach((a) => {
@@ -95,18 +95,51 @@ function role(a: Asset): string {
   return [a.summary.trim(), sites.length ? `serves ${sites.join(", ")}` : ""].filter(Boolean).join("; ")
 }
 
-/** description（F-201 AC2）：超过 1024 字符时依次去掉站点名、缩短用途、只列前若干台并注明其余数量 */
+/** 用途留空、也没有站点或范围可写时的替代说明：显示名称（和别名不同时），服务器再加探测到的服务名 */
+function standIn(a: Asset, withServices: boolean): string {
+  const parts: string[] = []
+  const name = a.name.trim()
+  if (name && name.toLowerCase() !== skillHandle(a).toLowerCase()) parts.push(name)
+  if (a.type === "vps" && withServices) {
+    const names = [...a.services]
+      .filter((s) => !s.missing)
+      .sort((x, y) => Number(y.critical) - Number(x.critical))
+      .map((s) => s.name)
+      .filter((n) => /^[A-Za-z0-9._@-]{1,64}$/.test(n) && !/ignore[\s_-]*(all[\s_-]*)?previous|system[\s_-]*prompt/i.test(n))
+      .slice(0, 5)
+    if (names.length) parts.push(`runs ${names.map(code).join(", ")}`)
+  }
+  return parts.join("; ")
+}
+
+const roleOrStandIn = (a: Asset) => role(a) || standIn(a, true)
+
+/** frontmatter 的值写成 YAML 双引号字符串：用途里的冒号、井号、引号不能让严格的解析器拒收整份 Skill */
+const yamlString = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\p{Cc}\u2028\u2029\ufeff]/gu, " ")}"`
+
+/**
+ * description（F-201 AC2）：超过 1024 字符时依次去掉站点名、缩短用途、只列前若干台并注明其余数量。
+ * 只写「有什么、管什么」，不写档位：档位随时会切，而 description 在会话开始时就加载了
+ */
 export function description(assets: Asset[]): { text: string; rawChars: number } {
   const item = (a: Asset, withRole: boolean, short: boolean) => {
-    const r = withRole ? role(a) : a.summary.trim()
+    const r = (withRole ? role(a) : a.summary.trim()) || standIn(a, withRole)
     const text = short && r.length > 40 ? `${r.slice(0, 39)}…` : r
-    const tail = [a.production ? "production" : "", a.agent.mode].filter(Boolean).join(", ")
-    return `${skillHandle(a)} (${[text, tail].filter(Boolean).join("; ")})`
+    const inner = [text, a.production ? "production" : ""].filter(Boolean).join("; ")
+    return inner ? `${skillHandle(a)} (${inner})` : skillHandle(a)
   }
+  const hasServer = assets.some((a) => a.type === "vps")
+  const hasCli = assets.some((a) => a.type === "cli")
   // 接了 GitHub 时，仓库相关的任务也要能触发这份 Skill（F-110）
-  const targets = assets.some((a) => a.type === "cli" && a.cliProvider === "github") ? "servers, sites, cloud projects or repositories" : "servers, sites or cloud projects"
-  const wrap = (list: string) =>
-    `The user's servers and cloud platforms and how to operate them — ${list}. Use for any task on these ${targets}: deployments, logs, Docker containers, DNS, configuration, troubleshooting, or a health check of the servers.`
+  const hasGithub = assets.some((a) => a.type === "cli" && a.cliProvider === "github")
+  const hasCloud = assets.some((a) => a.type === "cli" && a.cliProvider !== "github")
+  const servers = hasServer || !hasCli
+  const subject = hasServer && hasCli ? "servers and cloud platforms" : hasCli ? "cloud platforms" : "servers"
+  const targetWords = [...(servers ? ["servers", "sites"] : []), ...(hasCloud ? ["cloud projects"] : []), ...(hasGithub ? ["repositories"] : [])]
+  const targets = targetWords.length > 1 ? `${targetWords.slice(0, -1).join(", ")} or ${targetWords.at(-1)}` : targetWords[0]
+  const topicWords = ["deployments", "logs", ...(servers ? ["Docker containers"] : []), ...(hasCloud ? ["DNS"] : [])].join(", ")
+  const topics = servers ? `${topicWords}, configuration, troubleshooting, or a health check of the servers` : `${topicWords}, configuration or troubleshooting`
+  const wrap = (list: string) => `The user's ${subject} and how to operate them — ${list}. Use for any task on these ${targets}: ${topics}.`
   const full = wrap(assets.map((a) => item(a, true, false)).join(", "))
   if (full.length <= 1024) return { text: full, rawChars: full.length }
   for (const [withRole, short] of [[false, false], [false, true]] as const) {
@@ -117,7 +150,7 @@ export function description(assets: Asset[]): { text: string; rawChars: number }
     const t = wrap(`${assets.slice(0, n).map((a) => item(a, false, true)).join(", ")} and ${assets.length - n} more`)
     if (t.length <= 1024) return { text: t, rawChars: full.length }
   }
-  return { text: wrap(`${assets.length} servers`), rawChars: full.length }
+  return { text: wrap(`${assets.length} resources`), rawChars: full.length }
 }
 
 const SCOPE_WORD = { zone: "DNS zone", worker: "Worker", pages: "Pages project", project: "Project", instance: "Compute instance", repo: "Repository" } as const
@@ -186,7 +219,7 @@ export function renderDetails(a: ServerAsset, settings: Settings, envId: EnvId):
   const critical = a.services.filter((s) => s.critical)
   const rules = [
     ...a.guardrails.rules.map((r) => r.text),
-    ...critical.map((s) => `Stopping or restarting the ${code(s.name)} ${s.kind === "docker" ? "container" : "service"} is high risk (critical); while CloudLink runs, request one-time approval through its runner`),
+    ...critical.map((s) => `Stopping or restarting the ${code(s.name)} ${s.kind === "docker" ? "container" : "service"} is high risk (critical); request the user's one-time approval through the CloudLink runner`),
   ]
   const system = [
     f.os,
@@ -245,7 +278,32 @@ export interface RenderedSkill {
   detailPath: Map<string, string>
 }
 
-/** 总 Skill（5.2）：SKILL.md 排第一，然后是每台服务器的详情和巡检清单。一台都没列入时没有文件 */
+/** 等待审批、超时和结果不明时怎么办（references/execution.md）；SKILL.md 正文只留一句指向它 */
+function renderExecution(settings: Settings, envId: EnvId): string {
+  return [
+    "# Waiting, timeouts and unknown results",
+    "",
+    "Every Connect entry in the details files calls the CloudLink runner. This file covers what follows a call: a request waiting for the user's approval, a timeout, or a result you cannot interpret.",
+    "",
+    "## Waiting for approval",
+    "`exec` waits up to about 90 seconds for approval. A structured `waiting` result with a request ticket (exit 75) is not rejection or execution failure. Keep the original ticket private and continue the same request; never resubmit through another tool:",
+    ...entryLines(settings, envId, "wait", undefined, "'<requestId.ownerToken>'"),
+    "- Do not add source/session options to `wait`: it retains the original request's source.",
+    "- Approval expires 5 minutes after request creation. Only the original inline caller or `wait` consumes it, at most once.",
+    "- “Approved” is not “executed”; expired/cancelled requests do not run. `wait` can return waiting again.",
+    "- Restarting CloudLink never approves or resumes an old request.",
+    "",
+    "## Timeouts and unknown results",
+    "- A timeout may leave remote work running; inspect rather than retry. Never replay unknown results.",
+    "- Output streams are bounded and not saved by default.",
+    "",
+    "## When the runner refuses",
+    "While CloudLink is starting or updating, or when its state is unreadable or it cannot be reached, the runner refuses instead of running the command. Report this to the user; it is not a reason to use another route. Inspect the runtime with the same quoted runner followed by `status` (no other arguments):",
+    ...entryLines(settings, envId, "status"),
+  ].join("\n")
+}
+
+/** 总 Skill（5.2）：SKILL.md 排第一，然后是每项资源的详情和两份固定的参考文件。一项都没列入时没有文件 */
 export function renderSkill(envId: EnvId, assets: Asset[], config: SkillConfig, settings: Settings): RenderedSkill {
   const relationships = relationLines(assets, config)
   const names = detailNames(assets)
@@ -254,59 +312,61 @@ export function renderSkill(envId: EnvId, assets: Asset[], config: SkillConfig, 
   const desc = description(assets)
   const snapshot = settings.writeSnapshotTime ? ` | Snapshot: ${new Date().toISOString().slice(0, 10)}` : ""
   const rules = [...BUILTIN_RULES, ...config.conventions.map((c) => c.text)]
+  const servers = assets.filter(isServer)
+  const clis = assets.filter(isCli)
+  const exampleName = names.get((servers[0] ?? assets[0]).id)
   const body = [
-    "# Servers",
+    `# ${servers.length && clis.length ? "Servers and cloud platforms" : clis.length ? "Cloud platforms" : "Servers"}`,
     "",
     `> Generated by CloudLink — do not edit${snapshot}`,
     "",
     "Before operating on any resource, read its details file and use its exact CloudLink runner Connect entry, in both modes and regardless of the production marker. Authentication stays in the local SSH/CLI configuration; never ask for or record passwords, IPs or private keys.",
-    "",
-    "| Alias | Role | Env | Mode | Details |",
-    "| --- | --- | --- | --- | --- |",
-    ...assets.filter(isServer).map(
-      (a) => `| \`${skillHandle(a)}\` | ${role(a) || "-"} | ${envWord(a)} | ${a.agent.mode} | \`${detailPath.get(a.id)}\` |`
-    ),
-    ...(assets.some(isCli)
+    ...(servers.length
+      ? [
+          "",
+          "| Alias | Role | Env | Details |",
+          "| --- | --- | --- | --- |",
+          ...servers.map((a) => `| \`${skillHandle(a)}\` | ${roleOrStandIn(a) || "-"} | ${envWord(a)} | \`${detailPath.get(a.id)}\` |`),
+        ]
+      : []),
+    ...(clis.length
       ? [
           "",
           "## Cloud platforms",
           "Only touch the owner/account and scope in each details file. Always use its runner entry, not a bare local CLI. CLI arguments remain separate arguments; do not wrap them in a shell string.",
           "",
-          "| Platform | CLI | Role | Env | Mode | Details |",
-          "| --- | --- | --- | --- | --- | --- |",
-          ...assets.filter(isCli).map(
-            (a) => `| ${a.handle} | \`${a.cli.binary}\` | ${role(a) || "-"} | ${envWord(a)} | ${a.agent.mode} | \`${detailPath.get(a.id)}\` |`
-          ),
+          "| Platform | CLI | Role | Env | Details |",
+          "| --- | --- | --- | --- | --- |",
+          ...clis.map((a) => `| ${a.handle} | \`${a.cli.binary}\` | ${roleOrStandIn(a) || "-"} | ${envWord(a)} | \`${detailPath.get(a.id)}\` |`),
         ]
       : []),
     ...(relationships.length ? ["", "## How they fit together", ...relationships.map((r) => `- ${r}`)] : []),
     "",
     "## Modes",
+    "Each details file states its resource's mode.",
     "- **confirm-changes**: recognized, non-sensitive queries run directly. Routine changes require the user's one-time approval in CloudLink.",
     "- **auto-ops**: queries and explicitly supported routine changes within the provided scope run directly, not arbitrary commands.",
     "- In both modes, approvable high-risk commands and target-clear but unparseable or unsupported commands require one-time approval. Credentials, repository deletion and default/unspecified-branch force-pushes cannot be approved. Uncertain identities, targets or scope are denied.",
-    "- Production is an independent risk marker, not a different mode or a switch for checks. While CloudLink runs, including in the tray, the runner checks all provided resources and Claude Code's hook redirects recognized direct connections. This is not a sandbox for other tools, credentials or aliases.",
-    "", "## Execution and approval",
-    "- Use the absolute runner path and stable resource ID in the details, never a name as a route. Git Bash/WSL and PowerShell examples use their own quoting; do not alter the executable path.",
-    "- Identify your actual invoking Agent with `--agent claude-code`, `--agent codex` or `--agent cursor` before `--` in exec/put/get when known; omit it when unknown. This is a display-only self-report, never approval. Do not add source/session options to `wait`: it retains the original request's source.",
-      "- `exec` waits up to about 90 seconds for approval. A structured `waiting` result with a request ticket (exit 75) is not rejection or execution failure. Keep the original ticket private and continue the same request; never resubmit through another tool:",
-      ...entryLines(settings, envId, "wait", undefined, "'<requestId.ownerToken>'"),
-      "- Approval expires 5 minutes after request creation. Only the original inline caller or `wait` consumes it, at most once. “Approved” is not “executed”; expired/cancelled requests do not run. `wait` can return waiting again. Never replay unknown results.",
-      "- No TTY or opaque stdin scripts. Foreground execution defaults to 90 seconds; set `--timeout <seconds>` before `--` (maximum 3600) and raise your own tool timeout when needed. A timeout may leave remote work running; inspect rather than retry. Output streams are bounded and not saved by default.",
-    "- Closing to the tray keeps checks active. After a verified full exit, new calls still forward but CloudLink checks/approval stop; Agent and remote permissions and these advisory rules remain. Exit/restart never approves or resumes an old request. Starting, updating, corrupt state or an unreachable live coordinator are not exit bypasses. Inspect runtime with the same quoted runner followed by `status` (no other arguments).",
+    "- Production is an independent risk marker, not a different mode or a switch for checks. The runner checks all provided resources, and Claude Code's hook redirects recognized direct connections to it.",
     "",
-    "## Rules for every server",
+    "## Running commands",
+    "- Use the absolute runner path and stable resource ID in the details, never a name as a route. Git Bash/WSL and PowerShell examples use their own quoting; do not alter the executable path.",
+    "- Identify your actual invoking Agent with `--agent claude-code`, `--agent codex` or `--agent cursor` before `--` in exec/put/get when known; omit it when unknown. This is a display-only self-report, never approval.",
+    "- No TTY or opaque stdin scripts. Foreground execution defaults to 90 seconds; set `--timeout <seconds>` before `--` (maximum 3600) and raise your own tool timeout when needed.",
+    "- A structured `waiting` result with a request ticket (exit 75) is not rejection or execution failure: the user is being asked in CloudLink. Continue the same request as `references/execution.md` describes; never resubmit it through another tool. Read that file as well after a timeout or a result you cannot interpret.",
+    "",
+    "## Rules for every resource",
     ...rules.map((r, i) => `${i + 1}. ${r}`),
     "",
     "## Health check",
     "When the user asks for a health check of all or some servers, follow `references/health-check.md` using each resource's Connect entry.",
     "",
     "## Notes for next time",
-    `When you learn something durable about a server that its details file does not cover — how something is deployed, where a config lives, a pitfall — append one line to \`${inboxPath(settings.dataDir, envId)}/<name>.md\`, where \`<name>\` matches the server's details file; create the file if needed:`,
+    `When you learn something durable about a resource that its details file does not cover — how something is deployed, where a config lives, a pitfall — append one line to \`${inboxPath(settings.dataDir, envId)}/<name>.md\`, where \`<name>\` matches the resource's details file (\`${exampleName}\` for \`references/${exampleName}.md\`); create the file if needed:`,
     "`- YYYY-MM-DD: <what you learned>`",
     "Never write secrets, IP addresses, credentials or transient state such as current load. The user reviews these notes in CloudLink before they become part of this skill.",
   ]
-  const skill = ["---", "name: cloudlink-servers", `description: ${desc.text}`, "---", "", ...body, ""].join("\n")
+  const skill = ["---", "name: cloudlink-servers", `description: ${yamlString(desc.text)}`, "---", "", ...body, ""].join("\n")
   return {
     files: [
       { path: "SKILL.md", content: skill },
@@ -314,6 +374,7 @@ export function renderSkill(envId: EnvId, assets: Asset[], config: SkillConfig, 
         path: detailPath.get(a.id)!,
         content: a.type === "vps" ? renderDetails(a, settings, envId) : renderCliDetails(a, (id) => { const linked = assets.find((x) => x.id === id && x.type === "vps"); return linked && skillHandle(linked) }, settings, envId),
       })),
+      { path: "references/execution.md", content: renderExecution(settings, envId) },
       { path: "references/health-check.md", content: HEALTH_CHECK },
     ],
     descriptionChars: desc.text.length,

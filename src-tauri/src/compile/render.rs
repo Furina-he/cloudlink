@@ -12,9 +12,11 @@ use crate::model::compile::{CompiledFile, SkillConfig};
 use crate::model::env::EnvId;
 use crate::model::github::GithubScopeMode;
 
-pub const TEMPLATE_VERSION: u32 = 3;
+pub const TEMPLATE_VERSION: u32 = 4;
 pub const DESCRIPTION_LIMIT: usize = 1024;
 pub const HEALTH_CHECK: &str = include_str!("templates/health-check.md");
+/// 等待审批、超时和结果不明时怎么办；正文只留一句指向它
+pub const EXECUTION_FILE: &str = "references/execution.md";
 const TOC_THRESHOLD: usize = 100;
 
 fn templates() -> &'static Environment<'static> {
@@ -36,6 +38,8 @@ fn templates() -> &'static Environment<'static> {
             .expect("server template");
         env.add_template("cli", include_str!("templates/cli.md.j2"))
             .expect("cli template");
+        env.add_template("execution", include_str!("templates/execution.md.j2"))
+            .expect("execution template");
         env
     })
 }
@@ -137,11 +141,12 @@ fn public_handle(asset: &Asset) -> String {
         .unwrap_or_else(|| asset.handle().to_string())
 }
 
-/// 详情文件名：别名或标识转小写，`[a-z0-9-]` 以外的字符换成连字符；重名时按创建时间排后的加 `-2`（5.3）
+/// 详情文件名：别名或标识转小写，`[a-z0-9-]` 以外的字符换成连字符；重名时按创建时间排后的加 `-2`（5.3）。
+/// 两份固定的参考文件占着自己的名字。
 pub fn detail_names(assets: &[&Asset]) -> BTreeMap<String, String> {
     let mut sorted: Vec<&&Asset> = assets.iter().collect();
     sorted.sort_by(|a, b| a.created_at().cmp(b.created_at()).then(a.id().cmp(b.id())));
-    let mut used = BTreeSet::from(["health-check".to_string()]);
+    let mut used = BTreeSet::from(["health-check".to_string(), "execution".to_string()]);
     let mut out = BTreeMap::new();
     for a in sorted {
         let base: String = public_handle(a)
@@ -202,50 +207,134 @@ pub fn role(a: &Asset) -> String {
         .join("; ")
 }
 
+/// 用途留空、也没有站点或范围可写时的替代说明：显示名称（和别名不同时），服务器再加探测到的服务名。
+/// 只用在 description 和总览表，让没填用途的资源仍能对上任务；详情文件的 Role 只写用户填的。
+fn stand_in(a: &Asset, with_services: bool) -> String {
+    let name = one_line(a.name());
+    let mut parts = Vec::new();
+    if !name.is_empty() && !name.eq_ignore_ascii_case(&public_handle(a)) {
+        parts.push(name);
+    }
+    if let (Asset::Vps(s), true) = (a, with_services) {
+        let mut services: Vec<_> = s.services.iter().filter(|x| !x.missing).collect();
+        services.sort_by_key(|x| !x.critical);
+        // 探测来的名字进了常驻的 description，只收常见的服务名写法，疑似指令的不收（8.3）
+        let names: Vec<String> = services
+            .iter()
+            .map(|x| x.name.as_str())
+            .filter(|n| {
+                !n.is_empty()
+                    && n.len() <= 64
+                    && n.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-@".contains(&b))
+                    && !super::lint::looks_like_injection(n)
+            })
+            .take(5)
+            .map(code)
+            .collect();
+        if !names.is_empty() {
+            parts.push(format!("runs {}", names.join(", ")));
+        }
+    }
+    parts.join("; ")
+}
+
+/// 总览表和 description 里的用途
+fn role_or_stand_in(a: &Asset) -> String {
+    let r = role(a);
+    if r.is_empty() { stand_in(a, true) } else { r }
+}
+
+/// frontmatter 的值写成 YAML 双引号字符串。用途里的 `: `、` #`、引号放在裸值里，
+/// 严格的 YAML 解析器会判整段 frontmatter 无效。
+fn yaml_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            c if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}' | '\u{feff}') => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 pub struct Description {
     pub text: String,
     pub raw_chars: usize,
 }
 
-/// F-201 AC2：超过 1024 字符时依次去掉站点名、缩短用途、只列前若干项并注明其余数量
+/// F-201 AC2：超过 1024 字符时依次去掉站点名、缩短用途、只列前若干项并注明其余数量。
+/// 只写「有什么、管什么」：档位随时会切，而 description 在会话开始时就加载了，写进去只会过期。
 pub fn description(assets: &[&Asset]) -> Description {
-    let has_cli = assets.iter().any(|a| matches!(a, Asset::Cli(_)));
+    let has_server = assets.iter().any(|a| a.as_server().is_some());
+    let has_cli = assets.iter().any(|a| a.as_cli().is_some());
     // F-110：接了 GitHub 时，仓库相关的任务也要能触发这份 Skill
-    let targets = if assets
+    let has_github = assets
         .iter()
-        .any(|a| matches!(a, Asset::Cli(c) if c.cli_provider == CliProvider::Github))
-    {
-        "servers, sites, cloud projects or repositories"
+        .any(|a| matches!(a, Asset::Cli(c) if c.cli_provider == CliProvider::Github));
+    let has_cloud = assets
+        .iter()
+        .any(|a| matches!(a, Asset::Cli(c) if c.cli_provider != CliProvider::Github));
+    let subject = match (has_server, has_cli) {
+        (true, true) => "servers and cloud platforms",
+        (false, true) => "cloud platforms",
+        _ => "servers",
+    };
+    let mut targets = Vec::new();
+    if has_server || !has_cli {
+        targets.extend(["servers", "sites"]);
+    }
+    if has_cloud {
+        targets.push("cloud projects");
+    }
+    if has_github {
+        targets.push("repositories");
+    }
+    let targets = match targets.split_last() {
+        Some((last, [])) => last.to_string(),
+        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+        None => String::new(),
+    };
+    let mut topics = vec!["deployments", "logs"];
+    if has_server || !has_cli {
+        topics.push("Docker containers");
+    }
+    if has_cloud {
+        topics.push("DNS");
+    }
+    let topics = if has_server || !has_cli {
+        format!(
+            "{}, configuration, troubleshooting, or a health check of the servers",
+            topics.join(", ")
+        )
     } else {
-        "servers, sites or cloud projects"
+        format!("{}, configuration or troubleshooting", topics.join(", "))
     };
     let wrap = |list: &str| {
-        if has_cli {
-            format!(
-                "The user's servers and cloud platforms and how to operate them — {list}. Use for any task on these {targets}: deployments, logs, Docker containers, DNS, configuration, troubleshooting, or a health check of the servers."
-            )
-        } else {
-            format!(
-                "The user's servers and how to operate them — {list}. Use for any task on these servers or sites: deployments, logs, Docker containers, configuration, troubleshooting, or a health check of the servers."
-            )
-        }
+        format!("The user's {subject} and how to operate them — {list}. Use for any task on these {targets}: {topics}.")
     };
     let item = |a: &Asset, with_extra: bool, short: bool| {
         let r = if with_extra { role(a) } else { one_line(a.summary()) };
+        let r = if r.is_empty() { stand_in(a, with_extra) } else { r };
         let text = if short && r.chars().count() > 40 {
             format!("{}…", r.chars().take(39).collect::<String>())
         } else {
             r
         };
-        let mut tail: Vec<&str> = a.production().then_some("production").into_iter().collect();
-        tail.push(a.agent().mode.as_str());
-        let tail = tail.join(", ");
-        let inner = [text, tail]
+        let tail = if a.production() { "production" } else { "" };
+        let inner = [text.as_str(), tail]
             .into_iter()
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
             .join("; ");
-        format!("{} ({inner})", public_handle(a))
+        if inner.is_empty() {
+            public_handle(a)
+        } else {
+            format!("{} ({inner})", public_handle(a))
+        }
     };
     let len = |s: &str| s.chars().count();
     let full = wrap(
@@ -294,7 +383,6 @@ struct Row {
     binary: String,
     role: String,
     env: &'static str,
-    mode: &'static str,
     details: String,
 }
 
@@ -387,9 +475,8 @@ pub fn render_skill(input: &RenderInput) -> Rendered {
             .as_cli()
             .map(|c| c.cli.binary.as_str().to_string())
             .unwrap_or_default(),
-        role: cell(&role(a)),
+        role: cell(&role_or_stand_in(a)),
         env: env_word(a.production()),
-        mode: a.agent().mode.as_str(),
         details: detail_paths[a.id()].clone(),
     };
     let servers: Vec<Row> = input
@@ -416,18 +503,27 @@ pub fn render_skill(input: &RenderInput) -> Rendered {
         .or(input.assets.first())
         .map(|a| names[a.id()].clone())
         .unwrap_or_default();
+    let title = match (servers.is_empty(), clis.is_empty()) {
+        (false, false) => "Servers and cloud platforms",
+        (true, false) => "Cloud platforms",
+        _ => "Servers",
+    };
     let skill = render(
         "skill",
         serde_json::json!({
-            "description": description.text.clone(),
+            "description": yaml_string(&description.text),
+            "title": title,
             "snapshot": input.snapshot,
             "servers": servers,
             "clis": clis,
             "relationships": super::relations::lines(input.assets, input.config),
             "rules": rules,
             "inbox": input.inbox,
-            "example_name": example_name,
-            "has_execution": !input.assets.is_empty(),
+            "example_name": example_name,}),
+    );
+    let execution = render(
+        "execution",
+        serde_json::json!({
             "wait": entry.call("wait", None, "'<requestId.ownerToken>'", false),
             "wait_ps": entry.powershell("wait", None, "'<requestId.ownerToken>'"),
             "status": entry.call("status", None, "", false),
@@ -453,6 +549,10 @@ pub fn render_skill(input: &RenderInput) -> Rendered {
             content: with_toc(content),
         });
     }
+    files.push(CompiledFile {
+        path: EXECUTION_FILE.into(),
+        content: execution,
+    });
     files.push(CompiledFile {
         path: "references/health-check.md".into(),
         content: HEALTH_CHECK.to_string(),
@@ -526,7 +626,7 @@ fn render_server(a: &ServerAsset, snapshot_enabled: Option<&str>, entry: &Execut
                 crate::model::asset::ServiceKind::Docker => "container",
                 crate::model::asset::ServiceKind::Systemd => "service",
             };
-            format!("Stopping or restarting the {} {what} is high risk (critical); while CloudLink runs, request one-time approval through its runner", code(&s.name))
+            format!("Stopping or restarting the {} {what} is high risk (critical); request the user's one-time approval through the CloudLink runner", code(&s.name))
         }))
         .collect();
     let resolved = match (&a.connection.resolved, a.export.resolved_connection) {

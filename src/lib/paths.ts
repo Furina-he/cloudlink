@@ -12,6 +12,9 @@ export function detailFileOf(alias: string): string {
   return `references/${alias.toLowerCase().replace(/[^a-z0-9-]/g, "-")}.md`
 }
 
+/** 每份总 Skill 都带的两份固定参考文件：等待与超时的处理、巡检清单（5.3） */
+export const isBundledReference = (path: string) => path === "references/execution.md" || path === "references/health-check.md"
+
 /** 文件选择器返回的 \\wsl.localhost\<发行版>\… 换成 WSL 里的路径；其他路径原样返回 */
 export function toEnvPath(path: string, envId: EnvId): string {
   if (!envId.startsWith("wsl:")) return path

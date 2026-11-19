@@ -16,7 +16,7 @@ PowerShell:
 ## Guardrails (must follow)
 1. Memory is only 2 GB — never run npm run build, cargo build or other memory-heavy builds on this host
 2. After editing OpenResty config, run docker exec openresty nginx -t and reload only if it passes
-3. Stopping or restarting the `openresty` container is high risk (critical); while CloudLink runs, request one-time approval through its runner
+3. Stopping or restarting the `openresty` container is high risk (critical); request the user's one-time approval through the CloudLink runner
 
 ## Key directories
 | Key | Path | Purpose |
