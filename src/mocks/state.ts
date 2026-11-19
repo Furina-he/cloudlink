@@ -306,7 +306,7 @@ export function draftToAsset(input: AssetInput): Asset {
     const rest = { ...input }
     delete rest.scope
     delete rest.github
-    const cli = saved?.type === "cli" ? saved.cli : { binary: "wrangler" as const, envStates: {}, scope: input.scope ?? [] }
+    const cli = saved?.type === "cli" ? saved.cli : { binary: "cf" as const, envStates: {}, scope: input.scope ?? [] }
     return { ...rest, github: saved?.type === "cli" ? saved.github : undefined, id: input.id ?? "draft", handle: saved?.type === "cli" ? saved.handle : input.cliProvider, cli, agent, createdAt: saved?.createdAt ?? now(), updatedAt: now() }
   }
   const server = saved?.type === "vps" ? saved : undefined

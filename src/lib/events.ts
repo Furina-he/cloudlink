@@ -5,6 +5,7 @@ import type {
   ActivityItem,
   BackupEvent,
   CompileStatus,
+  CliSetupChangedEvent,
   ConnectionTestedEvent,
   Delivery,
   ExecutionChangedEvent,
@@ -18,6 +19,7 @@ import type {
 } from "@/bindings"
 import { useActivityStore } from "@/stores/activity"
 import { useAssetStore } from "@/stores/assets"
+import { useCliStore } from "@/stores/cli"
 import { onBackedUp, onTrayConfirmMode } from "@/stores/backups"
 import { useConnectionStore } from "@/stores/connection"
 import { useDeliveryStore } from "@/stores/deliveries"
@@ -70,6 +72,7 @@ export async function subscribeBackendEvents(): Promise<UnlistenFn> {
     listen<TrayConfirmMode>("tray://confirm-mode", (e) =>
       onTrayConfirmMode(e.payload.assetId)
     ),
+    listen<CliSetupChangedEvent>("cli-setup://changed", (e) => useCliStore.getState()._onSetupChanged(e.payload)),
     listen<ExecutionChangedEvent>("execution://changed", (e) => useExecutionStore.getState()._onChanged(e.payload)),
     listen<{ status: RuntimeStatus }>("runtime://changed", (e) => useExecutionStore.getState()._onRuntime(e.payload.status)),
     listen<{ requestId: string }>("execution://focus", (e) => {

@@ -43,7 +43,7 @@ describe("资源配电盘（PRD 6.4）", () => {
     expect(idsOf("dev-box")).toEqual(["ast_dev_box"])
     expect(idsOf("blog.example")).toEqual(["ast_hk_edge"])
     expect(idsOf("新加坡")).toEqual(["ast_sg_db"])
-    expect(idsOf("wrangler")).toEqual(["ast_cloudflare"])
+    expect(idsOf("cf")).toEqual(["ast_cloudflare"])
     expect(idsOf("my-team")).toEqual(["ast_vercel"])
     expect(idsOf("api-gateway")).toEqual(["ast_cloudflare"])
     // 没勾选的范围不公开，也搜不到

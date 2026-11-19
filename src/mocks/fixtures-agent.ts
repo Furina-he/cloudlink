@@ -80,22 +80,24 @@ export const guardRules: GuardRules = {
     "docker ps", "docker logs", "docker stats --no-stream", "docker images", "docker version", "docker info",
     "docker compose ps", "docker compose logs", "docker compose config --services",
     "nginx -t", "openssl s_client", "openssl x509 -noout", "curl -sI",
-    "wrangler whoami", "wrangler tail", "wrangler deployments list", 'wrangler d1 execute --command "SELECT …"',
+    "cf auth whoami", "cf zones list", "cf workers list", "cf pages list", "cf … list", "cf … get",
     "vercel whoami", "vercel ls", "vercel inspect", "vercel logs",
     "oci … list", "oci … get",
   ],
   standardDeny: [
     { id: "volume-delete", examples: ["docker compose down -v", "docker volume rm", "docker volume prune", "docker system prune --volumes"] },
     { id: "data-delete", examples: ["rm -r /var", "mkfs", "dd of=/dev/…", "wipefs", "dropdb", "redis-cli FLUSHALL"] },
+    { id: "cli-destroy", examples: ["cf … delete", "vercel project rm", "vercel domains rm", "oci compute instance terminate", "oci bv volume delete"] },
+    { id: "github-delete", examples: ["git push --force <不是默认分支>", "gh api -X DELETE", "gh release delete", "gh run delete"] },
     { id: "host-reboot", examples: ["reboot", "shutdown", "systemctl poweroff"] },
     { id: "firewall", examples: ["iptables -A", "nft add", "ufw allow", "firewall-cmd --add-port"] },
     { id: "ssh-config", examples: ["vi /etc/ssh/sshd_config", "~/.ssh/authorized_keys", "systemctl stop sshd"] },
     { id: "critical-service", examples: ["docker stop <关键服务>", "docker rm <关键服务>", "systemctl stop <关键服务>"] },
-    { id: "cli-destroy", examples: ["wrangler delete", "wrangler d1 delete", "wrangler r2 bucket delete", "vercel project rm", "vercel domains rm", "oci compute instance terminate", "oci bv volume delete"] },
+    { id: "opaque-script", examples: ["curl … | sh", "base64 -d … | sh", 'eval "$(…)"'] },
   ],
   alwaysDeny: [
     { id: "credential-read", examples: ["cat .env", "cat *.pem", "cat ~/.ssh/id_ed25519", "cat /etc/shadow", "docker inspect", "env", "printenv"] },
-    { id: "cli-env-export", examples: ["vercel env pull", "wrangler secret", "oci iam … --export", "~/.oci/config"] },
+    { id: "cli-env-export", examples: ["vercel env pull", "cf … secrets get", "cf … tokens create", "oci iam … --export", "~/.oci/config"] },
   ],
 }
 

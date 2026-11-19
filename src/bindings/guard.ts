@@ -53,8 +53,12 @@ export type GuardReasonId =
   | "runtime-protected"
   | "cli-identity"
   | "github-repo-delete"
+  /** 删除仓库里的 release、workflow 运行记录，或强推非默认分支（可审批） */
+  | "github-delete"
   | "github-default-force"
   | "github-dangerous"
+  /** 内容不可见的脚本，例如管道交给 shell 执行的下载内容 */
+  | "opaque-script"
 
 /** 护栏判定过的一条命令（F-307） */
 export type { Operation, InvocationSource, InvocationProvenance } from "./generated/guard"

@@ -12,7 +12,7 @@ use crate::model::compile::{CompiledFile, SkillConfig};
 use crate::model::env::EnvId;
 use crate::model::github::GithubScopeMode;
 
-pub const TEMPLATE_VERSION: u32 = 4;
+pub const TEMPLATE_VERSION: u32 = 5;
 pub const DESCRIPTION_LIMIT: usize = 1024;
 pub const HEALTH_CHECK: &str = include_str!("templates/health-check.md");
 /// 等待审批、超时和结果不明时怎么办；正文只留一句指向它
@@ -729,7 +729,7 @@ fn scope_word(k: CliScopeKind) -> &'static str {
 fn account_flag(p: CliProvider, account: &str) -> String {
     match p {
         CliProvider::Cloudflare => format!(
-            "Target this account on every command: set `CLOUDFLARE_ACCOUNT_ID` to the id of {} from `wrangler whoami`.",
+            "Target this account on every command: set `CLOUDFLARE_ACCOUNT_ID` to the id of {} from `cf auth whoami`. Do not add `--profile`.",
             code(account)
         ),
         CliProvider::Vercel => format!(
@@ -816,6 +816,9 @@ fn render_cli(a: &CliAsset, all: &[Asset], entry: &ExecutionEntry) -> String {
             "account": account.as_deref().map(code),
             "account_flag": account.as_deref().map(|x| account_flag(a.cli_provider, x)),
             "role": one_line(&a.summary),
+            "provider_note": (a.cli_provider == CliProvider::Cloudflare).then_some(
+                "Use `cf` for this account. Find a command with `cf cli search \"<task>\"` and preview a change with `--dry-run`. CloudLink supplies the account; do not add `--profile`. Live logs and changing a single secret currently go outside CloudLink."
+            ),
             "rules": a.guardrails.rules.iter().map(|r| one_line(&r.text)).collect::<Vec<_>>(),
             "github": a.cli_provider == CliProvider::Github,
             "scope": scope,

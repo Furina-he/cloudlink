@@ -23,7 +23,7 @@ impl Runner for FixtureRunner {
             Query::Discover { provider } => json!({ "installed": true, "path": if env.is_windows() {
                 format!("C:/isolated/{}.cmd", provider.binary().as_str())
             } else { format!("/isolated/{}", provider.binary().as_str()) } }),
-            Query::Version { .. } => json!({ "version": "4.157.0" }),
+            Query::Version { .. } => json!({ "version": "1.0.0" }),
             Query::Profiles { .. } => json!({ "profiles": ["DEFAULT", "production", "bad profile"] }),
             Query::Github { .. } => json!({"status":"offline","owners":[],"items":[],"reasonId":"offline"}),
             Query::Identity {
@@ -142,7 +142,7 @@ fn cloudflare_uses_account_ids_and_checks_each_environment_for_bound_account() {
     assert!(windows.authenticated);
     assert!(!states[&EnvId::wsl("Ubuntu-24.04")].authenticated);
     assert!(windows.installed);
-    assert_eq!(windows.version.as_deref(), Some("4.157.0"));
+    assert_eq!(windows.version.as_deref(), Some("1.0.0"));
 }
 
 #[test]
@@ -339,7 +339,7 @@ fn no_cli_queries_or_terminal_commands_can_escape_isolation() {
             )
             .is_err()
     );
-    assert!(runner.open_terminal(&env, "wrangler login").is_err());
+    assert!(runner.open_terminal(&env, "cf auth login").is_err());
     let service = Service::new(Arc::new(EmptyRunner));
     let states = service.detect(&[env], CliProvider::Oracle, None).unwrap();
     assert!(!states[&EnvId::windows()].installed);
@@ -352,16 +352,16 @@ fn terminal_allowlist_rejects_injection_and_wrong_platform_installers() {
     let envs = environments(&Paths::isolated_in(temp.path()));
     let service = Service::new(Arc::new(FixtureRunner::default()));
     for command in [
-        "wrangler login",
+        "cf auth login",
         "npm install -g vercel",
         "pip install oci-cli",
-        "oci setup config",
+        "oci setup bootstrap",
     ] {
         assert!(service.open_terminal(&envs[0], command).is_ok());
     }
     for command in [
-        "wrangler login && echo unsafe",
-        "wrangler login\necho unsafe",
+        "cf auth login && echo unsafe",
+        "cf auth login\necho unsafe",
         "npm install -g anything",
         "oci session export",
     ] {
@@ -449,19 +449,13 @@ fn scope_accepts_only_the_provider_shape_and_public_ip_addresses() {
 fn script_arguments_are_quoted_and_account_values_are_validated() {
     let temp = tempfile::tempdir().unwrap();
     let envs = environments(&Paths::isolated_in(temp.path()));
-    assert_eq!(
-        runner::ps_quote("C:/O'Brien/wrangler.cmd"),
-        "'C:/O''Brien/wrangler.cmd'"
-    );
-    assert_eq!(
-        runner::sh_quote("/home/O'Brien/wrangler"),
-        "'/home/O'\\''Brien/wrangler'"
-    );
+    assert_eq!(runner::ps_quote("C:/O'Brien/cf.cmd"), "'C:/O''Brien/cf.cmd'");
+    assert_eq!(runner::sh_quote("/home/O'Brien/cf"), "'/home/O'\\''Brien/cf'");
     let script = runner::script_for(
         &envs[1],
         &Query::Scope {
             provider: CliProvider::Cloudflare,
-            path: "/usr/bin/wrangler".into(),
+            path: "/usr/bin/cf".into(),
             account: ACCOUNT_A.into(),
         },
     )
@@ -477,14 +471,14 @@ fn script_arguments_are_quoted_and_account_values_are_validated() {
     )
     .unwrap();
     assert!(identity.contains("node -e"));
-    assert!(identity.contains("WRANGLER_WRITE_LOGS=false"));
+    assert!(identity.contains("CF_SEND_TELEMETRY=false"));
     assert!(identity.contains("cd /;"));
     assert!(
         runner::script_for(
             &envs[1],
             &Query::Scope {
                 provider: CliProvider::Cloudflare,
-                path: "/usr/bin/wrangler".into(),
+                path: "/usr/bin/cf".into(),
                 account: "$(echo unsafe)".into()
             }
         )
@@ -671,4 +665,53 @@ fn github_metadata_runs_through_the_python_bridge_in_wsl() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn cloudflare_checks_node_before_offering_install_or_detection() {
+    struct NodeRunner {
+        installed: bool,
+        node: &'static str,
+    }
+    impl Runner for NodeRunner {
+        fn run(&self, _env: &EnvContext, query: &Query) -> Result<QueryOutput> {
+            match query {
+                Query::Discover { .. } => Ok(QueryOutput::json(json!({
+                    "installed": self.installed,
+                    "path": "C:/isolated/cf.cmd",
+                    "nodeVersion": self.node,
+                }))),
+                Query::Version { .. } => Ok(QueryOutput::json(json!({ "version": "1.0.0" }))),
+                Query::Identity { .. } => Ok(QueryOutput::json(json!({
+                    "authenticated": true, "expired": false,
+                    "accounts": [{ "id": ACCOUNT_A, "name": "Personal" }],
+                }))),
+                _ => Err(AppError::ipc(IpcErrorId::CliCommandUnsupported)),
+            }
+        }
+        fn open_terminal(&self, _env: &EnvContext, _command: &str) -> Result<()> {
+            Err(AppError::ipc(IpcErrorId::TerminalCommandInvalid))
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let envs = environments(&Paths::isolated_in(temp.path()));
+    let detect = |installed, node| {
+        Service::new(Arc::new(NodeRunner { installed, node })).detect(&envs, CliProvider::Cloudflare, None)
+    };
+    assert!(
+        detect(false, "v22.20.0")
+            .unwrap_err()
+            .is_ipc(IpcErrorId::CliNodeOutdated)
+    );
+    assert!(
+        detect(true, "v24.21.0")
+            .unwrap_err()
+            .is_ipc(IpcErrorId::CliNodeOutdated)
+    );
+    // The supported lines are exactly the ones cf declares in its package engines.
+    for node in ["v22.23.0", "v24.22.1", "v26.12.0"] {
+        assert!(!detect(false, node).unwrap()[&EnvId::windows()].installed);
+    }
+    // An unavailable node is not evidence of an outdated one.
+    assert!(!detect(false, "").unwrap()[&EnvId::windows()].installed);
 }

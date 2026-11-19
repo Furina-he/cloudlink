@@ -13,11 +13,12 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { CLI_BINARY, installCommand, installMethods, loginCommand, SCOPE_KINDS, type InstallMethod } from "@/lib/cliProviders"
+import { CLI_BINARY, installMethods, loginCommand, SCOPE_KINDS, type InstallMethod } from "@/lib/cliProviders"
 import { copy } from "@/lib/copy"
 import { sortEnvs } from "@/features/servers/serverForm"
 import { cn } from "@/lib/utils"
 import { cliEnvStatus, handleOf, useAssetStore } from "@/stores/assets"
+import type { CliSetupRun } from "@/stores/cli"
 
 const STATUS_ICON = {
   ready: { tone: "success", icon: CONN_STATE.connected.icon },
@@ -26,13 +27,10 @@ const STATUS_ICON = {
   expired: { tone: "warning", icon: CONN_STATE.changed.icon },
 } as const
 
-/** 一个运行环境里该执行的命令：没装时是安装命令，否则是登录命令 */
-export const commandFor = (provider: CliProvider, envId: EnvId, state: CliEnvState) =>
-  cliEnvStatus(state) === "not-installed" ? installCommand(provider, envId) : loginCommand(provider)
-
 /**
  * 各运行环境的 CLI 状态（F-104 AC1、AC2）：只列已启用 Agent 所在的环境。
- * 未就绪时给出单行命令、「复制」和「打开终端」；showDetail 时（检视面板）再显示路径和「打开终端切换账号」。
+ * 未就绪时一个「安装并登录」／「登录」按钮；命令默认收起、可查看与复制。
+ * 等待与失败状态来自后端 `cli-setup://changed`；showDetail 时再显示路径和「打开终端切换账号」。
  * 结果区域设置 aria-live（6.12），检测结果淡入 150ms（7.7）
  */
 export function CliEnvList({
@@ -40,17 +38,21 @@ export function CliEnvList({
   envStates,
   detecting,
   showDetail = false,
-  onOpenTerminal,
+  setup,
+  onSetup,
 }: {
   provider: CliProvider
   envStates: Partial<Record<EnvId, CliEnvState>>
   detecting: boolean
   showDetail?: boolean
-  onOpenTerminal: (envId: EnvId, command: string) => void
+  setup?: CliSetupRun
+  onSetup: (envId: EnvId, methodId: string) => void
 }) {
   const envIds = sortEnvs(Object.keys(envStates))
-  // 每个环境选的安装方式；「打开终端」跑的就是选中的那条
+  // 每个环境选的安装方式；点按钮时后端按它查固定命令
   const [methodByEnv, setMethodByEnv] = useState<Partial<Record<EnvId, string>>>({})
+  // 未就绪时的命令默认收起（P9b）
+  const [openByEnv, setOpenByEnv] = useState<Partial<Record<EnvId, boolean>>>({})
   if (envIds.length === 0) {
     return detecting ? (
       <div className="flex flex-col gap-1.5" aria-busy="true" aria-label={copy.cli.checking}>
@@ -69,7 +71,16 @@ export function CliEnvList({
         const { tone, icon } = STATUS_ICON[status]
         const methods = installMethods(provider, envId)
         const method = methods.find((m) => m.id === methodByEnv[envId]) ?? methods[0]
-        const command = status === "not-installed" ? method.command : commandFor(provider, envId, state)
+        const run = setup?.envId === envId ? setup : undefined
+        const waiting = run?.state === "waiting-install" || run?.state === "waiting-login"
+        const failed = run?.state === "failed" || run?.state === "timed-out"
+        const open = !!openByEnv[envId]
+        const failure =
+          run?.state === "timed-out"
+            ? copy.cli.setupTimedOut
+            : run?.step === "login"
+              ? copy.cli.setupFailedLogin
+              : copy.cli.setupFailedInstall
         return (
           <motion.div key={`${envId}:${state.checkedAt}`} role="listitem" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.15 }}>
             <Item variant="outline" size="sm" className="items-start">
@@ -84,6 +95,11 @@ export function CliEnvList({
                       <Spinner className="size-3.5" aria-hidden />
                       {copy.cli.checking}
                     </span>
+                  ) : waiting ? (
+                    <span role="status" className="flex items-center gap-1 font-normal text-muted-foreground">
+                      <Spinner className="size-3.5" aria-hidden />
+                      {run?.state === "waiting-install" ? copy.cli.waitingInstall : copy.cli.waitingLogin}
+                    </span>
                   ) : (
                     <StateText tone={tone} icon={icon} className="font-normal">
                       {copy.cli.status[status]}
@@ -94,23 +110,42 @@ export function CliEnvList({
                   <ItemDescription className="font-mono text-xs">{copy.cli.versionAccount(`${CLI_BINARY[provider]} ${state.version}`, state.account)}</ItemDescription>
                 )}
                 {showDetail && state.path && <ItemDescription className="truncate font-mono text-xs">{state.path}</ItemDescription>}
-                {status === "not-installed" && !detecting && (
+                {waiting && (
+                  <ItemDescription className="text-xs">
+                    {run?.state === "waiting-install" ? copy.cli.setupNoteInstall : copy.cli.setupNoteLogin}
+                  </ItemDescription>
+                )}
+                {failed && <ItemDescription className="text-xs text-warning">{failure}</ItemDescription>}
+                {!waiting && status !== "ready" && !detecting && (
+                  <Button
+                    variant="link"
+                    size="xs"
+                    className="h-auto justify-start p-0 text-xs text-muted-foreground"
+                    aria-expanded={open}
+                    onClick={() => setOpenByEnv((m) => ({ ...m, [envId]: !m[envId] }))}
+                  >
+                    {open ? copy.cli.hideCommands : copy.cli.viewCommands}
+                  </Button>
+                )}
+                {open && status === "not-installed" && (
                   <InstallGuide envId={envId} methods={methods} method={method} onMethod={(id) => setMethodByEnv((m) => ({ ...m, [envId]: id }))} />
                 )}
-                {status !== "ready" && status !== "not-installed" && <CommandLine envId={envId} command={command} className="mt-1" />}
+                {open && status !== "ready" && status !== "not-installed" && (
+                  <CommandLine envId={envId} command={loginCommand(provider)} className="mt-1" />
+                )}
                 {status !== "ready" && provider === "oracle" && status !== "not-installed" && (
                   <ItemDescription className="text-xs">{copy.cli.loginHintOci}</ItemDescription>
                 )}
               </ItemContent>
               <ItemActions>
                 {status !== "ready" ? (
-                  <Button variant="outline" size="xs" onClick={() => onOpenTerminal(envId, command)}>
+                  <Button variant="outline" size="xs" disabled={detecting} onClick={() => onSetup(envId, method.id)}>
                     <SquareTerminalIcon data-icon="inline-start" />
-                    {copy.cli.openTerminal}
+                    {waiting ? copy.cli.reopenTerminal : status === "not-installed" ? copy.cli.installAndLogin : copy.cli.login}
                   </Button>
                 ) : (
                   showDetail && (
-                    <Button variant="ghost" size="xs" onClick={() => onOpenTerminal(envId, loginCommand(provider))}>
+                    <Button variant="ghost" size="xs" onClick={() => onSetup(envId, methods[0].id)}>
                       <SquareTerminalIcon data-icon="inline-start" />
                       {copy.cli.switchAccount}
                     </Button>
@@ -270,6 +305,9 @@ export function CliScopeList({
           </FieldSet>
         )
       })}
+      {provider === "cloudflare" && (
+        <p className="text-xs leading-relaxed text-muted-foreground">{copy.cli.scopeOtherProducts}</p>
+      )}
       {loading && (
         <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <Spinner className="size-3.5" aria-hidden />

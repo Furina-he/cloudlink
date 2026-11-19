@@ -52,7 +52,7 @@ impl CliProvider {
     }
     pub fn binary(self) -> CliBinary {
         match self {
-            CliProvider::Cloudflare => CliBinary::Wrangler,
+            CliProvider::Cloudflare => CliBinary::Cf,
             CliProvider::Vercel => CliBinary::Vercel,
             CliProvider::Oracle => CliBinary::Oci,
             CliProvider::Github => CliBinary::Gh,
@@ -530,6 +530,61 @@ pub struct CliEnvState {
     pub checked_at: String,
 }
 
+/// F-104 AC2（P9b）：前端只传 provider / 环境 / 安装方式，命令由后端查固定表
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "asset.ts")]
+pub struct CliSetupRequest {
+    pub provider: CliProvider,
+    pub env_id: EnvId,
+    pub method: String,
+}
+
+/// 返回这次设置的 ID 和初始阶段，避免事件先于 IPC 返回时界面闪空
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "asset.ts")]
+pub struct CliSetupStarted {
+    pub id: String,
+    pub state: CliSetupState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub step: Option<CliSetupStep>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export, export_to = "asset.ts")]
+pub enum CliSetupState {
+    WaitingInstall,
+    WaitingLogin,
+    Ready,
+    Failed,
+    TimedOut,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export, export_to = "asset.ts")]
+pub enum CliSetupStep {
+    Install,
+    Login,
+}
+
+/// `cli-setup://changed`：阶段进度，命令结果仍以重新检测为准
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "asset.ts")]
+pub struct CliSetupChangedEvent {
+    pub id: String,
+    pub provider: CliProvider,
+    pub env_id: EnvId,
+    pub state: CliSetupState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub step: Option<CliSetupStep>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "asset.ts")]
@@ -594,7 +649,10 @@ pub struct CliScopeItem {
 #[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "asset.ts")]
 pub enum CliBinary {
-    Wrangler,
+    /// 2026-11-19（P9c）：Cloudflare 的 CLI 由 wrangler 换成 cf。旧数据里的
+    /// `"wrangler"` 仍能读出，序列化统一写 `"cf"`，不需要数据库迁移。
+    #[serde(alias = "wrangler")]
+    Cf,
     Vercel,
     Oci,
     Gh,
@@ -603,7 +661,7 @@ pub enum CliBinary {
 impl CliBinary {
     pub fn as_str(self) -> &'static str {
         match self {
-            CliBinary::Wrangler => "wrangler",
+            CliBinary::Cf => "cf",
             CliBinary::Vercel => "vercel",
             CliBinary::Oci => "oci",
             CliBinary::Gh => "gh",
@@ -884,7 +942,7 @@ mod tests {
             "agent": { "agents": [], "mode": "confirm-changes" }, "guardrails": { "rules": [] }, "notes": "",
             "createdAt": "2026-11-01T00:00:00Z", "updatedAt": "2026-11-01T00:00:00Z",
             "cliProvider": "cloudflare", "handle": "cloudflare", "account": null,
-            "cli": { "binary": "wrangler", "envStates": {}, "scope": [] }
+            "cli": { "binary": "cf", "envStates": {}, "scope": [] }
         });
         let a: Asset = serde_json::from_value(cli.clone()).unwrap();
         assert_eq!(a.kind(), AssetType::Cli);

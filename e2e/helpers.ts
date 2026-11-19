@@ -1,9 +1,9 @@
 import { expect, type Locator, type Page } from "@playwright/test"
 import { fileURLToPath } from "node:url"
 
-// 验收证据与 Playwright 的可清理输出分开，默认位于源码仓库内的 test-results/p8。
+// 验收证据与 Playwright 的可清理输出分开，默认为当前阶段的 test-results/p9。
 // 既有 e2e/__screenshots__ 门禁 PNG 保持不动；P7d 专属可选截图由 p7d.spec.ts 保存。
-export const SHOTS = process.env.CLOUDLINK_E2E_SHOTS ?? fileURLToPath(new URL("../test-results/p8", import.meta.url))
+export const SHOTS = process.env.CLOUDLINK_E2E_SHOTS ?? fileURLToPath(new URL("../test-results/p9", import.meta.url))
 
 export function collectConsoleErrors(page: Page) {
   const errors: string[] = []
@@ -67,6 +67,3 @@ export const shot = (page: Page, name: string) => page.screenshot({ path: `${SHO
 
 /** Toast 里的一句话 */
 export const toastText = (page: Page, text: string | RegExp) => page.locator("[data-slot=toast], [role=status], [role=alert]").filter({ hasText: text }).first()
-
-/** 模拟用户从终端切回 CloudLink 窗口（F-104 AC2） */
-export const refocusWindow = (page: Page) => page.evaluate(() => window.dispatchEvent(new Event("focus")))

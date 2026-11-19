@@ -164,7 +164,7 @@ fn waiting_protocol_lives_in_its_own_reference_and_the_exit_boundary_is_not_told
     }
     assert!(p.lint.is_empty(), "{:#?}", p.lint);
     assert!(p.budget.body_lines <= 60, "{}", p.budget.body_lines);
-    assert_eq!(render::TEMPLATE_VERSION, 4);
+    assert_eq!(render::TEMPLATE_VERSION, 5);
     assert!(render::HEALTH_CHECK.contains("Do not replace that entry with direct SSH"));
     let wsl = EnvId::parse("wsl:Ubuntu-24.04").unwrap();
     let p = preview(

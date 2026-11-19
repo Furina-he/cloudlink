@@ -1,7 +1,7 @@
 # Discovery/version only. Identity and scope run through the bounded Node/Python bridges.
 cl_emit() { printf '\n__CLOUDLINK_CLI_METADATA__\n%s\n' "$1"; }
 case "$cl_provider" in
-  cloudflare) cl_name=wrangler ;;
+  cloudflare) cl_name=cf ;;
   vercel) cl_name=vercel ;;
   oracle) cl_name=oci ;;
   github) cl_name=gh ;;
@@ -9,10 +9,13 @@ case "$cl_provider" in
 esac
 if [ "$cl_operation" = discover ]; then
   cl_found=$(type -P "$cl_name" 2>/dev/null || true)
-  if [ -z "$cl_found" ]; then cl_emit '{"installed":false}'; exit 0; fi
+  cl_node=$(node --version 2>/dev/null || true)
+  cl_node=${cl_node//\\/\\\\}
+  cl_node=${cl_node//\"/\\\"}
+  if [ -z "$cl_found" ]; then cl_emit "{\"installed\":false,\"nodeVersion\":\"$cl_node\"}"; exit 0; fi
   cl_escaped=${cl_found//\\/\\\\}
   cl_escaped=${cl_escaped//\"/\\\"}
-  cl_emit "{\"installed\":true,\"path\":\"$cl_escaped\"}"
+  cl_emit "{\"installed\":true,\"path\":\"$cl_escaped\",\"nodeVersion\":\"$cl_node\"}"
   exit 0
 fi
 if [ "$cl_operation" = version ]; then

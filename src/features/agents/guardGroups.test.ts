@@ -11,7 +11,7 @@ describe("只读巡检放行清单的分组（PRD 6.6）", () => {
     expect(allowGroupOf("journalctl")).toBe("services")
     expect(allowGroupOf("curl -sI")).toBe("services")
     expect(allowGroupOf("docker compose ps")).toBe("docker")
-    expect(allowGroupOf("wrangler tail")).toBe("cloud")
+    expect(allowGroupOf("cf workers list")).toBe("cloud")
     expect(allowGroupOf("oci … list")).toBe("cloud")
   })
 

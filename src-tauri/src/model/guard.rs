@@ -84,9 +84,11 @@ pub enum GuardReasonId {
     RuntimeProtection,
     CliIdentity,
     GithubRepoDelete,
+    GithubDelete,
     #[serde(rename = "github-default-force", alias = "github-default-branch")]
     GithubDefaultBranch,
     GithubDangerous,
+    OpaqueScript,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

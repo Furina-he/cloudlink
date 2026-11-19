@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 const fake = vi.hoisted(() => ({
   listen: vi.fn(),
   connection: vi.fn(),
+  setup: vi.fn(),
   guard: vi.fn(),
   update: vi.fn(),
   execution: vi.fn(), runtime: vi.fn(), focus: vi.fn(), view: vi.fn(),
@@ -20,6 +21,9 @@ vi.mock("@/stores/deliveries", () => ({
 }))
 vi.mock("@/stores/guard", () => ({
   useGuardStore: { getState: () => ({ _onChanged: fake.guard }) },
+}))
+vi.mock("@/stores/cli", () => ({
+  useCliStore: { getState: () => ({ _onSetupChanged: fake.setup }) },
 }))
 vi.mock("@/stores/notes", () => ({
   useNotesStore: { getState: () => ({ _onNew: vi.fn() }) },
@@ -105,9 +109,12 @@ describe("后端事件订阅", () => {
     const status = { state: "available", currentVersion: "0.1.0", version: "0.2.0" }
     handlers.get("guard://changed")!({ payload: { statuses } })
     handlers.get("update://changed")!({ payload: { status } })
+    const setup = { id: "setup_fixture", provider: "cloudflare", envId: "windows", state: "waiting-login" }
+    handlers.get("cli-setup://changed")!({ payload: setup })
     expect(fake.connection).toHaveBeenCalledExactlyOnceWith(connection)
     expect(fake.guard).toHaveBeenCalledExactlyOnceWith(statuses)
     expect(fake.update).toHaveBeenCalledExactlyOnceWith(status)
+    expect(fake.setup).toHaveBeenCalledExactlyOnceWith(setup)
     const execution = { epoch: "fixture", revision: 1, requests: [] }
     const runtime = { epoch: "fixture", revision: 1, state: "active", checkedAt: "2026-11-15T00:00:00Z" }
     handlers.get("execution://changed")!({ payload: execution })
@@ -117,7 +124,7 @@ describe("后端事件订阅", () => {
     expect(fake.runtime).toHaveBeenCalledExactlyOnceWith(runtime)
     expect(fake.focus).toHaveBeenCalledExactlyOnceWith("req_fixture")
     expect(fake.view).toHaveBeenCalledExactlyOnceWith("activity")
-    expect(activeOffs).toHaveLength(15)
+    expect(activeOffs).toHaveLength(16)
     unsubscribe()
     for (const off of [...failedOffs, ...activeOffs])
       expect(off).toHaveBeenCalledTimes(1)

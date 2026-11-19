@@ -96,7 +96,7 @@ function TypePicker() {
   const importable = useImportableCount()
   const ui = useUIStore.getState
   useEffect(() => {
-    // 没接入过、也没检测过的云平台检测一次，选项块上才有「已登录 · wrangler」「未安装 oci」
+    // 没接入过、也没检测过的云平台检测一次，选项块上才有「已登录 · cf」「未安装 oci」
     const assets = Object.values(useAssetStore.getState().byId)
     for (const p of CLI_PROVIDERS) {
       if (!useCliStore.getState().byProvider[p] && !assets.some((a) => a.type === "cli" && a.cliProvider === p)) void useCliStore.getState().detect(p)

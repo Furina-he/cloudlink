@@ -179,7 +179,7 @@ function Categories({ id, title, list }: { id: string; title: string; list: Guar
 }
 
 /**
- * 护栏规则（只读，PRD 6.6、8.6）：先讲拦什么（标准运维时、任何档位），再讲只读巡检时放行什么；
+ * 护栏规则（只读，PRD 6.6、8.6）：两档先问 → 仅确认变更先问 → 任何档位拦下 → 两档直接执行查询；
  * 放行清单很长，默认收起，展开后按系统 / 服务与日志 / Docker / 云平台分组
  */
 function RulesPage() {
@@ -197,6 +197,14 @@ function RulesPage() {
     <>
       <p className="text-[13px] text-fg-2">{copy.guard.intro}</p>
       <Categories id="rules-standard" title={copy.guard.standardTitle} list={rules.standardDeny} />
+      {/* 确认变更才询问的类别没有独立规则 ID，用一句说明和示例概括 */}
+      <ListGroup
+        id="rules-confirm"
+        title={copy.guard.confirmTitle}
+        action={<span className="text-xs text-muted-foreground tabular-nums">{copy.guard.categoryCount(1)}</span>}
+      >
+        <ChipRow label={copy.guard.confirmRow} commands={copy.guard.confirmExamples} />
+      </ListGroup>
       <Categories id="rules-always" title={copy.guard.alwaysTitle} list={rules.alwaysDeny} />
       <ListGroup id="rules-read-only" title={copy.guard.readOnlyTitle}>
         <FoldRow label={copy.guard.readOnlyRow} hint={copy.guard.readOnlySummary(allow.length, allowExamples(allow))}>

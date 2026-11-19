@@ -26,7 +26,7 @@ import { NewGithubForm } from "./NewGithubForm"
 
 /**
  * 添加云平台 CLI（PRD 6.5 分支 B）：只检测已启用 Agent 所在的运行环境，展示版本和 whoami 账号；
- * 未安装或未登录时给出单行命令和「打开终端」，切回窗口自动重新检测（F-104 AC1、AC2）。
+ * 未安装或未登录时一个「安装并登录」／「登录」按钮，后端自己等结果（F-104 AC1、AC2）。
  * 至少一个环境就绪后拉取账号下的资源，勾选公开的范围，「保存并启用」。
  * 和 SSH 表单一样不选 Agent、不选档位（2026-11-10）：从只读巡检开始，同步给全部已启用的 Agent。
  * 同一家可以接多个账号：登录能看到几个账号（Cloudflare Account、Vercel Team、OCI Profile）就列几个，已接入的标「已添加」
@@ -37,6 +37,7 @@ export function NewCliForm({ provider }: { provider: CliProvider }) {
 
 function StandardCliForm({ provider }: { provider: CliProvider }) {
   const detection = useCliStore((s) => s.byProvider[provider]) ?? emptyDetection
+  const setup = useCliStore((s) => s.setups[provider])
   const { agents } = useAgentOptions()
   const [saving, setSaving] = useState(false)
   const ready = Object.values(detection.envStates).some(
@@ -190,14 +191,13 @@ function StandardCliForm({ provider }: { provider: CliProvider }) {
                   provider={provider}
                   envStates={detection.envStates}
                   detecting={detection.detecting}
-                  onOpenTerminal={(envId, command) =>
-                    serverActions.openTerminal(envId, command, provider, null)
+                  setup={setup}
+                  onSetup={(envId, method) =>
+                    serverActions.startCliSetup(provider, envId, method, null)
                   }
                 />
                 <p className="text-xs text-muted-foreground">
-                  {detection.failed
-                    ? copy.cli.detectFailed
-                    : copy.cli.autoRefreshHint}
+                  {detection.error ? ipcErrorText(detection.error.id, detection.error.params) : detection.failed ? copy.cli.detectFailed : copy.cli.setupNoteIdle}
                 </p>
               </>
             )}

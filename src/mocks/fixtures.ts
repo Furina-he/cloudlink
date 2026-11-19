@@ -220,8 +220,8 @@ export const assets: Asset[] = [
     production: true,
     summary: "DNS for example.com and the edge API gateway Worker",
     cli: {
-      binary: "wrangler",
-      envStates: { windows: ready("3.99.0", `${WIN_NPM}wrangler.cmd`, "me@example.com"), [WSL]: ready("3.99.0", "/home/me/.local/share/pnpm/wrangler", "me@example.com") },
+      binary: "cf",
+      envStates: { windows: ready("1.0.0", `${WIN_NPM}cf.cmd`, "me@example.com"), [WSL]: ready("1.0.0", "/home/me/.local/share/pnpm/cf", "me@example.com") },
       scope: [
         { id: "zone_example", kind: "zone", name: "example.com", selected: true, linkedAssetId: "ast_hk_edge" },
         { id: "zone_status", kind: "zone", name: "status.example.net", selected: true },
@@ -293,7 +293,7 @@ export const assets: Asset[] = [
  * Oracle：Windows 没装、WSL 已就绪，用来走添加向导；「打开终端」之后 Mock 把那个环境改成已就绪，切回窗口时自动刷新
  */
 export const cliMachine: Record<CliProvider, Partial<Record<EnvId, CliEnvState>>> = {
-  cloudflare: { windows: ready("3.99.0", `${WIN_NPM}wrangler.cmd`, "me@example.com"), [WSL]: ready("3.99.0", "/home/me/.local/share/pnpm/wrangler", "me@example.com") },
+  cloudflare: { windows: ready("1.0.0", `${WIN_NPM}cf.cmd`, "me@example.com"), [WSL]: ready("1.0.0", "/home/me/.local/share/pnpm/cf", "me@example.com") },
   vercel: { windows: ready("39.1.0", `${WIN_NPM}vercel.cmd`, "my-team"), [WSL]: notLoggedIn("39.1.0", "/home/me/.local/share/pnpm/vercel") },
   oracle: { windows: { installed: false, authenticated: false, expired: false, checkedAt: ago(10 * MIN) }, [WSL]: ready("3.50.0", "/home/me/bin/oci", "tenancy-demo") },
   github: { windows: ready("2.102.0", "C:\\Program Files\\GitHub CLI\\gh.exe", "octo-dev"), [WSL]: ready("2.45.0", "/usr/bin/gh", "octo-dev") },

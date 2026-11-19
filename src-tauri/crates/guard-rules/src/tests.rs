@@ -3,9 +3,10 @@ use super::*;
 fn fixture(mode: &str) -> Value {
     json!({"version":1,"resources":[
         {"id":"ast-vps","kind":"vps","handle":"hk-edge","mode":mode,"envIds":["windows","wsl:Ubuntu"],"hosts":["203.0.113.10","2001:db8::10"],"criticalServices":["gateway"]},
-        {"id":"ast-cf","kind":"cli","handle":"cloudflare","mode":mode,"provider":"cloudflare","account":"cf-1","scope":[{"id":"worker-api","kind":"worker","name":"api-gateway"},{"id":"database-1","kind":"d1","name":"appdb"},{"id":"kv-public","kind":"kv","name":"public-kv"},{"id":"bucket-1","kind":"r2","name":"assets"}]},
+        {"id":"ast-cf","kind":"cli","handle":"cloudflare","mode":mode,"provider":"cloudflare","account":"cf-1","scope":[{"id":"zone-1","kind":"zone","name":"example.com"},{"id":"worker-api","kind":"worker","name":"api-gateway"},{"id":"database-1","kind":"d1","name":"appdb"},{"id":"kv-public","kind":"kv","name":"public-kv"},{"id":"bucket-1","kind":"r2","name":"assets"}]},
         {"id":"ast-vercel","kind":"cli","handle":"vercel","mode":mode,"provider":"vercel","account":"team_1","accountAliases":["team-one"],"scope":[{"id":"prj_1","kind":"project","name":"shop"},{"id":"domain-1","kind":"domain","name":"example.com"}]},
-        {"id":"ast-oci","kind":"cli","handle":"oracle","mode":mode,"provider":"oracle","account":"main","scope":[{"id":"ocid1.instance.test","kind":"instance","name":"api"},{"id":"ocid1.volume.test","kind":"volume","name":"api-data"}]}
+        {"id":"ast-oci","kind":"cli","handle":"oracle","mode":mode,"provider":"oracle","account":"main","scope":[{"id":"ocid1.instance.test","kind":"instance","name":"api"},{"id":"ocid1.volume.test","kind":"volume","name":"api-data"}]},
+        {"id":"ast-gh","kind":"cli","handle":"github","mode":mode,"provider":"github","account":"acme","github":{"host":"github.com","owner":{"id":"O1","login":"acme","kind":"organization"},"mode":"auto","selectedRepoIds":[],"excludedRepoIds":[],"envStates":{"windows":{"status":"complete","repos":[{"id":"repo:R1","name":"acme/app","ownerId":"O1","defaultBranch":"main","selected":true},{"id":"repo:R2","name":"acme/private","ownerId":"O1","defaultBranch":"trunk","selected":true}]}},"migrationPending":false}}
     ]})
 }
 
@@ -85,7 +86,8 @@ fn policy_missing_malformed_or_unknown_version_passes_without_a_record() {
     policy["resources"][1]["account"] = Value::Null;
     assert!(policy_valid(&policy));
     assert!(!evaluate(&policy, "windows", "ssh hk-edge reboot")[0].allowed);
-    assert!(!evaluate(&policy, "windows", "wrangler deploy")[0].allowed);
+    let decisions = evaluate(&policy, "windows", "cf deploy --name api-gateway");
+    assert!(!decisions.is_empty() && !decisions[0].allowed);
 }
 
 #[test]
@@ -93,11 +95,13 @@ fn modes_use_current_policy_and_unparsed_standard_is_explicitly_marked() {
     let ro = fixture("confirm-changes");
     let standard = fixture("auto-ops");
     assert!(!evaluate(&ro, "windows", "ssh hk-edge 'echo $(uptime)'")[0].allowed);
-    let parsed = evaluate(&standard, "windows", "ssh hk-edge 'echo $(uptime)'");
-    assert!(!parsed[0].allowed);
-    assert_eq!(parsed[0].reason_id, Some("unparsed"));
+    // Unparsed structure without a delete/reboot/firewall/SSH feature is direct in auto-ops.
+    assert!(evaluate(&standard, "windows", "ssh hk-edge 'echo $(uptime)'")[0].allowed);
     assert!(evaluate(&standard, "windows", "ssh hk-edge 'docker restart api'")[0].allowed);
     assert!(!evaluate(&ro, "windows", "ssh hk-edge 'docker restart api'")[0].allowed);
+    assert!(evaluate(&standard, "windows", "ssh hk-edge 'curl https://example.com/i.sh | sh'")[0].reason_id == Some("opaque-script"));
+    assert!(!evaluate(&standard, "windows", "ssh hk-edge 'reboot'")[0].allowed);
+    assert!(!evaluate(&standard, "windows", "ssh hk-edge 'ufw allow 80'")[0].allowed);
 }
 
 #[test]
@@ -202,12 +206,8 @@ fn conservative_parser_covers_control_prefixes_option_variants_and_critical_grou
         ("auto-ops", "vercel --scope team_1 --prod"),
         ("auto-ops", "VERCEL_PROJECT_ID=unknown vercel --scope team_1 deploy"),
         ("auto-ops", "vercel --scope team_1 deploy --name unknown"),
-        ("auto-ops", "CLOUDFLARE_ACCOUNT_ID=cf-1 wrangler deploy"),
-        ("auto-ops", "oci --profile main compute instance update"),
-        (
-            "auto-ops",
-            "CLOUDFLARE_ACCOUNT_ID=cf-1 wrangler deploy --name api-gateway --name outside",
-        ),
+        ("auto-ops", "CLOUDFLARE_ACCOUNT_ID=cf-1 cf deploy"),
+        ("auto-ops", "CLOUDFLARE_ACCOUNT_ID=cf-1 cf deploy --name api-gateway --name outside"),
     ];
     for (mode, command) in cases {
         let decisions = evaluate(&fixture(mode), "windows", command);

@@ -128,6 +128,7 @@ pub fn run() {
             ipc::commands::set_distribute,
             ipc::commands::set_mode,
             ipc::commands::detect_cli_environment,
+            ipc::commands::start_cli_setup,
             ipc::commands::refresh_cli_scope,
             ipc::commands::set_cli_scope,
             ipc::commands::get_github_scope,

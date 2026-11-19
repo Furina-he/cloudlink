@@ -1,16 +1,14 @@
-// Run with `node --test metadata.test.cjs`. Every CLI call and HTTP response is in
-// memory; this harness never discovers binaries, reads login state or opens a socket.
-// The exceptions are the Windows transport tests, which reach only a loopback listener
-// that the test itself owns, and the Windows discovery test, which looks up a stand-in
-// command file in a temporary directory.
+// Run with `node --test metadata.test.cjs`. Every CLI call is answered in memory; this
+// harness never discovers binaries, reads login state or opens a socket. The exceptions
+// are the Windows discovery test, which looks up a stand-in command file in a temporary
+// directory, and the PowerShell tests, which run an injected fake command.
 const assert = require("node:assert/strict");
 const { mkdtempSync, readFileSync, rmSync, writeFileSync } = require("node:fs");
-const { createServer } = require("node:http");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { test } = require("node:test");
 const vm = require("node:vm");
-const { spawn, spawnSync } = require("node:child_process");
+const { spawnSync } = require("node:child_process");
 
 const source = readFileSync(join(__dirname, "metadata.js"), "utf8");
 const account = "11111111111111111111111111111111";
@@ -18,8 +16,8 @@ const zoneId = "22222222222222222222222222222222";
 const otherZoneId = "33333333333333333333333333333333";
 const privateMarker = "fake-credential-must-stay-private";
 
-async function bridge(operation, provider, replies, api) {
-  const calls = [], requests = [];
+async function bridge(operation, provider, replies) {
+  const calls = [];
   let output = "";
   let complete;
   const completed = new Promise(resolve => { complete = resolve; });
@@ -27,7 +25,7 @@ async function bridge(operation, provider, replies, api) {
     Buffer, URL, AbortSignal,
     process: {
       argv: ["node", operation, provider, "/isolated/cli", provider === "vercel" ? "team_current" : account],
-      env: { WRANGLER_WRITE_LOGS: "true" },
+      env: { CLOUDFLARE_ACCOUNT_ID: "stale", CF_SEND_TELEMETRY: "true" },
       stdout: { write(text) { output += text; complete(); } },
     },
     require(name) {
@@ -35,46 +33,29 @@ async function bridge(operation, provider, replies, api) {
       return { spawnSync(binary, args, options) {
         assert.equal(binary, "/isolated/cli");
         assert.equal(options.shell, false);
-        assert.equal(options.env.WRANGLER_WRITE_LOGS, "false");
-        assert.equal(options.env.WRANGLER_LOG_SANITIZE, "true");
-        assert.equal(options.env.VERCEL_TELEMETRY_DISABLED, "1");
+        assert.equal(options.env.CF_SEND_TELEMETRY, "false");
+        assert.equal(options.env.DO_NOT_TRACK, "1");
+        assert.equal(options.env.NO_COLOR, "1");
+        assert.equal(options.env.CLOUDFLARE_ACCOUNT_ID, provider === "vercel" ? "team_current" : account);
         calls.push([...args]);
         const reply = replies(args, calls.length);
         return { status: 0, stdout: JSON.stringify(reply), stderr: privateMarker, ...reply?.nativeResult };
       } };
-    },
-    async fetch(url, options) {
-      assert.equal(url.origin, "https://api.cloudflare.com");
-      assert.equal(options.method, "GET");
-      assert.equal(options.redirect, "error");
-      requests.push(new URL(url));
-      assert.ok(api, "unexpected HTTP request");
-      const reply = api(url, options);
-      return new Response(JSON.stringify(reply.body), { status: reply.status || 200 });
     },
   };
   vm.runInNewContext(source, context, { filename: "metadata.js", timeout: 1000 });
   await completed;
   assert.equal(output.includes(privateMarker), false);
   const metadata = JSON.parse(output.split("__CLOUDLINK_CLI_METADATA__").at(-1).trim());
-  return { metadata, calls, requests };
+  return { metadata, calls };
 }
 
-const success = (result, result_info) => ({ body: { success: true, result, result_info } });
-const token = () => ({ type: "oauth", token: privateMarker });
-// What the live API answers, checked against a real account on 2026-11-18: a login that
-// may not read DNS records gets 403, and Pages refuses a per_page above 10 with 400.
-const refused = { status: 403, body: { success: false, errors: [{ code: 10000, message: privateMarker }] } };
-const twoZones = () => success([zoneId, otherZoneId].map((id, i) => ({ id, name: "zone-" + i + ".example", account: { id: account } })));
+const twoZones = [zoneId, otherZoneId].map((id, i) => ({ id, name: "zone-" + i + ".example", account: { id: account } }));
 const unlinkedZones = [
   { id: "zone:" + zoneId, kind: "zone", name: "zone-0.example", addresses: [] },
   { id: "zone:" + otherZoneId, kind: "zone", name: "zone-1.example", addresses: [] },
 ];
-function pagesReply(url, total) {
-  if (url.searchParams.get("per_page") !== "10") return { status: 400, body: { success: false, errors: [{ code: 8000024 }] } };
-  const page = Number(url.searchParams.get("page")), from = (page - 1) * 10;
-  return success(Array.from({ length: Math.max(0, Math.min(10, total - from)) }, (_, i) => ({ name: "site-" + (from + i) })), { total_pages: null });
-}
+const failed = (message) => ({ nativeResult: { status: 1, stdout: "", stderr: message } });
 
 test("Vercel whoami team IDs survive projection and teams pagination deduplicates personal scopes", async () => {
   const result = await bridge("identity", "vercel", args => {
@@ -123,87 +104,91 @@ test("a malformed ID cannot carry nested credentials into the output envelope", 
   assert.deepEqual(result.metadata, { error: "cli-scope-failed" });
 });
 
-test("Cloudflare Workers use SinglePage even with more than 100 scripts and prefer immutable tags", async () => {
-  const result = await bridge("scope", "cloudflare", token, (url, options) => {
-    assert.equal(options.headers.Authorization, "Bearer " + privateMarker);
-    if (url.pathname.endsWith("/zones")) return success([]);
-    if (url.pathname.endsWith("/workers/scripts")) {
-      assert.equal(url.search, "");
-      return success(Array.from({ length: 120 }, (_, i) => ({ id: "script-" + i, tag: "stable-" + i })));
-    }
-    assert.ok(url.pathname.endsWith("/pages/projects"));
-    return success([]);
+test("Cloudflare Workers paginate at 100 per page and keep their names", async () => {
+  const result = await bridge("scope", "cloudflare", args => {
+    if (args[0] !== "workers") return [];
+    assert.equal(args[args.indexOf("--per-page") + 1], "100");
+    const page = Number(args[args.indexOf("--page") + 1]);
+    return page === 1
+      ? Array.from({ length: 100 }, (_, i) => ({ id: "script-" + i, name: "worker-" + i }))
+      : [{ id: "script-100", name: "last" }];
   });
-  assert.equal(result.metadata.items.length, 120);
-  assert.equal(result.metadata.items[0].id, "worker:stable-0");
-  assert.equal(result.requests.filter(url => url.pathname.endsWith("/workers/scripts")).length, 1);
+  assert.equal(result.metadata.items.length, 101);
+  assert.deepEqual(result.metadata.items[0], { id: "worker:script-0", kind: "worker", name: "worker-0" });
+  assert.equal(result.calls.filter(args => args[0] === "workers").length, 2);
 });
 
-test("Cloudflare Pages are listed ten per page, past ten requests, while total_pages is null", async () => {
-  const result = await bridge("scope", "cloudflare", token, url => url.pathname.endsWith("/pages/projects") ? pagesReply(url, 105) : success([]));
-  assert.equal(result.metadata.items.length, 105);
-  assert.equal(result.requests.filter(url => url.pathname.endsWith("/pages/projects")).length, 11);
-  assert.equal(result.requests.find(url => url.pathname.endsWith("/zones")).searchParams.get("per_page"), "100");
+test("Cloudflare Pages paginate at 100 per page", async () => {
+  const result = await bridge("scope", "cloudflare", args => {
+    if (args[0] !== "pages") return [];
+    assert.equal(args[args.indexOf("--per-page") + 1], "100");
+    const page = Number(args[args.indexOf("--page") + 1]);
+    return page === 1
+      ? Array.from({ length: 100 }, (_, i) => ({ name: "site-" + i }))
+      : [{ name: "site-100" }];
+  });
+  assert.equal(result.metadata.items.length, 101);
+  assert.equal(result.metadata.items[0].id, "pages:site-0");
+  assert.equal(result.calls.filter(args => args[0] === "pages").length, 2);
 });
 
 test("Cloudflare DNS records the login may not read leave zones unlinked without failing the scope", async () => {
-  const result = await bridge("scope", "cloudflare", token, url => {
-    if (url.pathname.endsWith("/zones")) return twoZones();
-    if (url.pathname.endsWith("/dns_records")) return refused;
-    return url.pathname.endsWith("/workers/scripts") ? success([{ id: "api", tag: "stable" }]) : success([]);
+  const result = await bridge("scope", "cloudflare", args => {
+    if (args[0] === "zones") return twoZones;
+    if (args[0] === "dns") return failed("403 Forbidden");
+    return args[0] === "workers" ? [{ id: "api", name: "api" }] : [];
   });
-  assert.deepEqual(result.metadata.items, [...unlinkedZones, { id: "worker:stable", kind: "worker", name: "api" }]);
+  assert.deepEqual(result.metadata.items, [...unlinkedZones, { id: "worker:api", kind: "worker", name: "api" }]);
   // One refusal settles it for the whole refresh.
-  assert.equal(result.requests.filter(url => url.pathname.endsWith("/dns_records")).length, 1);
+  assert.equal(result.calls.filter(args => args[0] === "dns").length, 1);
 });
 
 test("a DNS failure other than a refusal still fails the scope", async () => {
-  const result = await bridge("scope", "cloudflare", token, url => {
-    if (url.pathname.endsWith("/zones")) return twoZones();
-    return url.pathname.endsWith("/dns_records") ? { status: 500, body: { secret: privateMarker } } : success([]);
+  const result = await bridge("scope", "cloudflare", args => {
+    if (args[0] === "zones") return twoZones;
+    return args[0] === "dns" ? failed("connection reset by peer") : [];
   });
-  assert.deepEqual(result.metadata, { error: "cli-scope-failed" });
+  assert.deepEqual(result.metadata, { error: "cli-command-unsupported" });
 });
 
-test("optional Workers and Pages 404 responses are empty scopes", async () => {
-  const result = await bridge("scope", "cloudflare", token, url => url.pathname.endsWith("/zones")
-    ? success([]) : { status: 404, body: { secret: privateMarker } });
+test("empty Workers and Pages lists are empty scopes", async () => {
+  const result = await bridge("scope", "cloudflare", () => []);
   assert.deepEqual(result.metadata, { items: [] });
 });
 
-test("optional Workers 403 is a permission failure and does not query Pages", async () => {
-  const result = await bridge("scope", "cloudflare", token, url => url.pathname.endsWith("/zones")
-    ? success([]) : { status: 403, body: { secret: privateMarker } });
+test("a refused Workers list fails the scope and does not query Pages", async () => {
+  const result = await bridge("scope", "cloudflare", args => args[0] === "workers"
+    ? failed("403 Forbidden") : []);
   assert.deepEqual(result.metadata, { error: "cli-scope-permission" });
-  assert.equal(result.requests.some(url => url.pathname.endsWith("/pages/projects")), false);
+  assert.equal(result.calls.some(args => args[0] === "pages"), false);
 });
 
-test("Wrangler API key credentials stay in request headers and support metadata queries", async () => {
-  const result = await bridge("scope", "cloudflare", () => ({ type: "api_key", key: privateMarker, email: "me@example.com" }), (_url, options) => {
-    assert.equal(options.headers["X-Auth-Key"], privateMarker);
-    assert.equal(options.headers["X-Auth-Email"], "me@example.com");
-    assert.equal(options.headers.Authorization, undefined);
-    return success([]);
-  });
+test("the bound account reaches zones list as an argument and every cf call as the environment", async () => {
+  const result = await bridge("scope", "cloudflare", () => []);
   assert.deepEqual(result.metadata, { items: [] });
+  assert.deepEqual(result.calls[0], ["zones", "list", "--account-id", account, "--page", "1", "--per-page", "100"]);
 });
 
 test("Cloudflare DNS addresses remain projected public metadata within the bound account", async () => {
-  const result = await bridge("scope", "cloudflare", token, url => {
-    if (url.pathname.endsWith("/zones")) return success([{ id: zoneId, name: "example.com", account: { id: account }, secrets: privateMarker }]);
-    if (url.pathname.endsWith("/dns_records")) return success([{ content: url.searchParams.get("type") === "A" ? "203.0.113.10" : "2001:db8::1", secrets: privateMarker }]);
-    return success([]);
+  const result = await bridge("scope", "cloudflare", args => {
+    if (args[0] === "zones") return [{ id: zoneId, name: "example.com", account: { id: account }, secrets: privateMarker }];
+    if (args[0] === "dns") return [{ content: args[args.indexOf("--type") + 1] === "A" ? "203.0.113.10" : "2001:db8::1", secrets: privateMarker }];
+    return [];
   });
   assert.deepEqual(result.metadata.items, [{ id: "zone:" + zoneId, kind: "zone", name: "example.com", addresses: ["203.0.113.10", "2001:db8::1"] }]);
 });
 
-test("oversized HTTP responses fail with a fixed ID", async () => {
-  const result = await bridge("scope", "cloudflare", token, () => ({ body: { success: true, result: [], secret: privateMarker.repeat(40000) } }));
+test("more than 500 catalog items fail with a fixed ID", async () => {
+  const result = await bridge("scope", "cloudflare", args => {
+    if (args[0] !== "workers") return [];
+    const page = args[args.indexOf("--page") + 1];
+    return Array.from({ length: 100 }, (_, i) => ({ id: "worker-" + page + "-" + i, name: "worker" }));
+  });
   assert.deepEqual(result.metadata, { error: "cli-scope-failed" });
 });
 
 // These tests execute only PowerShell with NoProfile and an injected function; no
-// discovery or login-profile code is used. All Oracle config and HTTP reads are mocked.
+// discovery or login-profile code is used. All Oracle config and command replies are mocked.
 const powershellArgs = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"];
 const powershellEnv = { ...process.env, CLOUDLINK_HOME: "D:/isolated-cli-review", OCI_CLI_CONFIG_FILE: "D:/isolated-cli-review/config" };
 function powershellScript(operation, provider, fake) {
@@ -224,32 +209,6 @@ function powershellBridge(operation, provider, fake) {
   });
   assert.equal(result.error, undefined);
   return powershellMetadata(result.stdout, result.stderr);
-}
-// Runs the real Get-ClCf against a loopback listener standing in for the Cloudflare API,
-// so the request itself and its HTTP error mapping are exercised rather than replaced.
-async function powershellTransport(api) {
-  const requests = [];
-  const server = createServer((request, response) => {
-    const url = new URL(request.url, "http://127.0.0.1");
-    requests.push(url);
-    const reply = request.headers.authorization === "Bearer " + privateMarker ? api(url) : { status: 500, body: {} };
-    response.writeHead(reply.status || 200, { "Content-Type": "application/json" });
-    response.end(JSON.stringify(reply.body));
-  });
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  try {
-    const child = spawn("powershell.exe", [...powershellArgs, powershellScript("scope", "cloudflare", `
-$clCfApi='http://127.0.0.1:${server.address().port}'
-function ClFake { '{"type":"oauth","token":"${privateMarker}"}' }`)], { env: powershellEnv, timeout: 20000 });
-    let stdout = "", stderr = "";
-    child.stdout.setEncoding("utf8").on("data", text => { stdout += text; });
-    child.stderr.setEncoding("utf8").on("data", text => { stderr += text; });
-    await new Promise((resolve, reject) => { child.on("error", reject); child.on("close", resolve); });
-    return { metadata: powershellMetadata(stdout, stderr), requests };
-  } finally {
-    server.closeAllConnections();
-    await new Promise(resolve => server.close(resolve));
-  }
 }
 
 const windowsOnly = { skip: process.platform !== "win32" };
@@ -313,48 +272,61 @@ function ClFake {
   assert.equal(metadata.items.find(item => item.id === "ocid1.instance.test.no-network").address, null);
 });
 
-test("Windows Workers and Pages use their respective pagination contracts with API key credentials", windowsOnly, () => {
+test("Windows Cloudflare scope binds the account, keeps DNS failures optional and projects Pages sources", windowsOnly, () => {
   const metadata = powershellBridge("scope", "cloudflare", `
-function ClFake { '{"type":"api_key","key":"${privateMarker}","email":"me@example.com"}' }
-function Get-ClCf([string]$path,$query) {
-  if ($clAuthHeaders['X-Auth-Key'] -ne '${privateMarker}' -or $clAuthHeaders['X-Auth-Email'] -ne 'me@example.com') { throw 'bad-headers' }
-  if ($path -match '/workers/scripts$') {
-    if ($query.Count) { throw 'workers-must-be-single-page' }
-    return @{success=$true;result=@(0..119 | ForEach-Object { @{id=('script-'+$_);tag=('stable-'+$_)} })}
+function Get-ClCfList([string[]]$arguments,[int]$size=100) {
+  if ($arguments[0] -eq 'zones') {
+    if ($arguments.Count -ne 4 -or $arguments[1] -ne 'list' -or $arguments[2] -ne '--account-id' -or $arguments[3] -cne '${account}') { throw 'unsafe-zone-arguments' }
+    return ,@(@{id='${zoneId}';name='zone-0.example';account=@{id='${account}'}}, @{id='${otherZoneId}';name='zone-1.example';account=@{id='${account}'}})
   }
-  if ($path -match '/pages/projects$') {
-    if ($query.per_page -ne 10) { throw 'pages-must-be-ten-per-page' }
-    $result=@(if ($query.page -eq 1) { 0..9 | ForEach-Object { @{name=('page-'+$_)} } } else { @{name='last-page'} })
-    return @{success=$true;result=$result;result_info=@{total_pages=$null}}
+  if ($arguments[0] -eq 'dns') {
+    if ($arguments[1] -ne 'records' -or $arguments[2] -ne 'list' -or $arguments[3] -ne '--zone' -or $arguments[4] -notin @('${zoneId}','${otherZoneId}') -or $arguments[5] -ne '--type') { throw 'unsafe-dns-arguments' }
+    throw 'cli-scope-permission'
   }
-  return @{success=$true;result=@();result_info=@{total_pages=1}}
-}`);
-  assert.equal(metadata.items.length, 131);
-  assert.equal(metadata.items[0].id, "worker:stable-0");
-});
-
-test("Windows transport keeps the catalog when DNS records are refused and lists Pages ten per page", windowsOnly, async () => {
-  const { metadata, requests } = await powershellTransport(url => {
-    if (url.pathname === "/zones") return twoZones();
-    if (url.pathname.endsWith("/dns_records")) return refused;
-    if (url.pathname.endsWith("/workers/scripts")) return success([{ id: "api", tag: "stable" }]);
-    return pagesReply(url, 105);
-  });
+  if ($arguments[0] -eq 'workers') { return ,@(@{id='api';name='api'}) }
+  if ($arguments[0] -eq 'pages') { return ,@(@{name='web';source=@{type='github';config=@{owner='acme';repo_name='site';repo_id='456';secret='${privateMarker}'}}}) }
+  throw 'unexpected-command'
+}
+`);
   assert.deepEqual(metadata.items.filter(item => item.kind === "zone"), unlinkedZones);
-  assert.deepEqual(metadata.items.filter(item => item.kind === "worker"), [{ id: "worker:stable", kind: "worker", name: "api" }]);
-  assert.equal(metadata.items.filter(item => item.kind === "pages").length, 105);
-  assert.equal(requests.filter(url => url.pathname.endsWith("/dns_records")).length, 1);
-  assert.equal(requests.filter(url => url.pathname.endsWith("/pages/projects")).length, 11);
+  assert.deepEqual(metadata.items.find(item => item.kind === "worker"), { id: "worker:api", kind: "worker", name: "api" });
+  assert.deepEqual(metadata.items.find(item => item.kind === "pages").repoSource, { host: "github.com", owner: "acme", repo: "site", repoId: "456" });
 });
 
-test("Windows transport tells a refused catalog from a failed one and treats missing Workers and Pages as empty", windowsOnly, async () => {
-  const denied = await powershellTransport(() => refused);
-  assert.deepEqual(denied.metadata, { error: "cli-scope-permission" });
-  assert.equal(denied.requests.length, 1);
-  const failed = await powershellTransport(() => ({ status: 500, body: { secret: privateMarker } }));
-  assert.deepEqual(failed.metadata, { error: "cli-scope-failed" });
-  const absent = await powershellTransport(url => url.pathname === "/zones" ? success([]) : { status: 404, body: { secret: privateMarker } });
-  assert.deepEqual(absent.metadata, { items: [] });
+test("Windows Cloudflare lists ask for page one hundred per page and stop on a short page", windowsOnly, () => {
+  const metadata = powershellBridge("scope", "cloudflare", `
+function Invoke-ClJson([string[]]$arguments,[bool]$allowUnavailable=$false) {
+  if ($arguments[0] -eq 'zones') { return ,@(@{id='${zoneId}';name='example.com';account=@{id='${account}'}}) }
+  if ($arguments[0] -eq 'dns') { return ,@() }
+  if ($arguments[0] -eq 'pages') { return ,@() }
+  if ($arguments[0] -eq 'workers') {
+    if ($arguments[-2] -ne '--per-page' -or $arguments[-1] -ne '100') { throw 'wrong-size' }
+    $page=[int]$arguments[$arguments.IndexOf('--page')+1]
+    if ($page -eq 1) { return ,@(0..99 | ForEach-Object { @{id=('w'+$_);name=('w'+$_)} }) }
+    if ($page -eq 2) { return ,@(@{id='last';name='last'}) }
+    throw 'extra-page'
+  }
+  throw 'unexpected-command'
+}
+`);
+  assert.equal(metadata.items.filter(item => item.kind === "worker").length, 101);
+  assert.equal(metadata.items.at(-1).id, "worker:last");
+});
+
+test("Windows catalog responses over five hundred items stop at the limit", windowsOnly, () => {
+  const metadata = powershellBridge("scope", "cloudflare", `
+function Invoke-ClJson([string[]]$arguments,[bool]$allowUnavailable=$false) {
+  if ($arguments[0] -eq 'zones') { return ,@() }
+  if ($arguments[0] -eq 'dns') { return ,@() }
+  if ($arguments[0] -eq 'pages') { return ,@() }
+  if ($arguments[0] -eq 'workers') {
+    $page=$arguments[$arguments.IndexOf('--page')+1]
+    return ,@(0..99 | ForEach-Object { @{id=('w'+$page+'-'+$_);name='worker'} })
+  }
+  throw 'unexpected-command'
+}
+`);
+  assert.deepEqual(metadata, { error: "cli-scope-failed" });
 });
 
 test("Windows native stderr cannot contaminate a successful JSON response", windowsOnly, () => {
@@ -368,7 +340,7 @@ function ClFake { & $env:ComSpec /D /C 'echo {} & echo ${privateMarker} 1>&2' }
 test("Windows discovery finds a CLI whose directory joined PATH after the parent process started", windowsOnly, () => {
   const dir = mkdtempSync(join(tmpdir(), "cloudlink-cli-path-"));
   try {
-    writeFileSync(join(dir, "wrangler.cmd"), "@exit /b 0\r\n");
+    writeFileSync(join(dir, "cf.cmd"), "@exit /b 0\r\n");
     const root = process.env.SystemRoot || "C:\\Windows";
     // What a process started before the install still holds: system directories only.
     const env = Object.fromEntries(Object.entries(powershellEnv).filter(([name]) => name.toLowerCase() !== "path"));
@@ -379,11 +351,13 @@ test("Windows discovery finds a CLI whose directory joined PATH after the parent
       assert.equal(result.error, undefined);
       return powershellMetadata(result.stdout, result.stderr);
     };
-    assert.deepEqual(discover("@()"), { installed: false });
+    assert.deepEqual(discover("@()"), { installed: false, nodeVersion: "" });
     // The registry now lists the new directory; a scope without a PATH value reads as null.
     const found = discover(`@('${dir.replaceAll("'", "''")}', $null)`);
     assert.equal(found.installed, true);
-    assert.equal(found.path.toLowerCase(), join(dir, "wrangler.cmd").toLowerCase());
+    assert.equal(found.path.toLowerCase(), join(dir, "cf.cmd").toLowerCase());
+    // node is absent from the stripped PATH, so the version stays empty for the caller to ignore.
+    assert.equal(found.nodeVersion, "");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -458,8 +432,9 @@ test("Vercel Git binding projection keeps public repository identity, never hook
 });
 
 test("Cloudflare Pages repository source is public evidence and not a deployment token", async () => {
-  const result = await bridge("scope", "cloudflare", token, url => url.pathname.endsWith("/pages/projects")
-    ? success([{name:"web",source:{type:"github",config:{owner:"acme",repo_name:"site",repo_id:"456",secret:privateMarker}},deployment_configs:{production:{env_vars:{secret:privateMarker}}}}]) : success([]));
+  const result = await bridge("scope", "cloudflare", args => args[0] === "pages"
+    ? [{name:"web",source:{type:"github",config:{owner:"acme",repo_name:"site",repo_id:"456",secret:privateMarker}},deployment_configs:{production:{env_vars:{secret:privateMarker}}}}]
+    : []);
   assert.deepEqual(result.metadata.items[0].repoSource,{host:"github.com",owner:"acme",repo:"site",repoId:"456"});
 });
 
@@ -480,10 +455,9 @@ function ClFake { '{"projects":[{"id":"prj_app","name":"App","link":{"type":"git
 
 test("Windows Pages source excludes deployment config contents", windowsOnly, () => {
   const metadata = powershellBridge("scope", "cloudflare", `
-function ClFake { '{"type":"oauth","token":"${privateMarker}"}' }
-function Get-ClCf([string]$path,$query) {
- if ($path -match '/pages/projects$') {return @{success=$true;result=@(@{name='web';source=@{type='github';config=@{owner='acme';repo_name='site';repo_id='456';secret='${privateMarker}'}};deployment_configs=@{secret='${privateMarker}'}});result_info=@{total_pages=1}}}
- return @{success=$true;result=@();result_info=@{total_pages=1}}
+function Get-ClCfList([string[]]$arguments,[int]$size=100) {
+ if ($arguments[0] -eq 'pages') { return ,@(@{name='web';source=@{type='github';config=@{owner='acme';repo_name='site';repo_id='456';secret='${privateMarker}'}};deployment_configs=@{secret='${privateMarker}'}}) }
+ return ,@()
 }
 `);
   assert.deepEqual(metadata.items[0].repoSource,{host:"github.com",owner:"acme",repo:"site",repoId:"456"});

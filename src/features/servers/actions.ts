@@ -5,10 +5,10 @@ import type { Asset, CliAsset, CliProvider, EnvId, IpcError, ServerAsset } from 
 import { toast } from "@/components/ui/toast"
 import { copy, ipcErrorText } from "@/lib/copy"
 import { deliveryOutcome, deliveryProblemsText } from "@/lib/deliveryFeedback"
-import { installCommand, loginCommand } from "@/lib/cliProviders"
+import { installMethods } from "@/lib/cliProviders"
 import { compiledDir } from "@/lib/paths"
 import { ipc } from "@/lib/ipc"
-import { cliEnvStatus, handleOf, selectCanDistribute, useAssetStore } from "@/stores/assets"
+import { handleOf, selectCanDistribute, useAssetStore } from "@/stores/assets"
 import { useCliStore } from "@/stores/cli"
 import { announceTest, useConnectionStore } from "@/stores/connection"
 import { useDeliveryStore } from "@/stores/deliveries"
@@ -204,20 +204,18 @@ export const serverActions = {
     useCliStore.getState().detect(asset.cliProvider, asset.id).catch(toastError)
   },
 
-  /** 在对应运行环境打开终端（F-104 AC2）：没装时预填安装命令，否则预填登录命令；切回窗口时自动重新检测 */
+  /**
+   * 资源行与详情的「去安装／去登录」（F-104 AC2，P9b）：后端按环境与安装方式查固定表，
+   * 在可见终端里依次安装并登录；等待状态由 `cli-setup://changed` 推进，不依赖窗口焦点
+   */
   openCliTerminal(asset: CliAsset, envId: EnvId) {
-    const state = asset.cli.envStates[envId]
-    const command = state && cliEnvStatus(state) === "not-installed" ? installCommand(asset.cliProvider, envId) : loginCommand(asset.cliProvider)
-    serverActions.openTerminal(envId, command, asset.cliProvider, asset.id)
+    const method = installMethods(asset.cliProvider, envId)[0]
+    serverActions.startCliSetup(asset.cliProvider, envId, method.id, asset.id)
   },
 
   /** assetId 为 null 表示新建向导里还没有资源 */
-  openTerminal(envId: EnvId, command: string, provider: CliProvider, assetId: string | null) {
-    useCliStore.getState().awaitFocus(provider, assetId)
-    ipc
-      .openEnvTerminal({ envId, command })
-      .then(() => toast.add({ title: copy.cli.terminalOpened(copy.env.long(envId)) }))
-      .catch(toastError)
+  startCliSetup(provider: CliProvider, envId: EnvId, method: string, assetId: string | null) {
+    useCliStore.getState().startSetup(provider, envId, method, assetId).catch(toastError)
   },
 
   copyAlias(asset: Asset) {

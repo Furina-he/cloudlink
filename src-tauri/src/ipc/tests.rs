@@ -84,13 +84,9 @@ impl Runner for MetadataRunner {
         let output = match query {
             Query::Discover { provider } => json!({
                 "installed": true,
-                "path": env.native_in_home(&["fixture-cli", if env.is_windows() {
-                    "wrangler.cmd"
-                } else {
-                    provider.binary().as_str()
-                }]),
+                "path": env.native_in_home(&["fixture-cli", provider.binary().as_str()]),
             }),
-            Query::Version { .. } => json!({ "version": "4.157.0" }),
+            Query::Version { .. } => json!({ "version": "1.0.0" }),
             Query::Identity {
                 provider: CliProvider::Cloudflare,
                 ..

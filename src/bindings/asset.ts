@@ -3,7 +3,7 @@ import type { EnvId } from "./env"
 import type { GithubConfig, GithubCreateInput } from "./github"
 
 export type AssetType = "vps" | "cli"
-/** 云平台 CLI：cloudflare（wrangler）、vercel（vercel）、oracle（oci）。v0.1 每家一个资源，标识就是这个值（F-101 AC1） */
+/** 云平台 CLI：cloudflare（cf）、vercel（vercel）、oracle（oci）。v0.1 每家一个资源，标识就是这个值（F-101 AC1） */
 export type CliProvider = "cloudflare" | "vercel" | "oracle" | "github"
 export type FieldSource = "manual" | "probe"
 export type ProbeState = "never" | "ok" | "stale" | "failed"
@@ -172,6 +172,32 @@ export interface CliEnvState {
   checkedAt: string
 }
 
+/** 一键安装并登录（F-104 AC2，P9b）：前端只传这三个定位值，命令由 Rust 查固定表 */
+export interface CliSetupRequest {
+  provider: CliProvider
+  envId: EnvId
+  method: string
+}
+
+/** 返回设置 ID 和初始阶段，避免事件先于 IPC 返回时界面闪空 */
+export interface CliSetupStarted {
+  id: string
+  state: CliSetupState
+  step?: CliSetupStep
+}
+
+export type CliSetupState = "waiting-install" | "waiting-login" | "ready" | "failed" | "timed-out"
+export type CliSetupStep = "install" | "login"
+
+/** `cli-setup://changed`：只报阶段，是否登录成功仍以重新检测为准 */
+export interface CliSetupChangedEvent {
+  id: string
+  provider: CliProvider
+  envId: EnvId
+  state: CliSetupState
+  step?: CliSetupStep
+}
+
 export type CliScopeKind = "zone" | "worker" | "pages" | "project" | "instance" | "repo"
 
 /** GitHub 仓库的可见性（F-110 AC1） */
@@ -195,7 +221,7 @@ export interface CliScopeItem {
 }
 
 export interface CliInfo {
-  binary: "wrangler" | "vercel" | "oci" | "gh"
+  binary: "cf" | "vercel" | "oci" | "gh"
   /** 按已启用 Agent 所在的运行环境记录 */
   envStates: Partial<Record<EnvId, CliEnvState>>
   scope: CliScopeItem[]

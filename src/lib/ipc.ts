@@ -13,6 +13,8 @@ import type {
   CliEnvState,
   CliProvider,
   CliScopeItem,
+  CliSetupRequest,
+  CliSetupStarted,
   CompilePreview,
   CompileStatus,
   ConnectionTestRequest,
@@ -98,6 +100,9 @@ export const ipc = {
     assetId?: string
     account?: string
   }) => invoke<CliEnvStates>("detect_cli_environment", { req }),
+  /** F-104 AC2（P9b）：在可见终端里按固定命令表安装并登录；进度走 `cli-setup://changed` */
+  startCliSetup: (req: CliSetupRequest) =>
+    invoke<CliSetupStarted>("start_cli_setup", { req }),
   /** F-104 AC3：拉取账号下的可选资源；带 assetId 时保留已勾选的项并更新这项资源 */
   refreshCliScope: (req: {
     provider: CliProvider
@@ -113,9 +118,6 @@ export const ipc = {
   listExecutionRequests: () => invoke<ExecutionRequest[]>("list_execution_requests"),
   respondExecution: (req: RespondExecutionRequest) => invoke<ExecutionRequest>("respond_execution", { req }),
   cancelExecution: (req: CancelExecutionRequest) => invoke<ExecutionRequest>("cancel_execution", { req }),
-  /** F-104 AC2：在对应运行环境打开终端，预填安装或登录命令 */
-  openEnvTerminal: (req: { envId: EnvId; command: string }) =>
-    invoke<void>("open_env_terminal", { req }),
   startProbe: (assetId: string) =>
     invoke<{ runId: string }>("start_probe", { assetId }),
   cancelProbe: (runId: string) => invoke<void>("cancel_probe", { runId }),

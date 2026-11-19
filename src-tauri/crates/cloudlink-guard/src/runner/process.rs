@@ -83,7 +83,7 @@ pub(super) fn for_program(route: &Value, path: &Path) -> Result<String> {
 
 fn npm_shim(program: &Path, provider: &str, node: Option<&str>) -> Result<(PathBuf, Vec<String>)> {
     let suffix = match provider {
-        "cloudflare" => "node_modules/wrangler/bin/wrangler.js",
+        "cloudflare" => "node_modules/cf/bin/cf",
         "vercel" => "node_modules/vercel/dist/index.js",
         _ => return Err(Error::new("cli-command-unsupported")),
     };
@@ -254,6 +254,13 @@ pub(super) fn spec(
         }
     } else if !tool_git {
         args = bound_args(route, &args);
+        // Only reached with a request that already passed judging and approval.
+        if route["provider"] == "cloudflare"
+            && guard_rules::cf_destructive(&args)
+            && !args.iter().any(|arg| arg == "--force")
+        {
+            args.push("--force".into());
+        }
     }
     if manifest["isolated"] == true && is_ssh {
         let position = args
@@ -295,11 +302,7 @@ pub(super) fn spec(
     }
     environment.push(("CI".into(), "1".into()));
     environment.push(("GH_PROMPT_DISABLED".into(), "1".into()));
-    environment.push(("WRANGLER_SEND_METRICS".into(), "false".into()));
-    environment.push((
-        "WRANGLER_LOG_PATH".into(),
-        if cfg!(windows) { "NUL" } else { "/dev/null" }.into(),
-    ));
+    environment.push(("CF_SEND_TELEMETRY".into(), "false".into()));
     #[cfg(windows)]
     if let Some(distro) = route["distro"].as_str() {
         let working = for_program(route, &cwd)?;
@@ -520,6 +523,11 @@ fn drive(
                     }
                 } else {
                     let result = if stderr {
+                        // Keep a bounded tail to recognize a non-interactive `Aborted.`.
+                        if output.stderr.len() < 4096 {
+                            let keep = bytes.len().min(4096 - output.stderr.len());
+                            output.stderr.extend_from_slice(&bytes[..keep]);
+                        }
                         std::io::stderr().lock().write_all(&bytes)
                     } else {
                         std::io::stdout().lock().write_all(&bytes)

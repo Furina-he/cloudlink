@@ -223,6 +223,7 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
   const [profileOpen, setProfileOpen] = useState(false)
   const detection = useCliStore((s) => s.byProvider[asset.cliProvider])
   const github = useGithubStore((s) => s.byKey[asset.id]) ?? emptyGithubScope
+  const setup = useCliStore((s) => s.setups[asset.cliProvider])
   const detecting = asset.cliProvider === "github" ? github.loading : !!detection?.detecting
   const refresh = () => {
     if (asset.cliProvider === "github") {
@@ -259,7 +260,7 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
           <GithubSnapshotNote config={asset.github} error={github.error} loading={github.loading} />
           <GithubReposGroup asset={asset} />
         </> : <AccountGroup asset={asset} onScope={() => setScopeOpen(true)} />}
-        {/* 「重新检测」只在标题行：这里再放一个是重复的；登录后切回窗口也会自动刷新 */}
+        {/* 「重新检测」只在标题行：这里再放一个是重复的；一键安装登录由后端轮询并自动刷新 */}
         <ListGroup id="detail-envs" title={copy.detail.groups.envs}>
           <div className="flex flex-col gap-2 px-3.5 py-3">
             <CliEnvList
@@ -267,9 +268,10 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
               envStates={asset.cli.envStates}
               detecting={detecting}
               showDetail
-              onOpenTerminal={(envId, command) => serverActions.openTerminal(envId, command, asset.cliProvider, asset.id)}
+              setup={setup}
+              onSetup={(envId, method) => serverActions.startCliSetup(asset.cliProvider, envId, method, asset.id)}
             />
-            <p className="text-xs text-muted-foreground">{copy.cli.autoRefreshHint}</p>
+            <p className="text-xs text-muted-foreground">{copy.cli.setupNoteIdle}</p>
           </div>
         </ListGroup>
         <ListGroup id="detail-knowledge" title={copy.detail.groups.knowledge}>

@@ -13,6 +13,12 @@ mod ssh;
 
 pub use execution::{evaluate_execution, managed_runner_invocation, runtime_modification};
 
+/// Fixed check used by the runner to supply `--force` only to approved destructive
+/// Cloudflare commands, so non-interactive `cf` cannot stop at `Aborted.`.
+pub fn cf_destructive(args: &[String]) -> bool {
+    cli::cf_destructive_words(args)
+}
+
 use serde_json::{Value, json};
 
 pub use redact::redact;
@@ -173,6 +179,13 @@ fn inspect(resources: &[Value], env_id: &str, text: &str, outer_unsafe: bool, de
                     &critical,
                     unsafe_shell || invocation.unsupported || shell::writes_redirect(simple),
                 );
+                // Forwarding, ProxyCommand/HostName and other unsupported client options
+                // are SSH configuration changes, not ordinary unparsed commands.
+                let reason = if invocation.unsupported && reason != Some("interactive") {
+                    Some("ssh-config")
+                } else {
+                    reason
+                };
                 push(out, resource, reason);
             }
         } else if ["scp", "sftp", "rsync"].contains(&binary) {
@@ -210,7 +223,11 @@ fn inspect(resources: &[Value], env_id: &str, text: &str, outer_unsafe: bool, de
                 scoped["envId"] = Value::String(env_id.into());
                 let reason = github::judge(&scoped, &words[1..], (binary == "git").then_some("git"));
                 let reason = if reason.is_none() && unsafe_shell {
-                    Some("unparsed")
+                    if resource["mode"] == "auto-ops" {
+                        ssh::conservative_scan(text)
+                    } else {
+                        Some("unparsed")
+                    }
                 } else {
                     reason
                 };
@@ -292,7 +309,9 @@ pub fn deny_output(decisions: &[Decision]) -> Option<Value> {
         "interactive" => "Interactive SSH is not supported. Use the resource's CloudLink runner with an explicit remote command.",
         "unparsed" => "CloudLink could not classify this command. Use the resource's CloudLink runner for one-time approval when the target is explicit; uncertain targets remain denied.",
         "critical-service" | "ssh-config" | "firewall" | "host-reboot" | "volume-delete" | "data-delete"
-        | "cli-destroy" | "github-dangerous" => "This high-risk change requires one-time approval through the resource's CloudLink runner in either mode.",
+        | "cli-destroy" | "github-delete" | "github-dangerous" | "opaque-script" => {
+            "This change requires one-time approval through the resource's CloudLink runner in either mode."
+        }
         "cli-identity" => "The actual CLI identity could not be verified; changing accounts is not authorization.",
         _ => "CloudLink could not safely authorize this command. Do not bypass the block.",
     };
@@ -310,23 +329,23 @@ pub fn rules() -> Value {
             "systemctl status/is-active/list-units/--failed", "journalctl (no mutation options)",
             "docker ps/logs/images/version/info; docker stats --no-stream", "docker compose ps/logs/config --services",
             "docker exec <container> <inspection command>", "nginx -t; openssl s_client; openssl x509 -noout; curl -sI",
-            "wrangler whoami/tail/deployments list/kv key list/d1 info; wrangler d1 execute --command SELECT",
+            "cf auth whoami/scopes/list; cf zones list; cf workers list; cf pages list; cf … list/get (bound account and selected scope)",
             "vercel whoami/ls/list/inspect/logs", "oci ... get/list (bound account and selected scope)",
         ],
         "standardDeny": [
             {"id":"volume-delete", "examples":["docker compose down -v", "docker volume rm/prune", "docker system prune --volumes"]},
             {"id":"data-delete", "examples":["rm -r /var/lib", "mkfs", "dd of=/dev/...", "wipefs", "dropdb", "redis-cli FLUSHALL"]},
+            {"id":"cli-destroy", "examples":["cf … delete/remove/purge/destroy/terminate", "vercel project rm", "vercel domains rm", "oci compute instance terminate", "oci bv volume delete"]},
+            {"id":"github-delete", "examples":["git push --force <non-default branch>", "gh api -X DELETE", "gh release delete", "gh run delete"]},
             {"id":"host-reboot", "examples":["reboot", "shutdown", "systemctl poweroff"]},
             {"id":"firewall", "examples":["iptables -A", "nft add", "ufw allow", "firewall-cmd --add-port"]},
-            {"id":"ssh-config", "examples":["modify sshd_config/authorized_keys", "systemctl restart sshd"]},
+            {"id":"ssh-config", "examples":["modify sshd_config/authorized_keys", "systemctl stop sshd"]},
             {"id":"critical-service", "examples":["docker stop/restart/kill/rm <critical service>"]},
-            {"id":"cli-destroy", "examples":["wrangler d1 delete", "wrangler r2 bucket delete", "vercel project rm", "vercel domains rm", "oci compute instance terminate", "oci bv volume delete"]},
+            {"id":"opaque-script", "examples":["curl … | sh", "wget -O- … | bash", "base64 -d … | sh", "eval \"$(…)\""]},
         ],
         "alwaysDeny": [
             {"id":"credential-read", "examples":[".env; *.pem; *.key; id_*; /etc/shadow; ~/.ssh/", "docker inspect", "env", "printenv"]},
-            {"id":"cli-env-export", "examples":["vercel env pull/list", "vercel pull", "wrangler secret get/read/list", "oci iam credentials; oci secrets secret-bundle get"]},
-            {"id":"cli-account", "examples":["cloud commands with a missing or different bound account"]},
-            {"id":"cli-scope", "examples":["explicit resources outside the selected scope"]},
+            {"id":"cli-env-export", "examples":["vercel env pull/list", "vercel pull", "cf … tokens create/update/rotate", "cf … secrets get", "oci iam credentials; oci secrets secret-bundle get"]},
         ],
     })
 }

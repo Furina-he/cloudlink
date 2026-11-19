@@ -449,7 +449,7 @@ fn git_judge(github: &Value, args: &[String]) -> Option<&'static str> {
     Some(if github.get("mode").is_none() {
         "cli-scope"
     } else {
-        "github-dangerous"
+        "github-delete"
     })
 }
 
@@ -485,7 +485,7 @@ pub fn judge(resource: &Value, args: &[String], tool: Option<&str>) -> Option<&'
     }
     if tool == Some("git") {
         let reason = git_judge(github, args);
-        if reason == Some("github-dangerous")
+        if reason == Some("github-delete")
             && let Err(reason) = target(resource, args, tool)
         {
             return Some(reason);
@@ -555,7 +555,7 @@ pub fn judge(resource: &Value, args: &[String], tool: Option<&str>) -> Option<&'
                 if !parts.contains(&"heads") || repos(github).any(|repo| repo["defaultBranch"] == branch) {
                     return Some("github-default-force");
                 }
-                return Some("github-dangerous");
+                return Some("github-delete");
             }
         }
     }
@@ -576,8 +576,12 @@ pub fn judge(resource: &Value, args: &[String], tool: Option<&str>) -> Option<&'
             return (!api_read(&parts)).then_some("unparsed");
         }
         // An arbitrary write endpoint is not an established routine operation.
-        // The explicit repo target is known, so both modes can ask rather than guess.
-        return Some(if method == "DELETE" { "github-dangerous" } else { "unparsed" });
+        // Deletion content is always an approval candidate; other writes follow the
+        // mode after the explicit repo target has been verified.
+        if method == "DELETE" {
+            return Some("github-delete");
+        }
+        return if auto_ops { None } else { Some("unparsed") };
     }
     let query = matches!(
         (verb, sub),
@@ -611,12 +615,14 @@ pub fn judge(resource: &Value, args: &[String], tool: Option<&str>) -> Option<&'
     if verb == "--version" || verb == "version" {
         return None;
     }
-    let dangerous = matches!(
-        (verb, sub),
-        ("repo", "archive" | "edit") | ("release", "delete") | ("run", "delete") | ("workflow", "disable")
-    ) || verb == "pr" && args.iter().any(|word| word == "--admin");
+    let deletion = matches!((verb, sub), ("release", "delete") | ("run", "delete"));
+    if deletion {
+        return Some("github-delete");
+    }
+    let dangerous = matches!((verb, sub), ("repo", "archive" | "edit") | ("workflow", "disable"))
+        || verb == "pr" && args.iter().any(|word| word == "--admin");
     if dangerous {
-        return Some("github-dangerous");
+        return (!auto_ops).then_some("github-dangerous");
     }
     let write = matches!(
         (verb, sub),
@@ -630,9 +636,15 @@ pub fn judge(resource: &Value, args: &[String], tool: Option<&str>) -> Option<&'
             | ("label", "create" | "edit")
     );
     if write {
-        return if routine_options(args) { (!auto_ops).then_some("cli-write") } else { Some("unparsed") };
+        return if routine_options(args) {
+            (!auto_ops).then_some("cli-write")
+        } else if auto_ops {
+            None
+        } else {
+            Some("unparsed")
+        };
     }
-    Some("unparsed")
+    if auto_ops { None } else { Some("unparsed") }
 }
 
 #[cfg(test)]
@@ -678,7 +690,15 @@ mod tests {
         );
         assert_eq!(
             judge(&resource("auto-ops"), &args(&["repo", "archive", "acme/app"]), None),
+            None
+        );
+        assert_eq!(
+            judge(&resource("confirm-changes"), &args(&["repo", "archive", "acme/app"]), None),
             Some("github-dangerous")
+        );
+        assert_eq!(
+            judge(&resource("auto-ops"), &args(&["release", "delete", "1", "-R", "acme/app"]), None),
+            Some("github-delete")
         );
     }
     #[test]
@@ -826,7 +846,7 @@ mod tests {
                 &args(&["push", "--force", "origin", "HEAD:feature"]),
                 Some("git")
             ),
-            Some("github-dangerous")
+            Some("github-delete")
         );
         assert_eq!(
             judge(
@@ -834,7 +854,7 @@ mod tests {
                 &args(&["push", "--force", "origin", "HEAD:feature"]),
                 Some("git")
             ),
-            Some("github-dangerous")
+            Some("github-delete")
         );
         assert_eq!(
             judge(&resource("confirm-changes"), &args(&["push", "origin", "main"]), Some("git")),

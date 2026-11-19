@@ -4,7 +4,8 @@ use crate::shell;
 
 pub(crate) fn provider(binary: &str) -> Option<&'static str> {
     match binary {
-        "wrangler" => Some("cloudflare"),
+        // `cf` and `cloudflare` are the two names installed by the same package.
+        "cf" | "cloudflare" => Some("cloudflare"),
         "vercel" | "vc" => Some("vercel"),
         "oci" => Some("oracle"),
         _ => None,
@@ -129,51 +130,109 @@ pub(crate) fn no_contact(words: &[String]) -> bool {
 pub(crate) fn identity_only(provider: &str, words: &[String]) -> bool {
     let positional = positional(words);
     match provider {
-        "cloudflare" | "vercel" => positional.as_slice() == ["whoami"],
+        "cloudflare" => {
+            matches!(
+                positional.as_slice(),
+                ["auth", "whoami"] | ["auth", "scopes", ..] | ["auth", "list"] | ["cli", "search", ..] | ["schema", ..] | ["docs", "search", ..]
+            )
+        }
+        "vercel" => positional.as_slice() == ["whoami"],
         _ => false,
     }
 }
 
-fn is_select(sql: &str) -> bool {
-    // Accept one literal SELECT. Comments/stacked statements and mutating pragmas are opaque.
-    let sql = sql.trim().trim_end_matches(';').trim();
-    let upper = sql.to_ascii_uppercase();
-    upper.starts_with("SELECT ")
-        && !sql.contains(';')
-        && !sql.contains("--")
-        && !sql.contains("/*")
-        && ![
-            "INSERT",
-            "UPDATE",
-            "DELETE",
-            "DROP",
-            "ALTER",
-            "ATTACH",
-            "DETACH",
-            "PRAGMA",
-            "INTO",
-            "LOAD_EXTENSION",
-        ]
-        .iter()
-        .any(|word| {
-            upper
-                .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-                .any(|part| part == *word)
+const CF_VALUE_OPTIONS: &[&str] = &[
+    "--zone", "-z", "--account-id", "--account-name", "--profile", "--page", "--per-page", "--type",
+    "--name", "--content", "--worker", "--project-name", "--store-id", "--secret-id", "--token-id",
+    "--permission-group-ids", "--policies", "--value", "--body", "--file", "--title", "--description",
+    "--source", "--skip", "--env", "--environment", "--script-name", "--namespace", "--dispatch-namespace",
+    "--limit", "--order", "--direction", "--match", "--status", "--format", "--output", "--filter",
+    "--since", "--until", "--id", "--deployment-id", "--stage", "--zone-id", "--namespace-id",
+    "--database-id", "--secret-name", "--key-name", "--record-id", "--ruleset-id", "--policy-id",
+];
+
+fn cf_positional(words: &[String]) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut i = 1;
+    while i < words.len() {
+        let word = words[i].as_str();
+        if word == "--" {
+            out.extend(words[i + 1..].iter().map(String::as_str));
+            break;
+        }
+        if word.starts_with('-') {
+            let key = word.split_once('=').map_or(word, |(key, _)| key);
+            if !word.contains('=') && CF_VALUE_OPTIONS.contains(&key) {
+                i += 1;
+            }
+        } else {
+            out.push(word);
+        }
+        i += 1;
+    }
+    out
+}
+
+fn cf_option_values<'a>(words: &'a [String], names: &[&str]) -> Vec<&'a str> {
+    let mut values = Vec::new();
+    for (i, word) in words.iter().enumerate() {
+        if names.contains(&word.as_str()) {
+            if let Some(value) = words.get(i + 1) {
+                values.push(value.as_str());
+            }
+        } else if let Some((key, value)) = word.split_once('=')
+            && names.contains(&key)
+        {
+            values.push(value);
+        }
+    }
+    values
+}
+
+fn cf_scope_match(resource: &Value, target: &str) -> bool {
+    let bare = target
+        .strip_prefix("zone:")
+        .or_else(|| target.strip_prefix("worker:"))
+        .or_else(|| target.strip_prefix("pages:"))
+        .unwrap_or(target);
+    resource.get("scope").and_then(Value::as_array).is_some_and(|scope| {
+        scope.iter().any(|item| {
+            item.get("id").and_then(Value::as_str).is_some_and(|id| {
+                id == target || id == format!("zone:{bare}") || id == format!("worker:{bare}") || id == format!("pages:{bare}")
+            }) || item.get("name").and_then(Value::as_str) == Some(bare)
         })
+    })
+}
+
+fn cf_destructive(args: &[&str]) -> bool {
+    args.iter()
+        .any(|word| ["delete", "remove", "purge", "destroy", "terminate"].contains(word))
+}
+
+pub(crate) fn cf_destructive_words(words: &[String]) -> bool {
+    cf_destructive(&cf_positional(words))
+}
+
+fn cf_credential(words: &[String], args: &[&str]) -> bool {
+    let path = args.join(" ");
+    let has = |needle: &str| path.contains(needle);
+    let tokens = args.starts_with(&["user", "tokens"]) || args.starts_with(&["accounts", "tokens"]);
+    tokens && args.iter().skip(2).any(|verb| ["create", "update", "rotate"].contains(verb))
+        || has("rotate-secret")
+        || has("temporary-credentials create")
+        || args.starts_with(&["secrets-store", "secrets", "get"])
+        || args.starts_with(&["workers", "secrets", "get"])
+        || args.starts_with(&["workers-for-platforms"]) && args.contains(&"secrets") && args.contains(&"get")
+        && !args.contains(&"list")
+        || args.starts_with(&["zero-trust", "cws", "basic-auth-credentials", "secrets", "get"])
+        || args.starts_with(&["mesh", "nodes", "token", "get"])
+        || args.starts_with(&["tunnels", "token", "get"])
+        || cf_option_values(words, &["--show-token"]).iter().any(|v| !["false", "0"].contains(v))
 }
 
 fn scope_arguments<'a>(provider: &str, words: &'a [String], args: &[&'a str]) -> Vec<&'a str> {
     let mut out = Vec::new();
     let keys: &[&str] = match provider {
-        "cloudflare" => &[
-            "--name",
-            "--project-name",
-            "--namespace-id",
-            "--database",
-            "--zone-id",
-            "--bucket",
-            "--id",
-        ],
         "vercel" => &["--project", "--project-id", "--name"],
         "oracle" => &["--instance-id", "--volume-id", "--bucket-name", "--db-system-id"],
         _ => &[],
@@ -181,15 +240,8 @@ fn scope_arguments<'a>(provider: &str, words: &'a [String], args: &[&'a str]) ->
     for key in keys {
         out.extend(options(words, &[key]));
     }
-    match provider {
-        "cloudflare" => match args {
-            ["tail", target, ..] => out.push(target),
-            ["d1", "execute" | "info" | "delete", target, ..] => out.push(target),
-            ["r2", "bucket", "delete" | "info" | "create", target, ..] => out.push(target),
-            ["pages", "deployment", _, target, ..] => out.push(target),
-            _ => {}
-        },
-        "vercel" => match args {
+    if provider == "vercel" {
+        match args {
             [
                 "inspect" | "logs" | "remove" | "rm" | "promote" | "rollback" | "redeploy",
                 target,
@@ -202,8 +254,7 @@ fn scope_arguments<'a>(provider: &str, words: &'a [String], args: &[&'a str]) ->
                 ..,
             ] => out.push(target),
             _ => {}
-        },
-        _ => {}
+        }
     }
     out
 }
@@ -222,13 +273,6 @@ fn routine_change(provider: &str, words: &[String], args: &[&str]) -> bool {
     let flags: &[&str];
     let options: &[&str];
     let supported = match provider {
-        "cloudflare" => {
-            flags = &["--minify", "--no-bundle", "--keep-vars", "--dry-run", "--commit-dirty"];
-            options = &["--account-id", "--name", "--project-name", "--namespace-id", "--branch", "--commit-hash", "--commit-message", "--compatibility-date", "--outdir"];
-            args.first().is_some_and(|arg| ["deploy", "publish"].contains(arg))
-                || args.starts_with(&["pages", "deploy"])
-                || args.starts_with(&["kv", "key", "put"])
-        }
         "vercel" => {
             flags = &["--prod", "--yes", "-y", "--force", "--prebuilt", "--skip-domain"];
             options = &["--scope", "-S", "--team", "-T", "--project", "--project-id", "--name", "--archive"];
@@ -248,6 +292,129 @@ fn routine_change(provider: &str, words: &[String], args: &[&str]) -> bool {
     supported && shell::checked_arguments(&words[1..], flags, options).is_some()
 }
 
+/// `cf` has thousands of generated commands. It is judged by ordered shape instead of
+/// an exhaustive list: local/identity queries, credential red lines, scope, deletion
+/// verbs, ordinary queries, then ordinary changes by mode.
+fn cf_judge(resource: &Value, words: &[String], prefix: &[String], unsafe_shell: bool) -> Option<&'static str> {
+    let args = cf_positional(words);
+    let auto_ops = resource["mode"] == "auto-ops";
+    let local = matches!(
+        args.as_slice(),
+        ["auth", "whoami"] | ["auth", "scopes", ..] | ["auth", "list"] | ["cli", "search", ..] | ["schema", ..]
+            | ["docs", "search", ..]
+    ) || words.iter().any(|w| ["--version", "-v", "--help", "-h"].contains(&w.as_str()))
+        || args.first() == Some(&"help");
+    if local || words.iter().any(|w| w == "--dry-run" || w.starts_with("--dry-run=")) {
+        return None;
+    }
+    if args.starts_with(&["auth"])
+        && args.get(1).is_some_and(|sub| {
+            ["login", "logout", "create", "delete", "activate", "deactivate"].contains(sub)
+        })
+    {
+        return Some("cli-identity");
+    }
+    if words.iter().any(|w| w == "--profile" || w.starts_with("--profile="))
+        || prefix.iter().any(|w| {
+            shell::assignment(w).is_some_and(|(key, _)| {
+                ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY", "CLOUDFLARE_EMAIL"].contains(&key)
+            })
+        })
+    {
+        return Some("cli-account");
+    }
+    if cf_option_values(words, &["--account-id"])
+        .iter()
+        .any(|value| !account_matches(resource, value))
+    {
+        return Some("cli-account");
+    }
+    match account("cloudflare", words, prefix) {
+        Some(account) if account_matches(resource, account) => {}
+        _ => return Some("cli-account"),
+    }
+    if cf_credential(words, &args) {
+        return Some("cli-env-export");
+    }
+    let zones = cf_option_values(words, &["--zone", "-z"]);
+    if zones.iter().any(|zone| !cf_scope_match(resource, zone)) {
+        return Some("cli-scope");
+    }
+    if zones.is_empty() && args.first() == Some(&"dns") {
+        return Some("cli-scope");
+    }
+    if args.starts_with(&["zones"])
+        && args.get(1).is_some_and(|verb| ["get", "edit", "delete"].contains(verb))
+        && args.get(2).is_none_or(|target| !cf_scope_match(resource, target))
+    {
+        return Some("cli-scope");
+    }
+    for value in cf_option_values(words, &["--worker"]) {
+        if !cf_scope_match(resource, value) {
+            return Some("cli-scope");
+        }
+    }
+    for value in cf_option_values(words, &["--project-name"]) {
+        if !cf_scope_match(resource, value) {
+            return Some("cli-scope");
+        }
+    }
+    if args.first().is_some_and(|head| ["deploy", "workers", "pages", "zones"].contains(head)) {
+        let names = cf_option_values(words, &["--name"]);
+        if (args.first() == Some(&"deploy") || args.starts_with(&["pages", "deploy"])) && names.is_empty() {
+            return Some("cli-scope");
+        }
+        if names.iter().any(|value| !cf_scope_match(resource, value)) {
+            return Some("cli-scope");
+        }
+    }
+    if args.starts_with(&["workers"])
+        && args.get(1).is_some_and(|verb| ["get", "delete", "edit"].contains(verb))
+        && args.get(2).is_some_and(|target| !cf_scope_match(resource, target))
+    {
+        return Some("cli-scope");
+    }
+    if args.starts_with(&["pages"])
+        && args.get(1).is_some_and(|verb| ["get", "delete", "edit"].contains(verb))
+        && args.get(2).is_some_and(|target| !cf_scope_match(resource, target))
+    {
+        return Some("cli-scope");
+    }
+    if args.starts_with(&["pages"])
+        && args.get(1).is_some_and(|group| ["deployments", "domains", "source", "build-cache"].contains(group))
+        && args.get(2).is_some_and(|verb| ["create", "connect", "purge"].contains(verb))
+        && args.get(3).is_some_and(|target| !cf_scope_match(resource, target))
+    {
+        return Some("cli-scope");
+    }
+    if cf_destructive(&args) {
+        return Some("cli-destroy");
+    }
+    if args
+        .iter()
+        .any(|verb| ["list", "get", "show", "info", "search", "describe", "status", "tail"].contains(verb))
+    {
+        return if unsafe_shell && auto_ops {
+            crate::ssh::conservative_scan(&words.join(" "))
+        } else if unsafe_shell {
+            Some("unparsed")
+        } else {
+            None
+        };
+    }
+    if unsafe_shell {
+        return if auto_ops {
+            crate::ssh::conservative_scan(&words.join(" "))
+        } else {
+            Some("unparsed")
+        };
+    }
+    if auto_ops {
+        return crate::ssh::conservative_scan(&words.join(" "));
+    }
+    Some("cli-write")
+}
+
 pub(crate) fn judge(
     resource: &Value,
     provider: &str,
@@ -255,6 +422,9 @@ pub(crate) fn judge(
     prefix: &[String],
     unsafe_shell: bool,
 ) -> Option<&'static str> {
+    if provider == "cloudflare" {
+        return cf_judge(resource, words, prefix, unsafe_shell);
+    }
     let args = positional(words);
     let auto_ops = resource.get("mode").and_then(Value::as_str) == Some("auto-ops");
     let starts = |head: &[&str]| args.starts_with(head);
@@ -267,12 +437,6 @@ pub(crate) fn judge(
     // Credential exports are global prohibitions, checked before account/scope/mode.
     if provider == "vercel"
         && (starts(&["env", "pull"]) || starts(&["env", "ls"]) || starts(&["env", "list"]) || starts(&["pull"]))
-        || provider == "cloudflare"
-            && (starts(&["secret", "get"])
-                || starts(&["secret", "read"])
-                || starts(&["secret", "list"])
-                || starts(&["secret", "bulk"])
-                || starts(&["secrets-store", "secret", "get"]))
         || provider == "oracle"
             && starts(&["iam"])
             && args.iter().any(|s| {
@@ -293,7 +457,6 @@ pub(crate) fn judge(
         return unsafe_shell.then_some("unparsed");
     }
     let account_options: &[&str] = match provider {
-        "cloudflare" => &["--account-id"],
         "vercel" => &["--scope", "-S", "--team", "-T"],
         "oracle" => &["--profile"],
         _ => &[],
@@ -321,7 +484,6 @@ pub(crate) fn judge(
     // Commands that inherently list account metadata need no one project/instance.
     // Every other operation must name a scope; never infer it from cwd/config files.
     let account_listing = match provider {
-        "cloudflare" => starts(&["deployments", "list"]) || starts(&["pages", "project", "list"]),
         "vercel" => starts(&["ls"]) || starts(&["list"]),
         "oracle" => args.get(2) == Some(&"list"),
         _ => false,
@@ -329,12 +491,7 @@ pub(crate) fn judge(
     if scopes.iter().any(|scope| !in_scope(resource, scope)) || scopes.is_empty() && !account_listing {
         return Some("cli-scope");
     }
-    if provider == "cloudflare"
-        && (starts(&["d1", "delete"])
-            || starts(&["r2", "bucket", "delete"])
-            || starts(&["delete"])
-            || starts(&["pages", "project", "delete"]))
-        || provider == "vercel"
+    if provider == "vercel"
             && (starts(&["project", "rm"])
                 || starts(&["project", "remove"])
                 || starts(&["projects", "rm"])
@@ -348,19 +505,10 @@ pub(crate) fn judge(
     {
         return Some("cli-destroy");
     }
-    if unsafe_shell {
+    if unsafe_shell && !auto_ops {
         return Some("unparsed");
     }
     let allowed = match provider {
-        "cloudflare" => {
-            starts(&["tail"])
-                || starts(&["deployments", "list"])
-                || starts(&["kv", "key", "list"])
-                || starts(&["d1", "info"])
-                || starts(&["pages", "project", "list"])
-                || starts(&["pages", "deployment", "list"])
-                || starts(&["d1", "execute"]) && !has("--file") && option(words, &["--command"]).is_some_and(is_select)
-        }
         "vercel" => {
             matches!(args.first(), Some(&"ls" | &"list" | &"inspect" | &"logs")) && !has("--prod") && !has("--output")
         }
@@ -373,9 +521,17 @@ pub(crate) fn judge(
         _ => false,
     };
     if allowed {
-        None
-    } else if !routine_change(provider, words, &args) {
-        Some("unparsed")
+        if unsafe_shell && auto_ops {
+            crate::ssh::conservative_scan(&words.join(" "))
+        } else {
+            None
+        }
+    } else if unsafe_shell || !routine_change(provider, words, &args) {
+        if auto_ops {
+            crate::ssh::conservative_scan(&words.join(" "))
+        } else {
+            Some("unparsed")
+        }
     } else {
         (!auto_ops).then_some("cli-write")
     }

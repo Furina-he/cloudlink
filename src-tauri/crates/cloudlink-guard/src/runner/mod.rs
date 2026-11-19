@@ -516,6 +516,16 @@ fn perform(
                 output.state = "unknown";
                 output.reason = Some("execution-result-unknown");
             }
+            // `cf` aborts destructive commands without --force in non-interactive runs,
+            // prints `Aborted.` and exits 0. Nothing was executed.
+            if route["provider"] == "cloudflare"
+                && output.state == "succeeded"
+                && std::str::from_utf8(&output.stderr)
+                    .is_ok_and(|text| text.trim_end().ends_with("Aborted."))
+            {
+                output.state = "failed";
+                output.reason = Some("cli-aborted");
+            }
             output
         }
         Err(error) => process::Finished {

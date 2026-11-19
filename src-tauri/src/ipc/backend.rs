@@ -55,6 +55,8 @@ pub struct Backend {
     pub(super) credentials: Arc<dyn CredentialStore>,
     pub(super) system: Arc<dyn System>,
     pub(super) cli: cli::Service,
+    /// F-104 AC2（P9b）：一键安装并登录的固定命令表、等待状态和一次性标记文件
+    pub(super) cli_setups: cli::setup::Setups,
     pub(super) events: Arc<dyn EventSink>,
     pub(super) connections: ConnectionJobs,
     pub(super) probes: ProbeJobs,
@@ -229,6 +231,11 @@ impl Backend {
             ))?;
         }
         let auto_check_updates = db.get_settings()?.is_some_and(|settings| settings.auto_check_updates);
+        let setup_launcher: Arc<dyn cli::setup::TerminalLauncher> = if paths.isolated || cfg!(test) {
+            Arc::new(cli::setup::InertLauncher)
+        } else {
+            Arc::new(cli::setup::SystemLauncher)
+        };
         let updates = Arc::new(crate::update::Updates::new(
             env!("CARGO_PKG_VERSION"),
             Arc::clone(&events),
@@ -244,6 +251,7 @@ impl Backend {
             credentials,
             system,
             cli,
+            cli_setups: cli::setup::Setups::new(setup_launcher),
             events,
             connections: ConnectionJobs::default(),
             probes: ProbeJobs::default(),

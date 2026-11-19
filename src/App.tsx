@@ -19,7 +19,6 @@ import { SettingsView } from "@/features/settings/SettingsView"
 import { copy, ipcErrorText, type ViewId } from "@/lib/copy"
 import { HOTKEY_OPTIONS, HOTKEYS, isModalOpen, SINGLE_KEY_OPTIONS, VIEW_BY_DIGIT } from "@/lib/hotkeys"
 import { cn } from "@/lib/utils"
-import { useCliStore } from "@/stores/cli"
 import { useDeliveryStore } from "@/stores/deliveries"
 import { useGuardStore } from "@/stores/guard"
 import { syncTrayCopy } from "@/stores/backups"
@@ -61,7 +60,7 @@ function LoadErrorAlert() {
 /**
  * 副本检查（F-309）：窗口重新聚焦时检查，30 秒内最多一次；缺失和被改动的副本由后端自动恢复（被改动的先备份）。
  * 护栏与笔记在窗口可见时每 60 秒读取，重新聚焦或恢复可见时立即读取（F-307/308）。
- * 刚在终端里安装或登录云平台 CLI 的，不受节流，立即重新检测（F-104 AC2）。
+ * 云平台的一键安装登录由后端自己轮询（F-104 AC2），不依赖窗口重新获得焦点。
  */
 const RECHECK_MS = 30_000
 
@@ -80,7 +79,6 @@ function useRecheckOnFocus() {
       }
     }
     const onFocus = () => {
-      useCliStore.getState().onFocus()
       void refreshFeedback()
       if (Date.now() - last < RECHECK_MS || useDeliveryStore.getState().status !== "ready") return
       last = Date.now()

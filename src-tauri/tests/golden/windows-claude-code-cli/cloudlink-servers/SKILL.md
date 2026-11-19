@@ -20,17 +20,17 @@ Only touch the owner/account and scope in each details file. Always use its runn
 
 | Platform | CLI | Role | Env | Details |
 | --- | --- | --- | --- | --- |
-| cloudflare | `wrangler` | DNS for the main domains and the edge API gateway Worker; example.com, example.org, api-gateway | production | `references/cloudflare.md` |
+| cloudflare | `cf` | DNS for the main domains and the edge API gateway Worker; example.com, example.org, api-gateway | production | `references/cloudflare.md` |
 
 ## How they fit together
-- DNS for `example.com` (cloudflare, managed with `wrangler`) points at `hk-edge`, which serves `api.example.com`, `blog.example.com`.
+- DNS for `example.com` (cloudflare, managed with `cf`) points at `hk-edge`, which serves `api.example.com`, `blog.example.com`.
 - hk-edge reverse-proxies api.example.com to the API containers on hk-edge; those containers use the PostgreSQL database on sg-db over the private network.
 
 ## Modes
 Each details file states its resource's mode.
 - **confirm-changes**: recognized, non-sensitive queries run directly. Routine changes require the user's one-time approval in CloudLink.
-- **auto-ops**: queries and explicitly supported routine changes within the provided scope run directly, not arbitrary commands.
-- In both modes, approvable high-risk commands and target-clear but unparseable or unsupported commands require one-time approval. Credentials, repository deletion and default/unspecified-branch force-pushes cannot be approved. Uncertain identities, targets or scope are denied.
+- **auto-ops**: queries and changes within the provided scope run directly, except data deletion, explicitly named critical services, opaque scripts, host reboot or shutdown, firewall changes, and SSH configuration or stopping sshd.
+- In both modes, data deletion, critical services, opaque scripts, host reboot or shutdown, firewall and SSH configuration changes require one-time approval. Credentials, repository deletion and default/unspecified-branch force-pushes cannot be approved. Uncertain identities, targets or scope are denied.
 - Production is an independent risk marker, not a different mode or a switch for checks. The runner checks all provided resources, and Claude Code's hook redirects recognized direct connections to it.
 
 ## Running commands

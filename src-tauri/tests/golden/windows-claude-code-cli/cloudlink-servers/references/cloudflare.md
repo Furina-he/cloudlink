@@ -10,8 +10,9 @@ Use separate CLI arguments after `--`, without the provider binary or a shell wr
 PowerShell:
 
     & 'C:/Users/me/.cloudlink/bin/cloudlink-guard.exe' exec --env 'windows' --asset 'ast_01JB9CLI01' -- <command arguments>
+- Use `cf` for this account. Find a command with `cf cli search "<task>"` and preview a change with `--dry-run`. CloudLink supplies the account; do not add `--profile`. Live logs and changing a single secret currently go outside CloudLink.
 - Account: `me@example.com`
-- Target this account on every command: set `CLOUDFLARE_ACCOUNT_ID` to the id of `me@example.com` from `wrangler whoami`.
+- Target this account on every command: set `CLOUDFLARE_ACCOUNT_ID` to the id of `me@example.com` from `cf auth whoami`. Do not add `--profile`.
 - Role: DNS for the main domains and the edge API gateway Worker
 
 ## Scope

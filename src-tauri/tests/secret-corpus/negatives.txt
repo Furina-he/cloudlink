@@ -5,13 +5,13 @@ Never read or print credential files (`.env`, `*.pem`, `*.key`, `id_*`, `/etc/sh
 | nginx-conf | `/opt/1panel/apps/openresty/openresty/conf/conf.d` | OpenResty site configs |
     ssh <alias> 'uptime; nproc; free -m; df -hP -x tmpfs -x devtmpfs -x overlay -x squashfs; docker ps -a --format "{{.Names}}	{{.Status}}"; systemctl --failed --no-legend --plain; journalctl -p err --since "24 hours ago" --no-pager | tail -n 30'
 - 2026-10-31: The API is deployed from /opt/1panel/docker/compose/api with `docker compose up -d --build`.
-- Target this account on every command: set `CLOUDFLARE_ACCOUNT_ID` to the id of `me@example.com` from `wrangler whoami`.
+- Target this account on every command: set `CLOUDFLARE_ACCOUNT_ID` to the id of `me@example.com` from `cf auth whoami`.
 Reset the password with `passwd deploy` if the user asks.
 password=<your password>
 password: ********
 token=$TOKEN
 api_key = ${API_KEY}
-Run `wrangler secret list` to see which secrets exist; never print their values.
+Run `cf secrets-store secrets list` to see which secrets exist; never print their values.
 | `postgresql` | systemd | - | - | Primary database | yes |
 | `redis` | docker | `redis:7.4` | `127.0.0.1:6379->6379/tcp` | - | no |
 The PostgreSQL password lives in the vault; ask the user.

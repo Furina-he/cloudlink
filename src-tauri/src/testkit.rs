@@ -302,8 +302,8 @@ pub fn dev_box() -> ServerAsset {
 pub fn cloudflare() -> CliAsset {
     let ready = CliEnvState {
         installed: true,
-        version: Some("3.99.0".into()),
-        path: Some(r"C:\Users\me\AppData\Roaming\npm\wrangler.cmd".into()),
+        version: Some("1.0.0".into()),
+        path: Some(r"C:\Users\me\AppData\Roaming\npm\cf.cmd".into()),
         authenticated: true,
         expired: false,
         account: Some("me@example.com".into()),
@@ -328,7 +328,7 @@ pub fn cloudflare() -> CliAsset {
         handle: "cloudflare".into(),
         account: Some("me@example.com".into()),
         cli: CliInfo {
-            binary: CliBinary::Wrangler,
+            binary: CliBinary::Cf,
             env_states: BTreeMap::from([(EnvId::windows(), ready.clone()), (wsl(), ready)]),
             scope: vec![
                 CliScopeItem {

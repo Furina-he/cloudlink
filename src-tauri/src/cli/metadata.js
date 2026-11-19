@@ -1,4 +1,4 @@
-// Fixed read-only metadata bridge. Wrangler credentials exist only in this child process.
+// Fixed read-only metadata bridge. `cf` credentials exist only in this child process.
 // stdout/stderr never include auth output, API bodies, exception messages or stacks.
 "use strict";
 const { spawnSync } = require("node:child_process");
@@ -15,46 +15,28 @@ function remaining() {
 function run(args, identity = false) {
   const result = spawnSync(binary, args, {
     encoding: "utf8", timeout: remaining(), maxBuffer: MAX_BODY, shell: false,
-    env: { ...process.env, WRANGLER_SEND_METRICS: "false", WRANGLER_WRITE_LOGS: "false",
-      WRANGLER_LOG_SANITIZE: "true", VERCEL_TELEMETRY_DISABLED: "1", DO_NOT_TRACK: "1", CI: "1", NO_COLOR: "1" }
+    env: { ...process.env, ...(account ? {CLOUDFLARE_ACCOUNT_ID: account} : {}),
+      CF_SEND_TELEMETRY: "false", DO_NOT_TRACK: "1", CI: "1", NO_COLOR: "1" }
   });
   if (result.error) fail("cli-scope-failed");
   let data;
   try { data = JSON.parse(result.stdout); } catch {}
   if (result.status !== 0) {
-    if (identity && data && (data.loggedIn === false || data.authenticated === false)) return data;
+    if (identity && data && (data.authenticated === false || data.loggedIn === false)) return data;
     const text = (String(result.stderr || "") + String(result.stdout || "")).toLowerCase();
     if (identity && /not authenticated|not logged|log in|login|expired|invalid.*token|unauthorized|401|403/.test(text)) {
       return { authenticated: false, expired: /expired|invalid.*token|401/.test(text) };
     }
-    fail(/permission|forbidden|403|unauthorized|401/.test(text) ? "cli-scope-permission" : "cli-command-unsupported");
+    fail(/permission|forbidden|403|unauthorized|401|scope/.test(text) ? "cli-scope-permission" : "cli-command-unsupported");
   }
-  if (!data || typeof data !== "object") fail("cli-command-unsupported");
+  if (data === undefined || data === null) fail("cli-command-unsupported");
   return data;
 }
-function cursor(data, previous, seen) {
-  const value = data.pagination && data.pagination.next;
-  if (value === null || value === undefined) return undefined;
-  const next = typeof value === "string" && /^[0-9]{1,16}$/.test(value) ? Number(value) : value;
-  if (!Number.isSafeInteger(next) || next < 0 || next === previous || seen.has(next)) fail("cli-scope-failed");
-  seen.add(next);
-  return next;
+function array(value) {
+  if (!Array.isArray(value)) fail("cli-command-unsupported");
+  return value;
 }
-function identityProjection(data) {
-  const out = {};
-  for (const key of ["loggedIn", "authenticated", "expired"]) if (typeof data[key] === "boolean") out[key] = data[key];
-  for (const key of ["email", "username"]) if (typeof data[key] === "string") out[key] = clean(data[key]);
-  if (Array.isArray(data.accounts)) out.accounts = data.accounts.slice(0,100)
-    .filter(account => account && typeof account.id === "string" && /^[a-fA-F0-9]{32}$/.test(account.id))
-    .map(account => ({id: account.id, name: clean(account.name)}));
-  for (const key of ["team", "globalTeam"]) {
-    if (data[key] && typeof data[key].id === "string" && /^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$/.test(data[key].id)) {
-      out[key] = {id: data[key].id, slug: clean(data[key].slug), name: clean(data[key].name)};
-    }
-  }
-  return out;
-}
-// Project Git bindings are facts, not authorization. Never retain a raw remote,
+// Git bindings are facts, not authorization. Never retain a raw remote,
 // deploy-hook URL or git credential; malformed sources simply provide no evidence.
 function githubSource(source) {
   if (!source || typeof source !== "object" || !["github", "github-limited", "github-custom-host"].includes(source.type)) return undefined;
@@ -74,13 +56,37 @@ function githubSource(source) {
   else if (typeof id === "number" && Number.isSafeInteger(id) && id > 0) result.repoId = String(id);
   return result;
 }
+function identityProjection(data) {
+  const out = {};
+  // A successful whoami without an explicit flag is a logged-in session (`vercel whoami`);
+  // only an explicit negative, or an invalid token, is signed out.
+  const denied = data.authenticated === false || data.loggedIn === false;
+  out.authenticated = !denied && data.tokenValid !== false;
+  out.expired = data.expired === true || data.tokenValid === false;
+  if (typeof data.email === "string") out.email = clean(data.email);
+  if (typeof data.username === "string") out.username = clean(data.username);
+  if (Array.isArray(data.accounts)) out.accounts = data.accounts.slice(0, 100)
+    .filter(item => item && typeof item.id === "string" && /^[a-fA-F0-9]{32}$/.test(item.id))
+    .map(item => ({id: item.id, name: clean(item.name)}));
+  for (const key of ["team", "globalTeam"]) {
+    const team = data[key];
+    if (team && typeof team.id === "string" && /^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$/.test(team.id)) {
+      out[key] = {id: team.id, slug: clean(team.slug), name: clean(team.name)};
+    }
+  }
+  return out;
+}
+function pages(list, size) {
+  return Math.ceil(MAX_PAGES * 100 / size);
+}
 async function main() {
   if (!["identity", "scope"].includes(operation) || !binary || !binary.startsWith("/")) fail("cli-command-unsupported");
   if (operation === "identity") {
     if (!["cloudflare", "vercel"].includes(provider)) fail("cli-command-unsupported");
-    const data = run(provider === "cloudflare" ? ["whoami", "--json"] : ["whoami", "--format=json"], true);
+    if (provider === "cloudflare") return identityProjection(run(["auth", "whoami", "--json"], true));
+    const data = run(["whoami", "--format=json"], true);
     const out = identityProjection(data);
-    if (provider === "cloudflare" || out.loggedIn === false || out.authenticated === false) return out;
+    if (out.loggedIn === false || out.authenticated === false) return out;
     const teams = new Map(); const seen = new Set(); let next;
     for (let page = 0; page < MAX_PAGES; page++) {
       const args = ["teams", "list", "--format=json", "--limit", "100"];
@@ -92,20 +98,17 @@ async function main() {
         teams.set(team.id, {id: team.id, slug: clean(team.slug), name: clean(team.name), current: team.current === true});
         if (teams.size > 100) fail("cli-scope-failed");
       }
-      next = cursor(listed, next, seen);
-      if (next === undefined) return {...out, teams: [...teams.values()]};
+      const value = listed.pagination && listed.pagination.next;
+      if (value === null || value === undefined) return {...out, teams: [...teams.values()]};
+      next = typeof value === "string" && /^[0-9]{1,16}$/.test(value) ? Number(value) : value;
+      if (!Number.isSafeInteger(next) || next < 0 || seen.has(next)) fail("cli-scope-failed");
+      seen.add(next);
     }
     fail("cli-scope-failed");
   }
-  const items = [];
-  function add(item) {
-    if (items.length >= MAX_ITEMS) fail("cli-scope-failed");
-    if (typeof item.id !== "string" || !item.id || item.id.length > 256 || /[\x00-\x1f\x7f]/.test(item.id)
-        || typeof item.name !== "string" || !item.name) fail("cli-scope-failed");
-    items.push(item);
-  }
   if (provider === "vercel") {
     if (!/^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$/.test(account)) fail("cli-account-unavailable");
+    const items = [];
     let next; const seen = new Set();
     for (let page = 0; page < MAX_PAGES; page++) {
       const args = ["project", "list", "--scope", account, "--format=json", "--limit", "100"];
@@ -113,94 +116,75 @@ async function main() {
       const data = run(args);
       if (!Array.isArray(data.projects)) fail("cli-command-unsupported");
       for (const project of data.projects) {
+        if (!project || typeof project.id !== "string" || !project.id || project.id.length > 256
+            || /[\x00-\x1f\x7f]/.test(project.id) || typeof project.name !== "string" || !project.name) {
+          fail("cli-scope-failed");
+        }
         const repoSource = githubSource(project.link || project.gitRepository);
-        add({ id: project.id, kind: "project", name: clean(project.name), ...(repoSource ? {repoSource} : {}) });
+        items.push({ id: project.id, kind: "project", name: clean(project.name), ...(repoSource ? {repoSource} : {}) });
+        if (items.length > MAX_ITEMS) fail("cli-scope-failed");
       }
-      next = cursor(data, next, seen);
-      if (next === undefined) return { items };
+      const value = data.pagination && data.pagination.next;
+      if (value === null || value === undefined) return { items };
+      next = typeof value === "string" && /^[0-9]{1,16}$/.test(value) ? Number(value) : value;
+      if (!Number.isSafeInteger(next) || next < 0 || seen.has(next)) fail("cli-scope-failed");
+      seen.add(next);
     }
     fail("cli-scope-failed");
   }
   if (provider !== "cloudflare" || !/^[a-fA-F0-9]{32}$/.test(account)) fail("cli-account-unavailable");
-  let auth = run(["auth", "token", "--json"]);
-  let authHeaders;
-  if (["oauth", "api_token"].includes(auth.type) && typeof auth.token === "string" && auth.token && !/[\x00-\x1f\x7f]/.test(auth.token)) {
-    authHeaders = {Authorization: "Bearer " + auth.token};
-  } else if (auth.type === "api_key" && typeof auth.key === "string" && auth.key && typeof auth.email === "string"
-      && auth.email && !/[\x00-\x1f\x7f]/.test(auth.key + auth.email)) {
-    authHeaders = {"X-Auth-Key": auth.key, "X-Auth-Email": auth.email};
-  } else {
-    fail("cli-command-unsupported");
+  const items = [];
+  function add(item) {
+    if (items.length >= MAX_ITEMS) fail("cli-scope-failed");
+    if (typeof item.id !== "string" || !item.id || item.id.length > 256 || /[\x00-\x1f\x7f]/.test(item.id)
+        || typeof item.name !== "string" || !item.name) fail("cli-scope-failed");
+    items.push(item);
   }
-  auth = null;
-  async function get(path, query) {
-    if (!/^\/zones$|^\/zones\/[a-fA-F0-9]{32}\/dns_records$|^\/accounts\/[a-fA-F0-9]{32}\/(workers\/scripts|pages\/projects)$/.test(path)) fail("cli-scope-failed");
-    const url = new URL("https://api.cloudflare.com/client/v4" + path);
-    for (const [key, value] of Object.entries(query || {})) url.searchParams.set(key, String(value));
-    const response = await fetch(url, {
-      method: "GET", redirect: "error", signal: AbortSignal.timeout(remaining()),
-      headers: { ...authHeaders, Accept: "application/json" }
-    });
-    if ([401,403].includes(response.status)) fail("cli-scope-permission");
-    if (response.status === 404 && /^\/accounts\/[^/]+\/(workers\/scripts|pages\/projects)$/.test(path)) {
-      return {success: true, result: [], result_info: {total_pages: 1}};
-    }
-    if (!response.ok || !response.body) fail("cli-scope-failed");
-    const reader = response.body.getReader(); let size = 0; const chunks = [];
-    while (true) {
-      const { value, done } = await reader.read(); if (done) break;
-      size += value.byteLength;
-      if (size > MAX_BODY) { await reader.cancel(); fail("cli-scope-failed"); }
-      chunks.push(Buffer.from(value));
-    }
-    let data;
-    try { data = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { fail("cli-scope-failed"); }
-    if (data.success !== true || !Array.isArray(data.result)) {
-      if ((data.errors || []).some(error => [10000,10001,9103,9106,9109].includes(error.code))) fail("cli-scope-permission");
-      fail("cli-scope-failed");
-    }
-    return data;
-  }
-  async function list(path, query, map, size = 100) {
-    // A smaller page size gets more requests, so every list keeps the same item ceiling.
-    for (let page = 1; page <= Math.ceil(MAX_PAGES * 100 / size); page++) {
-      const data = await get(path, { ...query, page, per_page: size });
-      for (const item of data.result) await map(item);
-      const total = data.result_info && data.result_info.total_pages;
-      if (total != null && (!Number.isSafeInteger(total) || total < 0)) fail("cli-scope-failed");
-      if (total != null ? page >= total : data.result.length < size) return;
+  function list(args, size = 100) {
+    const out = [];
+    for (let page = 1; page <= pages(out, size); page++) {
+      const data = array(run([...args, "--page", String(page), "--per-page", String(size)]));
+      if (data.length === 0) return out;
+      out.push(...data);
+      if (data.length < size) return out;
     }
     fail("cli-scope-failed");
   }
-  try {
-    let dnsReadable = true;
-    await list("/zones", { "account.id": account }, async zone => {
-      if (!zone.account || zone.account.id !== account || !/^[a-fA-F0-9]{32}$/.test(zone.id)) fail("cli-scope-failed");
-      const addresses = [];
-      if (dnsReadable) {
-        try {
-          for (const type of ["A", "AAAA"]) {
-            await list("/zones/" + zone.id + "/dns_records", { type }, record => { if (typeof record.content === "string") addresses.push(record.content); });
+  let dnsReadable = true;
+  for (const zone of list(["zones", "list", "--account-id", account])) {
+    if (!zone || typeof zone.id !== "string" || !/^[a-fA-F0-9]{32}$/.test(zone.id)
+        || typeof zone.name !== "string" || !zone.name
+        || zone.account && typeof zone.account.id === "string" && zone.account.id !== account) fail("cli-scope-failed");
+    const addresses = [];
+    if (dnsReadable) {
+      try {
+        for (const type of ["A", "AAAA"]) {
+          for (const record of list(["dns", "records", "list", "--zone", zone.id, "--type", type])) {
+            if (typeof record.content === "string") addresses.push(record.content);
           }
-        } catch (error) {
-          // Addresses only link a zone to a recorded server. A login that lists zones but
-          // may not read their records (wrangler login has no such scope) keeps its catalog.
-          if (!error || error.cloudlinkError !== "cli-scope-permission") throw error;
-          dnsReadable = false;
         }
+      } catch (error) {
+        // Addresses only link a zone to a recorded server. A login that lists zones
+        // but may not read their records keeps its catalog.
+        if (!error || error.cloudlinkError !== "cli-scope-permission") throw error;
+        dnsReadable = false;
       }
-      add({ id: "zone:" + zone.id, kind: "zone", name: clean(zone.name), addresses: addresses.slice(0,500) });
-    });
-    // The Workers scripts endpoint is SinglePage; page/per_page are ignored there.
-    const workers = await get("/accounts/" + account + "/workers/scripts", {});
-    for (const script of workers.result) add({ id: "worker:" + (script.tag || script.id), kind: "worker", name: clean(script.id) });
-    // Pages rejects a per_page above 10 with HTTP 400 (error 8000024).
-    await list("/accounts/" + account + "/pages/projects", {}, project => {
-      const repoSource = project.source && githubSource({...project.source.config, type:project.source.type});
-      add({ id: "pages:" + project.name, kind: "pages", name: clean(project.name), ...(repoSource ? {repoSource} : {}) });
-    }, 10);
-    return { items };
-  } finally { authHeaders = null; }
+    }
+    add({ id: "zone:" + zone.id, kind: "zone", name: clean(zone.name), addresses: addresses.slice(0, 500) });
+  }
+  for (const worker of list(["workers", "list"])) {
+    if (!worker || typeof worker.id !== "string" && typeof worker.name !== "string") fail("cli-scope-failed");
+    const name = typeof worker.name === "string" && worker.name ? worker.name : worker.id;
+    add({ id: "worker:" + (worker.id || name), kind: "worker", name: clean(name) });
+  }
+  for (const project of list(["pages", "list"])) {
+    if (!project || typeof project.name !== "string" || !project.name) fail("cli-scope-failed");
+    const source = project.source && project.source.config;
+    const repoSource = project.source && typeof project.source.type === "string" && source
+      ? githubSource({...source, type: project.source.type}) : undefined;
+    add({ id: "pages:" + project.name, kind: "pages", name: clean(project.name), ...(repoSource ? {repoSource} : {}) });
+  }
+  return { items };
 }
 main().then(metadata => {
   process.stdout.write("\n__CLOUDLINK_CLI_METADATA__\n" + JSON.stringify(metadata) + "\n");

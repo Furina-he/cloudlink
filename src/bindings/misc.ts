@@ -174,6 +174,8 @@ export type IpcErrorId =
   | "cli-scope-permission"
   | "cli-scope-failed"
   | "cli-command-unsupported"
+  /** cf 需要 Node.js 22.23／24.22／26.12 及以上的对应大版本（P9c） */
+  | "cli-node-outdated"
   | "terminal-command-invalid"
   /** 并入的笔记仍然命中密钥（F-308 AC2） */
   | "note-has-secret"

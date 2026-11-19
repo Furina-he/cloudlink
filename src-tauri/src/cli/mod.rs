@@ -2,6 +2,7 @@
 //! discover or execute the workstation's CLIs. Catalogs are bound to a provider and account.
 
 mod runner;
+pub mod setup;
 
 pub(crate) use runner::sh_quote;
 pub use runner::{EmptyRunner, SystemRunner};
@@ -144,6 +145,17 @@ impl Service {
         Ok(states)
     }
 
+    /// P9b：the one-click setup needs the current install fact to decide whether the visible
+    /// terminal runs install + login or login only. Discovery is a fixed read-only query.
+    pub fn installed(&self, env: &EnvContext, provider: CliProvider) -> bool {
+        self.runner
+            .run(env, &Query::Discover { provider })
+            .ok()
+            .and_then(|output| json_output(&output).ok())
+            .and_then(|value| value.get("installed").and_then(Value::as_bool))
+            .unwrap_or(false)
+    }
+
     fn detect_one(&self, env: &EnvContext, provider: CliProvider) -> Result<CliEnvState> {
         let mut state = CliEnvState {
             installed: false,
@@ -157,6 +169,17 @@ impl Service {
         };
         let discovery = self.runner.run(env, &Query::Discover { provider })?;
         let discovered = json_output(&discovery)?;
+        // cf is published as an npm package; it cannot be installed or run under an older
+        // Node. An unavailable node (empty version) is not evidence of an outdated one.
+        if provider == CliProvider::Cloudflare
+            && discovered
+                .get("nodeVersion")
+                .and_then(Value::as_str)
+                .filter(|version| !version.trim().is_empty())
+                .is_some_and(|version| !node_supported(version))
+        {
+            return Err(AppError::ipc(IpcErrorId::CliNodeOutdated));
+        }
         if discovered.get("installed").and_then(Value::as_bool) != Some(true) {
             return Ok(state);
         }
@@ -563,16 +586,15 @@ impl Service {
 
 pub fn terminal_command_allowed(env: &EnvContext, command: &str) -> bool {
     const COMMON: &[&str] = &[
-        "npm install -g wrangler",
-        "pnpm add -g wrangler",
-        "bun add -g wrangler",
-        "wrangler login",
+        "npm install --global cf",
+        "pnpm add --global cf",
+        "cf auth login",
         "npm install -g vercel",
         "pnpm add -g vercel",
         "bun add -g vercel",
         "vercel login",
         "pip install oci-cli",
-        "oci setup config",
+        "oci setup bootstrap",
         "gh auth login",
     ];
     COMMON.contains(&command)
@@ -794,6 +816,24 @@ pub(crate) fn valid_path(path: &str, env: &EnvContext) -> bool {
         } else {
             path.starts_with('/')
         }
+}
+
+/// `cf` prints `v22.20.0`; accept the exact supported majors/minors from its engines field.
+fn node_supported(text: &str) -> bool {
+    let Some(version) = text
+        .split(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .find(|part| part.split('.').count() >= 2)
+    else {
+        return false;
+    };
+    let mut parts = version.split('.');
+    let (Some(major), Some(minor)) = (
+        parts.next().and_then(|v| v.parse::<u64>().ok()),
+        parts.next().and_then(|v| v.parse::<u64>().ok()),
+    ) else {
+        return false;
+    };
+    (major == 22 && minor >= 23) || (major == 24 && minor >= 22) || (major == 26 && minor >= 12)
 }
 
 fn parse_version(output: &str) -> Option<String> {

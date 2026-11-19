@@ -10,7 +10,9 @@ use tauri::State;
 use super::backend::Backend;
 use super::requests::{CliRequest, CopyKeyRequest, DeleteOptions, MergeNote, SettingsPatch, TerminalRequest};
 use crate::error::{AppError, Result};
-use crate::model::asset::{Asset, AssetInput, CliEnvState, CliScopeItem, ImportHost, Mode};
+use crate::model::asset::{
+    Asset, AssetInput, CliEnvState, CliScopeItem, CliSetupRequest, CliSetupStarted, ImportHost, Mode,
+};
 use crate::model::compile::{CompilePreview, CompileStatus, PreviewRequest, Relation, SkillConfig};
 use crate::model::connection::{ConnectionTestRequest, KeyCheck, KeyCheckRequest};
 use crate::model::delivery::{AddCustomTargetRequest, Delivery, Inclusion, Target};
@@ -207,6 +209,11 @@ pub async fn detect_cli_environment(
     req: CliRequest,
 ) -> Result<BTreeMap<EnvId, CliEnvState>> {
     blocking(state, move |backend| backend.detect_cli_environment(req)).await
+}
+
+#[tauri::command]
+pub async fn start_cli_setup(state: State<'_, Arc<Backend>>, req: CliSetupRequest) -> Result<CliSetupStarted> {
+    blocking(state, move |backend| backend.start_cli_setup(req)).await
 }
 
 #[tauri::command]

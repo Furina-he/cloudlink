@@ -72,9 +72,7 @@ impl Runner for SystemRunner {
         };
         command
             .current_dir(&self.working_dir)
-            .env("WRANGLER_SEND_METRICS", "false")
-            .env("WRANGLER_WRITE_LOGS", "false")
-            .env("WRANGLER_LOG_SANITIZE", "true")
+            .env("CF_SEND_TELEMETRY", "false")
             .env("VERCEL_TELEMETRY_DISABLED", "1")
             .env("DO_NOT_TRACK", "1")
             .env("NO_COLOR", "1")
@@ -268,9 +266,7 @@ pub(crate) fn script_for(env: &EnvContext, query: &Query) -> Result<String> {
 
 const PS_PROFILE: &str = r#"$ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
-$env:WRANGLER_SEND_METRICS='false'
-$env:WRANGLER_WRITE_LOGS='false'
-$env:WRANGLER_LOG_SANITIZE='true'
+$env:CF_SEND_TELEMETRY='false'
 $env:VERCEL_TELEMETRY_DISABLED='1'
 $env:DO_NOT_TRACK='1'
 $env:NO_COLOR='1'
@@ -284,4 +280,4 @@ foreach ($clProfile in @($PROFILE.AllUsersAllHosts,$PROFILE.AllUsersCurrentHost,
 }
 "#;
 
-const SH_ENV: &str = "export WRANGLER_SEND_METRICS=false WRANGLER_WRITE_LOGS=false WRANGLER_LOG_SANITIZE=true VERCEL_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 NO_COLOR=1 CI=1 GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 GH_NO_EXTENSION_UPDATE_NOTIFIER=1 GH_SPINNER_DISABLED=1";
+const SH_ENV: &str = "export CF_SEND_TELEMETRY=false VERCEL_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 NO_COLOR=1 CI=1 GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 GH_NO_EXTENSION_UPDATE_NOTIFIER=1 GH_SPINNER_DISABLED=1";

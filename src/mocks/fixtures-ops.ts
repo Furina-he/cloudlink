@@ -67,9 +67,9 @@ export const operations: Operation[] = [
   op(40, "ast_sg_db", "sg-db", ago(5 * MIN), WSL, "/home/me/code/api", ["sudo systemctl restart postgresql"]),
   op(41, "ast_sg_db", "sg-db", ago(6 * MIN), WSL, "/home/me/code/api", ['psql -c "VACUUM ANALYZE"']),
   op(42, "ast_sg_db", "sg-db", ago(9 * MIN), WSL, "/home/me/code/api", ["docker ps"]),
-  // 云平台 CLI：命令本身就是 wrangler、vercel，不经过 ssh
-  cli(50, "ast_cloudflare", ago(12 * MIN), ["wrangler deployments list"]),
-  cli(51, "ast_cloudflare", ago(14 * MIN), ["wrangler deploy", "denied", "cli-write"]),
+  // 云平台 CLI：命令本身就是 cf、vercel，不经过 ssh
+  cli(50, "ast_cloudflare", ago(12 * MIN), ["cf workers deployments list"]),
+  cli(51, "ast_cloudflare", ago(14 * MIN), ["cf deploy", "denied", "cli-write"]),
   cli(52, "ast_vercel", ago(16 * MIN), ["vercel ls"]),
   cli(53, "ast_vercel", ago(18 * MIN), ["vercel env pull .env.local", "denied", "cli-env-export"]),
 ]

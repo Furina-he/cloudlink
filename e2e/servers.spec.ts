@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 
-import { back, collectConsoleErrors, detailTitle, editResource, inspector, openServer, ready, refocusWindow, row, setSshAlias, shot, toastText } from "./helpers"
+import { back, collectConsoleErrors, detailTitle, editResource, inspector, openServer, ready, row, setSshAlias, shot, toastText } from "./helpers"
 
 // 资源视图（PRD 6.4、6.5、6.10）：两行资源列表、全宽查看详情、当前页编辑草稿、SSH 一步到位与云平台 CLI 向导
 
@@ -100,7 +100,7 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     await expect(list.getByText("生产", { exact: true })).toHaveCount(4)
     // 正常连接不写「已连接 · Ubuntu …」，云平台不写「vercel Vercel · vercel」
     await expect(list.getByText(/已连接|Ubuntu|已就绪|生产环境已启用自动运维/)).toHaveCount(0)
-    await expect(list.getByText("wrangler")).toHaveCount(0)
+    await expect(list.getByText("cf", { exact: true })).toHaveCount(0)
     await shot(page, "state-05-panel")
     expect(errors).toEqual([])
   })
@@ -411,24 +411,26 @@ test.describe("添加 SSH 服务器：连接并启用（PRD 6.5、F-106、F-108�
 })
 
 test.describe("云平台 CLI（PRD 6.5 分支 B、F-104）", () => {
-  test("Oracle 向导：只检测已启用 Agent 的环境；打开终端后切回窗口自动刷新；勾选范围后保存并启用", async ({ page }) => {
+  test("Oracle 向导：只检测已启用 Agent 的环境；一键安装并登录自己等结果；勾选范围后保存并启用", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
     await page.keyboard.press("Control+n")
     const picker = page.getByRole("region", { name: "添加资源" })
     // 分组：服务器、云平台、代码托管；选项块上一行状态
     for (const g of ["服务器", "云平台", "代码托管"]) await expect(picker.getByRole("heading", { level: 3, name: g })).toBeVisible()
-    await expect(picker.getByRole("button", { name: /Cloudflare/ })).toContainText("已登录 · wrangler")
+    await expect(picker.getByRole("button", { name: /Cloudflare/ })).toContainText("已登录 · cf")
     await expect(picker.getByRole("button", { name: /GitHub/ })).toContainText("仓库，以及它们部署到哪里")
     await expect(picker.getByRole("button", { name: /从 ~\/\.ssh\/config 导入/ })).toContainText("发现 2 台")
     await shot(page, "cli-01-picker")
     await picker.getByRole("button", { name: /Oracle Cloud/ }).click()
     const wizard = page.getByRole("region", { name: "添加 Oracle Cloud" })
     const envs = wizard.getByRole("list", { name: "各运行环境的 CLI 状态" })
-    await expect(envs.getByRole("listitem").filter({ hasText: "Windows" })).toContainText("未安装")
+    const windows = envs.getByRole("listitem").filter({ hasText: "Windows" })
+    await expect(windows).toContainText("未安装")
     await expect(envs.getByRole("listitem").filter({ hasText: "WSL Ubuntu-24.04" })).toContainText("tenancy-demo")
-    // 安装指引：默认 winget，可以换成 pip，并注明要先装 Python
-    const guide = envs.getByRole("listitem").filter({ hasText: "Windows" }).getByRole("group", { name: "安装指引" })
+    // 命令默认收起：查看后才出现安装指引；默认 winget，可以换成 pip，并注明要先装 Python
+    await windows.getByRole("button", { name: "查看命令" }).click()
+    const guide = windows.getByRole("group", { name: "安装指引" })
     await expect(guide).toContainText("winget install --exact --id Oracle.OCI-CLI")
     await guide.getByRole("radio", { name: "pip" }).or(guide.getByRole("button", { name: "pip" })).click()
     await expect(guide).toContainText("pip install oci-cli")
@@ -437,10 +439,10 @@ test.describe("云平台 CLI（PRD 6.5 分支 B、F-104）", () => {
     await expect(wizard.getByRole("checkbox", { name: "oci-web-1" })).toBeVisible()
     await shot(page, "cli-02-oracle")
 
-    await envs.getByRole("listitem").filter({ hasText: "Windows" }).getByRole("button", { name: "打开终端" }).click()
-    await expect(toastText(page, /已打开 Windows 的终端/)).toBeVisible()
-    await refocusWindow(page)
-    await expect(envs.getByRole("listitem").filter({ hasText: "Windows" })).toContainText("已就绪")
+    await windows.getByRole("button", { name: "安装并登录" }).click()
+    await expect(windows.getByText(/等待安装完成…|等待登录…/)).toBeVisible()
+    // 不切回窗口、不按回车：后端自己轮询到就绪
+    await expect(windows).toContainText("已就绪")
 
     await wizard.getByRole("checkbox", { name: "oci-web-1" }).check()
     await wizard.getByRole("button", { name: "保存并启用" }).click()
@@ -473,7 +475,21 @@ test.describe("云平台 CLI（PRD 6.5 分支 B、F-104）", () => {
     expect(errors).toEqual([])
   })
 
-  test("Vercel：WSL 未登录，提示条「去登录」后切回窗口变为已就绪；范围勾选立即生效", async ({ page }) => {
+  test("安装失败在环境行内说明原因，按钮回到可重试", async ({ page }) => {
+    const errors = collectConsoleErrors(page)
+    await ready(page, "?mock=cli-setup-failed")
+    await page.keyboard.press("Control+n")
+    await page.getByRole("region", { name: "添加资源" }).getByRole("button", { name: /Oracle Cloud/ }).click()
+    const wizard = page.getByRole("region", { name: "添加 Oracle Cloud" })
+    const windows = wizard.getByRole("list", { name: "各运行环境的 CLI 状态" }).getByRole("listitem").filter({ hasText: "Windows" })
+    await windows.getByRole("button", { name: "安装并登录" }).click()
+    await expect(windows.getByText("没有装上，原因在终端里。可以重试，或换一种安装方式。")).toBeVisible()
+    await expect(windows.getByRole("button", { name: "安装并登录" })).toBeVisible()
+    await shot(page, "cli-07-setup-failed")
+    expect(errors).toEqual([])
+  })
+
+test("Vercel：WSL 未登录，提示条「去登录」后自动变为已就绪；范围勾选立即生效", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
     await openServer(page, "vercel", "Vercel")
@@ -486,7 +502,7 @@ test.describe("云平台 CLI（PRD 6.5 分支 B、F-104）", () => {
     await expect(panel.getByRole("button", { name: "重新检测", exact: true })).toHaveCount(1)
     await shot(page, "cli-04-vercel")
     await panel.getByRole("button", { name: "去登录" }).click()
-    await refocusWindow(page)
+    // 终端窗口由后端打开，进度自己推进；不需要切回窗口
     await expect(panel.getByText(/还没有登录/)).toHaveCount(0)
 
     await panel.getByRole("button", { name: /^2 个项目/ }).click()

@@ -342,7 +342,7 @@ export const copy = {
     "confirm-changes":
       "查询直接执行，变更先问你。高危或目标明确但解析不明时仍需确认；凭据红线和目标不明一律拒绝。",
     "auto-ops":
-      "范围内规则明确的常规变更直接执行。高危或不明确的操作仍先问你；凭据红线和目标不明一律拒绝。",
+      "删除数据、关键服务、内容不可见的脚本、重启或关闭主机、修改防火墙、修改 SSH 配置或停止 sshd 先问你；其余变更直接执行。凭据红线和目标不明一律拒绝。",
   } satisfies Record<Mode, string>,
 
   /** 资源行和详情的连接状态（6.11 状态词表）。changed 仍是「未验证」，另附一句提示（F-106 AC4） */
@@ -426,7 +426,7 @@ export const copy = {
     "ssh-config": "修改 SSH 配置或停止 sshd",
     "critical-service": "停止或删除标为「关键」的服务",
     "file-transfer": "文件上传需要确认",
-    interactive: "不支持交互式登录或不透明的标准输入脚本",
+    interactive: "不支持交互式登录",
     "cli-env-export": "导出云平台 CLI 的凭据",
     "cli-write": "这项云平台变更需要确认",
     "cli-destroy": "删库、删站或销毁云资源",
@@ -437,8 +437,10 @@ export const copy = {
     "runtime-protected": "不能结束或改写正在运行的命令检查",
     "cli-identity": "当前登录身份与资源绑定不符",
     "github-repo-delete": "删除 GitHub 仓库不允许审批",
+    "github-delete": "覆盖或删除仓库内容",
     "github-default-force": "不允许强推默认分支或未明确指定的分支",
     "github-dangerous": "GitHub 仓库的高风险变更",
+    "opaque-script": "内容不可见的脚本",
   } satisfies Record<GuardReasonId, string>,
   unparsedAllowed: "未能解析，已放行",
 
@@ -526,6 +528,8 @@ export const copy = {
       "无法读取当前账号的资源范围，请重新检测并刷新范围。",
     "cli-command-unsupported": () =>
       "当前 CLI 的命令或输出格式不受支持，请更新 CLI 后重新检测。",
+    "cli-node-outdated": () =>
+      "cf 需要 Node.js 22.23、24.22 或 26.12 及以上的对应大版本。请先升级 Node.js，再重新检测。",
     "terminal-command-invalid": () =>
       "这条命令不在支持的安装或登录指引中，请重新打开指引。",
     "note-has-secret": () => "这条笔记仍然疑似包含密钥。删掉密钥后再并入。",
@@ -574,10 +578,11 @@ export const copy = {
     loggedIn: (account: string | null) => (account ? `已登录 ${account}` : "已登录"),
     modeShort: {
       "confirm-changes": "查询直接执行，变更先问你",
-      "auto-ops": "常规变更直接执行，高危或不明确时仍询问",
+      "auto-ops": "除删除数据、重启主机、防火墙和 SSH 配置外都直接执行",
     } satisfies Record<Mode, string>,
     modeMenuLabel: (alias: string) => `${alias} 的档位`,
-    prodConfirm: (alias: string) => `${alias} 是生产环境。常规变更将不再逐次询问，高危操作仍需确认。`,
+    prodConfirm: (alias: string) =>
+      `${alias} 是生产环境。除删除数据、重启或关闭主机、修改防火墙、修改 SSH 配置或停止 sshd 外，变更都不再询问。`,
     switch: "切换",
   },
 
@@ -666,13 +671,23 @@ export const copy = {
       account ? `${version} · ${account}` : version,
     envCheckTitle: "Agent 在这些运行环境里用它",
     envCheckLabel: "各运行环境的 CLI 状态",
-    autoRefreshHint: "在终端完成操作后切回本窗口，将自动刷新状态。",
     noAgentEnvs:
       "还没有启用的 Agent，先到 Agent 页启用一个，这里才知道要检测哪个运行环境。",
     goAgents: "前往 Agent 页",
-    openTerminal: "打开终端",
+    installAndLogin: "安装并登录",
+    login: "登录",
+    viewCommands: "查看命令",
+    hideCommands: "收起命令",
+    reopenTerminal: "重新打开终端",
+    waitingInstall: "等待安装完成…",
+    waitingLogin: "等待登录…",
+    setupNoteIdle: "登录由 CLI 自己完成，CloudLink 不保存登录凭据。",
+    setupNoteInstall: "终端已打开。装好后会接着登录，按里面的提示操作；这里会自动更新。",
+    setupNoteLogin: "终端已打开。登录在浏览器里完成，按里面的提示操作；这里会自动更新。",
+    setupFailedInstall: "没有装上，原因在终端里。可以重试，或换一种安装方式。",
+    setupFailedLogin: "没有登录成功，原因在终端里。可以重试。",
+    setupTimedOut: "没有等到结果。可以重试。",
     switchAccount: "打开终端切换账号",
-    terminalOpened: (env: string) => `已打开 ${env} 的终端，完成后切回本窗口`,
     recheck: "重新检测",
     refreshScope: "刷新资源范围",
     copyCommand: "复制命令",
@@ -688,6 +703,8 @@ export const copy = {
     scopeEmpty: "账号下没有可选的资源。",
     scopeWaiting: "至少一个运行环境就绪后，才能拉取账号下的资源。",
     scopeAllBound: "没有还没接入的账号。",
+    scopeOtherProducts:
+      "可选范围只有域名、Workers 与 Pages。D1、R2、KV、WAF 等其他产品没有范围选择，按账号放行：确认变更逐条询问，自动运维除删除外直接执行。",
     linked: (alias: string) => `已关联服务器 ${alias}`,
     addAsServer: "同时加为 SSH 服务器",
     accountTitle: {
@@ -1033,10 +1050,11 @@ export const copy = {
   modeConfirm: {
     title: (alias: string) => `为生产资源 ${alias} 启用自动运维？`,
     description:
-      "范围内规则明确的常规变更将不再逐次询问；高危或不明确的操作仍需确认，红线和目标不明仍拒绝。生产自动运维会持续以琥珀色提醒。",
+      "删除数据、关键服务、内容不可见的脚本、重启或关闭主机、修改防火墙、修改 SSH 配置或停止 sshd 仍会先问；其余变更不再逐次询问。红线和目标不明仍拒绝。生产自动运维会持续以琥珀色提醒。",
     confirm: "启用自动运维",
     productionTitle: (name: string) => `把 ${name} 标记为生产环境并保持自动运维？`,
-    productionDescription: "这项资源正在自动运维。标记生产不会改变模式，常规变更仍不逐次询问，高危操作仍需确认；取消将保持原来的生产标记和模式。",
+    productionDescription:
+      "这项资源正在自动运维。标记生产不会改变模式；删除数据、重启或关闭主机、修改防火墙和 SSH 配置仍会先问，其余变更不逐次询问。取消将保持原来的生产标记和模式。",
     productionConfirm: "标记生产并保持",
   },
 
@@ -1424,7 +1442,7 @@ export const copy = {
   guardrails: {
     advisoryTitle: "红线是写给 Agent 的指令。",
     advisoryDescription:
-      "运行中由 CloudLink 执行入口检查两档操作：确认变更的变更先问，自动运维只直接执行规则明确的常规变更；高危操作仍需确认。Claude Code 护栏会引导纳管命令走入口，能防手滑，不是安全沙箱。需要硬隔离时，请配置低权限 SSH 用户。",
+      "运行中由 CloudLink 执行入口检查两档操作：确认变更的变更先问，自动运维除删除数据、重启关机、防火墙和 SSH 配置等外直接执行；红线和目标不明仍拒绝。Claude Code 护栏会引导纳管命令走入口，能防手滑，不是安全沙箱。需要硬隔离时，请配置低权限 SSH 用户。",
     custom: "自定义红线",
     customHint: "在任何档位下都会写进详情文件，逐字输出，顺序与这里一致。",
     add: "添加红线",
@@ -1775,7 +1793,10 @@ export const copy = {
     removed: (env: string) => `已移除 ${env} 的护栏`,
     /** 护栏规则页（PRD 6.6）：先讲拦什么，再讲确认变更时放行什么 */
     intro: "生产与非生产统一从 CloudLink 入口执行，运行中（含托盘）按模式检查。Claude Code 护栏引导可识别直连；其他工具、别名或凭据不保证纳管。",
-    standardTitle: "两档都需确认的高风险操作",
+    standardTitle: "两档都先问你",
+    confirmTitle: "只在确认变更时先问你",
+    confirmRow: "其他变更，以及识别不了的命令",
+    confirmExamples: ["docker restart", "systemctl restart", "apt install", "sh -c …"],
     alwaysTitle: "任何档位都拦下",
     categoryCount: (n: number) => `${n} 类`,
     readOnlyTitle: "两档都直接执行查询",
@@ -1784,8 +1805,9 @@ export const copy = {
       examples.length ? `${n} 条，例如 ${examples.join("、")}` : `${n} 条`,
     allowGroup: { system: "系统", services: "服务与日志", docker: "Docker", cloud: "云平台" },
     readOnlyNote:
-      "查询直接执行；确认变更的变更先问，自动运维只直接执行规则明确的常规变更。docker exec 和包装中的内容仍会检查；不接受交互式登录或不透明的标准输入脚本。",
-    honest: "两档的高危或目标明确但解析不明的命令都需允许一次；凭据红线和目标不明都拒绝。彻底退出后 Skill、入口和新操作可用，但停止 CloudLink 检查与审批；旧请求不因退出获批，异常不当退出。不是安全沙箱。",
+      "已识别的查看类命令直接执行。docker exec 和包装中的内容仍会检查，不支持交互式登录。",
+    honest:
+      "确认变更：变更先问你。自动运维：只有上面第一组先问你，其余直接执行。红线与目标不明，两档都拒绝。不是安全沙箱。",
     loading: "正在加载规则",
   },
 

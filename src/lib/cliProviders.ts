@@ -8,7 +8,7 @@ export const CLOUD_PROVIDERS: CliProvider[] = ["cloudflare", "vercel", "oracle"]
 export const CODE_HOSTS: CliProvider[] = ["github"]
 
 export const CLI_BINARY: Record<CliProvider, CliInfo["binary"]> = {
-  cloudflare: "wrangler",
+  cloudflare: "cf",
   vercel: "vercel",
   oracle: "oci",
   github: "gh",
@@ -30,6 +30,8 @@ export interface InstallMethod {
   label: string
   command: string
   requires?: "node" | "python"
+  /** 需要的最低运行时版本；不够时不显示必然失败的安装按钮 */
+  requiresVersion?: string
 }
 
 /** 安装方式，按推荐顺序；第一个是默认（AC2）。Windows 和 WSL 各一套 */
@@ -40,12 +42,19 @@ export function installMethods(provider: CliProvider, envId: EnvId): InstallMeth
       ? [{ id: "winget", label: "winget", command: "winget install --id GitHub.cli" }]
       : [{ id: "apt", label: "apt", command: "sudo apt install gh" }]
   }
-  if (provider !== "oracle") {
-    const pkg = CLI_BINARY[provider]
+  if (provider === "cloudflare") {
+    // cf 官方不支持 Bun；Node 需要 ^22.23.0 || ^24.22.0 || ^26.12.0
     return [
-      { id: "npm", label: "npm", command: `npm install -g ${pkg}`, requires: "node" },
-      { id: "pnpm", label: "pnpm", command: `pnpm add -g ${pkg}`, requires: "node" },
-      { id: "bun", label: "bun", command: `bun add -g ${pkg}` },
+      { id: "npm", label: "npm", command: "npm install --global cf", requires: "node", requiresVersion: "22.23" },
+      { id: "pnpm", label: "pnpm", command: "pnpm add --global cf", requires: "node", requiresVersion: "22.23" },
+    ]
+  }
+  if (provider === "vercel") {
+    // 与 Rust 的固定命令表逐字一致（cli/setup.rs 的测试会比对）
+    return [
+      { id: "npm", label: "npm", command: "npm install -g vercel", requires: "node" },
+      { id: "pnpm", label: "pnpm", command: "pnpm add -g vercel", requires: "node" },
+      { id: "bun", label: "bun", command: "bun add -g vercel" },
     ]
   }
   const pip: InstallMethod = { id: "pip", label: "pip", command: "pip install oci-cli", requires: "python" }
@@ -57,10 +66,10 @@ export function installMethods(provider: CliProvider, envId: EnvId): InstallMeth
 
 export const installCommand = (provider: CliProvider, envId: EnvId): string => installMethods(provider, envId)[0].command
 
-/** 登录命令。oci 优先引导长效的 ~/.oci/config，不用 1 小时过期的临时 session（AC2） */
+/** 登录命令。oci 用浏览器登录的 setup bootstrap，不再要用户手填 OCID（AC2，P9b） */
 export function loginCommand(provider: CliProvider): string {
-  if (provider === "cloudflare") return "wrangler login"
+  if (provider === "cloudflare") return "cf auth login"
   if (provider === "vercel") return "vercel login"
   if (provider === "github") return "gh auth login"
-  return "oci setup config"
+  return "oci setup bootstrap"
 }

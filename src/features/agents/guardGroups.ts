@@ -3,7 +3,7 @@ export type AllowGroupId = "system" | "services" | "docker" | "cloud"
 
 export const ALLOW_GROUP_ORDER: AllowGroupId[] = ["system", "services", "docker", "cloud"]
 
-const CLOUD = new Set(["wrangler", "vercel", "oci", "gh"])
+const CLOUD = new Set(["cf", "cloudflare", "vercel", "oci", "gh"])
 const SERVICES = new Set(["systemctl", "journalctl", "service", "nginx", "openssl", "curl", "wget", "crontab"])
 
 export function allowGroupOf(command: string): AllowGroupId {

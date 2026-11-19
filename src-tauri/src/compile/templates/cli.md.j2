@@ -16,6 +16,9 @@ PowerShell:
 {% else %}
 - Run `{{ binary }} <command>` in the local shell; it is already logged in. Never print or export its credentials.
 {% endif %}
+{% if provider_note %}
+- {{ provider_note }}
+{% endif %}
 {% if github %}
 - Host: {{ github_host }}
 - Owner: {{ github_owner or "not verified; preserve the historical selection" }}

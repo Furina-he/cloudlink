@@ -18,6 +18,7 @@ import { deliveryOutcome, deliveryProblemsText } from "@/lib/deliveryFeedback"
 import { toIpcError } from "@/lib/ipc"
 import { HOTKEY_OPTIONS, HOTKEYS } from "@/lib/hotkeys"
 import { cliEnvStatus, useAssetStore } from "@/stores/assets"
+import { useCliStore } from "@/stores/cli"
 import { emptyGithubScope, githubQueryKey, useGithubStore } from "@/stores/github"
 import { useTargetStore } from "@/stores/targets"
 import { setLeaveGuard, useUIStore } from "@/stores/ui"
@@ -34,6 +35,7 @@ const EMPTY_OWNERS: GithubOwner[] = []
 export function NewGithubForm() {
   const form = useForm<GithubScopeDraft>({ resolver: zodResolver(githubScopeSchema), defaultValues: { ownerLogin: "", mode: "auto", selectedRepoIds: [], excludedRepoIds: [] } })
   const ownerLogin = useWatch({ control: form.control, name: "ownerLogin" })
+  const setup = useCliStore((state) => state.setups.github)
   const all = useGithubStore((state) => state.byKey[githubQueryKey({})]) ?? emptyGithubScope
   const key = githubQueryKey({ ownerLogin: ownerLogin || undefined })
   const queried = useGithubStore((state) => state.byKey[key]) ?? emptyGithubScope
@@ -139,8 +141,14 @@ export function NewGithubForm() {
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-5 px-4.5 py-3.5" inert={confirming || busy}>
             <DetailGroup title={copy.cli.envCheckTitle} action={<RecheckButton detecting={loading} onClick={refresh} />}>
-              <CliEnvList provider="github" envStates={envStates} detecting={loading} onOpenTerminal={(envId, command) => serverActions.openTerminal(envId, command, "github", null)} />
-              <p className="text-xs text-muted-foreground">{copy.cli.autoRefreshHint}</p>
+              <CliEnvList
+                provider="github"
+                envStates={envStates}
+                detecting={loading}
+                setup={setup}
+                onSetup={(envId, method) => serverActions.startCliSetup("github", envId, method, null)}
+              />
+              <p className="text-xs text-muted-foreground">{copy.cli.setupNoteIdle}</p>
             </DetailGroup>
             {owners.length > 0 && <GithubOwnerPicker owners={owners} value={ownerLogin} taken={taken} onChange={(login) => {
               form.reset({ ownerLogin: login, mode: "auto", selectedRepoIds: [], excludedRepoIds: [] })

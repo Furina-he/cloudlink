@@ -2,6 +2,7 @@
 
 mod assets;
 pub mod backend;
+mod cli_setup;
 pub mod commands;
 mod execution;
 mod feedback;

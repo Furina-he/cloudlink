@@ -1,18 +1,16 @@
-// Mock 命令：云平台 CLI（F-104）。检测读 db.cliMachine，「打开终端」后把那个环境改成已就绪，模拟用户在终端里装好或登录好
+// Mock 命令：云平台 CLI（F-104）。检测读 db.cliMachine；一键安装登录按阶段发事件，最后把那个环境改成已就绪
+import { emit } from "@tauri-apps/api/event"
 import type {
   CliEnvState,
   CliProvider,
   CliScopeItem,
+  CliSetupState,
+  CliSetupStep,
   EnvId,
   ServerAsset,
   GithubScopeResult,
 } from "@/bindings"
-import {
-  CLI_BINARY,
-  CLI_PROVIDERS,
-  installMethods,
-  loginCommand,
-} from "@/lib/cliProviders"
+import { CLI_BINARY, installMethods } from "@/lib/cliProviders"
 import { cliAccounts } from "./fixtures"
 import { githubHandlers } from "./handlers-github"
 import { cancelMockExecutions } from "./handlers-execution"
@@ -25,6 +23,7 @@ import {
   now,
   recompile,
   saveSnapshot,
+  scenario,
   sleep,
 } from "./state"
 import { cliEnvStatus } from "@/stores/assets"
@@ -168,35 +167,55 @@ async function setScope(assetId: string, selectedIds: string[]) {
   return saveSnapshot(asset)
 }
 
-/** 终端里完成安装或登录：这个命令属于哪个 CLI，就把那个 CLI 在这个环境里改成已就绪 */
-function openTerminal(req: { envId: EnvId; command: string }) {
-  const provider = CLI_PROVIDERS.find(
-    (p) =>
-      req.command === loginCommand(p) ||
-      installMethods(p, req.envId).some(
-        (method) => method.command === req.command
-      )
-  )
-  if (!provider) fail("terminal-command-invalid")
-  db.cliMachine[provider!][req.envId] = {
-    installed: true,
-    version: "1.0.0",
-    path: `${CLI_BINARY[provider!]}`,
-    authenticated: true,
-    expired: false,
-    account: accountOf[provider!],
-    accounts: cliAccounts[accountOf[provider!]],
-    checkedAt: now(),
+/** 一键安装登录（F-104 AC2，P9b）：固定命令由后端表决定；Mock 只用阶段事件模拟终端结果 */
+function startSetup(req: { provider: CliProvider; envId: EnvId; method: string }) {
+  const machine = db.cliMachine[req.provider]
+  if (!agentEnvs().includes(req.envId)) fail("terminal-command-invalid")
+  if (!machine[req.envId]) fail("terminal-command-invalid")
+  if (!installMethods(req.provider, req.envId).some((method) => method.id === req.method)) fail("terminal-command-invalid")
+  const current = machine[req.envId] as CliEnvState
+  const id = `setup_${Math.random().toString(16).slice(2)}`
+  const installed = current.installed
+  const initial: CliSetupState = installed ? "waiting-login" : "waiting-install"
+  const changed = (state: CliSetupState, step?: CliSetupStep) =>
+    void emit("cli-setup://changed", { id, provider: req.provider, envId: req.envId, state, step })
+  const ready = () => {
+    db.cliMachine[req.provider][req.envId] = {
+      installed: true,
+      version: "1.0.0",
+      path: CLI_BINARY[req.provider],
+      authenticated: true,
+      expired: false,
+      account: accountOf[req.provider],
+      accounts: cliAccounts[accountOf[req.provider]],
+      checkedAt: now(),
+    }
+    changed("ready")
   }
+  // P9 截图用慢速场景：让等待安装／等待登录各停留几秒
+  const slow = scenario === "cli-setup-slow"
+  if (scenario === "cli-setup-failed") {
+    setTimeout(() => changed("failed", installed ? "login" : "install"), 900)
+  } else if (installed) {
+    setTimeout(() => changed("waiting-login"), 300)
+    setTimeout(ready, slow ? 6000 : 900)
+  } else {
+    setTimeout(() => {
+      machine[req.envId] = { ...current, installed: true, version: "1.0.0" }
+      changed("waiting-login")
+    }, slow ? 2500 : 600)
+    setTimeout(ready, slow ? 7000 : 1200)
+  }
+  return { id, state: initial }
 }
 
 type Args = Record<string, unknown>
 
 export const cliHandlers: Record<string, (a: Args) => unknown> = {
   detect_cli_environment: (a) => detect(a.req as CliRequest),
+  start_cli_setup: (a) =>
+    startSetup(a.req as { provider: CliProvider; envId: EnvId; method: string }),
   refresh_cli_scope: (a) => refreshScope(a.req as CliRequest),
   set_cli_scope: (a) =>
     setScope(a.assetId as string, a.selectedIds as string[]),
-  open_env_terminal: (a) =>
-    openTerminal(a.req as { envId: EnvId; command: string }),
 }

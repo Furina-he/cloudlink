@@ -1,7 +1,15 @@
 // 云平台 CLI 的检测与范围拉取（F-104）。新建向导里还没有资源，结果放在这里；已保存的资源由后端更新后再同步回 useAssetStore
 import { create } from "zustand"
 
-import type { CliProvider, CliScopeItem, IpcError } from "@/bindings"
+import type {
+  CliProvider,
+  CliScopeItem,
+  CliSetupChangedEvent,
+  CliSetupState,
+  CliSetupStep,
+  EnvId,
+  IpcError,
+} from "@/bindings"
 import { ipc, toIpcError, type CliEnvStates } from "@/lib/ipc"
 import { cliEnvStatus, useAssetStore } from "./assets"
 
@@ -15,6 +23,8 @@ export interface CliDetection {
   scopeAccount: string | null
   scopeError: IpcError | null
   failed: boolean
+  /** 检测本身失败的原因（例如 cf 需要更新的 Node.js） */
+  error: IpcError | null
 }
 
 const EMPTY: CliDetection = {
@@ -25,6 +35,7 @@ const EMPTY: CliDetection = {
   scopeAccount: null,
   scopeError: null,
   failed: false,
+  error: null,
 }
 
 interface CliState {
@@ -41,11 +52,21 @@ interface CliState {
   /** 向导里勾选范围（保存时一并提交） */
   setDraftScope: (provider: CliProvider, scope: CliScopeItem[]) => void
   clear: (provider: CliProvider) => void
-  /** 「打开终端」之后等用户切回窗口：值是资源 id，新建向导里为 null（F-104 AC2） */
-  awaiting: Partial<Record<CliProvider, string | null>>
-  awaitFocus: (provider: CliProvider, assetId: string | null) => void
-  /** 窗口重新聚焦：重新检测正在等待的云平台 */
-  onFocus: () => void
+  /** 进行中的一键安装并登录（F-104 AC2，P9b）：界面只显示这一项设置的等待／失败状态 */
+  setups: Partial<Record<CliProvider, CliSetupRun>>
+  /** 用户点击后启动固定命令；assetId 为 null 表示新建向导里还没有资源 */
+  startSetup: (provider: CliProvider, envId: EnvId, method: string, assetId: string | null) => Promise<void>
+  _onSetupChanged: (event: CliSetupChangedEvent) => void
+}
+
+export interface CliSetupRun {
+  id: string
+  provider: CliProvider
+  envId: EnvId
+  state: Exclude<CliSetupState, "ready">
+  step?: CliSetupStep
+  assetId: string | null
+  method: string
 }
 
 export const useCliStore = create<CliState>()((set, get) => {
@@ -69,22 +90,39 @@ export const useCliStore = create<CliState>()((set, get) => {
 
   return {
     byProvider: {},
-    awaiting: {},
+    setups: {},
 
-    awaitFocus: (provider, assetId) =>
-      set((s) => ({ awaiting: { ...s.awaiting, [provider]: assetId } })),
+    startSetup: async (provider, envId, method, assetId) => {
+      const started = await ipc.startCliSetup({ provider, envId, method })
+      const state = started.state === "ready" ? "waiting-login" : started.state
+      set((s) => ({
+        setups: {
+          ...s.setups,
+          [provider]: { id: started.id, provider, envId, state, step: started.step, assetId, method },
+        },
+      }))
+      if (started.state === "ready") void get().detect(provider, assetId ?? undefined).catch(() => undefined)
+    },
 
-    onFocus: () => {
-      const awaiting = get().awaiting
-      set({ awaiting: {} })
-      for (const [provider, assetId] of Object.entries(awaiting) as [
-        CliProvider,
-        string | null,
-      ][]) {
-        get()
-          .detect(provider, assetId ?? undefined)
-          .catch(() => undefined)
+    _onSetupChanged: (event) => {
+      const run = get().setups[event.provider]
+      if (!run || run.id !== event.id) return
+      if (event.state === "ready") {
+        set((s) => {
+          const setups = { ...s.setups }
+          delete setups[event.provider]
+          return { setups }
+        })
+        // 登录结果以重新检测为准，同时把已保存资源的状态和范围刷新到界面
+        void get().detect(event.provider, run.assetId ?? undefined).catch(() => undefined)
+        return
       }
+      set((s) => ({
+        setups: {
+          ...s.setups,
+          [event.provider]: { ...run, state: event.state, step: event.step },
+        },
+      }))
     },
 
     detect: async (provider, assetId) => {
@@ -94,6 +132,7 @@ export const useCliStore = create<CliState>()((set, get) => {
       patch(provider, {
         detecting: true,
         failed: false,
+        error: null,
         scopeLoading: false,
         scopeError: null,
       })
@@ -102,7 +141,7 @@ export const useCliStore = create<CliState>()((set, get) => {
         envStates = await ipc.detectCliEnvironment({ provider, assetId })
       } catch (e) {
         if (detectionRequests[provider] !== request) return
-        patch(provider, { detecting: false, failed: true })
+        patch(provider, { detecting: false, failed: true, error: toIpcError(e) })
         throw toIpcError(e)
       }
       if (detectionRequests[provider] !== request) return
@@ -180,8 +219,10 @@ export const useCliStore = create<CliState>()((set, get) => {
       next(scopeRequests, provider)
       set((s) => {
         const byProvider = { ...s.byProvider }
+        const setups = { ...s.setups }
         delete byProvider[provider]
-        return { byProvider }
+        delete setups[provider]
+        return { byProvider, setups }
       })
     },
   }

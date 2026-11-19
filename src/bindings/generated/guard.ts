@@ -8,7 +8,7 @@ export type GuardDetailId = "entry-missing" | "self-test-failed" | "hooks-disabl
 
 export type GuardPlanned = { entry: string, backupPath: string, };
 
-export type GuardReasonId = "read-only" | "credential-read" | "volume-delete" | "data-delete" | "host-reboot" | "firewall" | "ssh-config" | "critical-service" | "file-transfer" | "interactive" | "cli-env-export" | "cli-write" | "cli-destroy" | "cli-account" | "cli-scope" | "unparsed" | "execution-channel" | "runtime-protected" | "cli-identity" | "github-repo-delete" | "github-default-force" | "github-dangerous";
+export type GuardReasonId = "read-only" | "credential-read" | "volume-delete" | "data-delete" | "host-reboot" | "firewall" | "ssh-config" | "critical-service" | "file-transfer" | "interactive" | "cli-env-export" | "cli-write" | "cli-destroy" | "cli-account" | "cli-scope" | "unparsed" | "execution-channel" | "runtime-protected" | "cli-identity" | "github-repo-delete" | "github-delete" | "github-default-force" | "github-dangerous" | "opaque-script";
 
 export type GuardRuleGroup = { id: GuardReasonId, examples: Array<string>, };
 

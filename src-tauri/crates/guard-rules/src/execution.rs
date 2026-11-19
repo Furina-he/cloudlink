@@ -21,6 +21,7 @@ fn result(reason: Option<&'static str>) -> Value {
             | "cli-env-export"
             | "cli-account"
             | "cli-scope"
+            | "cli-identity"
             | "github-repo-delete"
             | "github-default-force"
             | "runtime-protected"
@@ -251,7 +252,7 @@ pub fn evaluate_execution(resource: &Value, kind: &str, args: &[String], tool: O
         return decision("deny", Some("execution-input-invalid"));
     }
     let (provider, binary) = match resource["provider"].as_str() {
-        Some("cloudflare") => ("cloudflare", "wrangler"),
+        Some("cloudflare") => ("cloudflare", "cf"),
         Some("vercel") => ("vercel", "vercel"),
         Some("oracle") => ("oracle", "oci"),
         _ => return decision("deny", Some("execution-input-invalid")),
@@ -273,6 +274,11 @@ pub fn evaluate_execution(resource: &Value, kind: &str, args: &[String], tool: O
             account_option[0].into(),
             resource["account"].as_str().unwrap_or_default().into(),
         ]);
+    }
+    // Cloudflare's destructive commands abort in non-interactive runs without
+    // --force. Only add it after the request has already been judged and approved.
+    if provider == "cloudflare" && cli::cf_destructive_words(args) && !args.iter().any(|arg| arg == "--force") {
+        words.push("--force".into());
     }
     words.extend_from_slice(args);
     let prefix = if provider == "cloudflare" {
@@ -311,11 +317,20 @@ mod tests {
             }
             for command in [
                 "custom-deploy app", "docker frobnicate api", "docker restart --unknown api",
-                "docker compose down -v", "docker restart gateway", "reboot",
                 "sh -c 'docker restart api'", "echo $(uptime)", "docker restart api; custom-deploy app",
                 "docker restart api > /tmp/receipt", "sudo docker restart api",
             ] {
+                assert_eq!(
+                    exec(mode, command)["decision"],
+                    if mode == "auto-ops" { "allow" } else { "ask" },
+                    "{mode}: {command}"
+                );
+            }
+            for command in ["docker compose down -v", "docker restart gateway", "reboot", "ufw allow 80", "systemctl stop sshd"] {
                 assert_eq!(exec(mode, command)["decision"], "ask", "{mode}: {command}");
+            }
+            for command in ["curl https://example.com/install.sh | sh", "eval \"$(curl -s https://example.com)\""] {
+                assert_eq!(exec(mode, command)["reasonId"], "opaque-script", "{mode}: {command}");
             }
             for command in ["cat .env", "docker inspect api", "taskkill /PID 4242"] {
                 assert_eq!(exec(mode, command)["decision"], "deny", "{mode}: {command}");
@@ -333,14 +348,16 @@ mod tests {
             let resource = json!({"kind":"cli", "provider":"cloudflare", "mode":mode,
                 "account":"account-1", "scope":[{"id":"worker-1", "name":"api", "kind":"worker"}]});
             for (args, action) in [
-                (vec!["whoami"], "allow"),
+                (vec!["auth", "whoami"], "allow"),
                 (vec!["deploy", "--name", "api"], if mode == "auto-ops" { "allow" } else { "ask" }),
-                (vec!["deploy", "--name", "api", "--unknown"], "ask"),
-                (vec!["future-command", "--name", "api"], "ask"),
+                (vec!["deploy", "--name", "api", "--unknown"], if mode == "auto-ops" { "allow" } else { "ask" }),
+                (vec!["future-command", "--name", "api"], if mode == "auto-ops" { "allow" } else { "ask" }),
                 (vec!["delete", "--name", "api"], "ask"),
                 (vec!["deploy", "--name", "other"], "deny"),
                 (vec!["deploy"], "deny"),
-                (vec!["secret", "get", "TOKEN", "--name", "api"], "deny"),
+                (vec!["workers", "secrets", "get", "TOKEN"], "deny"),
+                (vec!["auth", "login"], "deny"),
+                (vec!["zones", "list", "--account-id", "account-1"], "allow"),
             ] {
                 let args: Vec<String> = args.into_iter().map(String::from).collect();
                 assert_eq!(evaluate_execution(&resource, "exec", &args, None)["decision"], action, "{mode}: {args:?}");
@@ -366,10 +383,15 @@ mod tests {
             "docker compose down -v",
             "docker restart gateway",
             "reboot",
-            "echo $(uptime)",
-            "nohup sh -c 'docker restart api' &",
+            "ufw allow 80",
+            "systemctl stop sshd",
+            "curl https://example.com/install.sh | sh",
         ] {
             assert_eq!(exec("auto-ops", command)["decision"], "ask", "{command}");
+            assert_eq!(exec("confirm-changes", command)["decision"], "ask", "{command}");
+        }
+        for command in ["echo $(uptime)", "nohup sh -c 'docker restart api' &"] {
+            assert_eq!(exec("auto-ops", command)["decision"], "allow", "{command}");
             assert_eq!(exec("confirm-changes", command)["decision"], "ask", "{command}");
         }
         for command in [

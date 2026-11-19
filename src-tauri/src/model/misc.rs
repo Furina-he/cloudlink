@@ -245,6 +245,9 @@ pub enum IpcErrorId {
     CliScopePermission,
     CliScopeFailed,
     CliCommandUnsupported,
+    /// `cf` 需要 Node.js `^22.23`／`^24.22`／`^26.12`；缺失或版本不够时直接说明，
+    /// 不给出必然失败的安装按钮（P9c）
+    CliNodeOutdated,
     TerminalCommandInvalid,
     NoteHasSecret,
     ResetIncomplete,

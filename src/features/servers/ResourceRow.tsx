@@ -317,6 +317,7 @@ export function ServerRow({ asset, fresh }: { asset: ServerAsset; fresh: boolean
 /** 云平台行：不写账号和范围摘要（在详情里）；某个运行环境未就绪时写「WSL 未登录」并给「去登录」 */
 export function CliRow({ asset, fresh }: { asset: CliAsset; fresh: boolean }) {
   const cliDetecting = useCliStore((s) => !!s.byProvider[asset.cliProvider]?.detecting)
+  const setup = useCliStore((s) => s.setups[asset.cliProvider])
   const githubDetecting = useGithubStore((s) => !!s.byKey[asset.id]?.loading)
   const multipleGithub = useAssetStore((s) => s.ids.filter((id) => s.byId[id]?.type === "cli" && (s.byId[id] as CliAsset).cliProvider === "github").length > 1)
   const detecting = asset.cliProvider === "github" ? githubDetecting : cliDetecting
@@ -327,6 +328,8 @@ export function CliRow({ asset, fresh }: { asset: CliAsset; fresh: boolean }) {
   const problem = selectCliProblem(asset)
   const account = selectCliAccount(asset)
   const none = Object.keys(asset.cli.envStates).length === 0
+  const run = setup && setup.assetId === asset.id && problem && setup.envId === problem.envId ? setup : undefined
+  const waiting = run?.state === "waiting-install" || run?.state === "waiting-login"
   const state: ConnState = none ? "unverified" : problem ? (problem.status === "not-installed" ? "failed" : "changed") : "connected"
   const word = none ? copy.cli.unchecked : problem ? copy.cli.envProblem(copy.env.short(problem.envId), copy.cli.status[problem.status]) : copy.row.loggedIn(account ?? null)
 
@@ -336,12 +339,18 @@ export function CliRow({ asset, fresh }: { asset: CliAsset; fresh: boolean }) {
       fresh={fresh}
       mark={<ProviderMark provider={asset.cliProvider} className="size-4.5" />}
       subtitle={asset.cliProvider === "github" && multipleGithub ? asset.github?.owner?.login ?? copy.github.ownerMissing : undefined}
-      dot={detecting ? <Spinner className="size-3.5" aria-hidden /> : <Dot state={state} label={word} />}
+      dot={detecting || waiting ? <Spinner className="size-3.5" aria-hidden /> : <Dot state={state} label={word} />}
       problem={detecting ? copy.cli.checking : state !== "connected" ? word : undefined}
       stateWords={`${word}，${copy.mode[asset.agent.mode]}`}
       fix={
-        detecting ? undefined : problem ? (
-          <FixButton onClick={() => serverActions.openCliTerminal(asset, problem.envId)}>{copy.cli.fix[problem.status]}</FixButton>
+        detecting ? undefined : waiting ? (
+          <span role="status" className="text-xs text-muted-foreground">
+            {run?.state === "waiting-install" ? copy.cli.waitingInstall : copy.cli.waitingLogin}
+          </span>
+        ) : problem ? (
+          <FixButton onClick={() => serverActions.openCliTerminal(asset, problem.envId)}>
+            {run?.state === "failed" || run?.state === "timed-out" ? copy.common.retry : copy.cli.fix[problem.status]}
+          </FixButton>
         ) : none ? (
           <FixButton onClick={recheck}>{copy.cli.recheck}</FixButton>
         ) : undefined

@@ -4,9 +4,7 @@ $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $OutputEncoding = [Text.UTF8Encoding]::new($false)
 # Reassert these after the login profiles, which can replace inherited environment values.
-$env:WRANGLER_SEND_METRICS = 'false'
-$env:WRANGLER_WRITE_LOGS = 'false'
-$env:WRANGLER_LOG_SANITIZE = 'true'
+$env:CF_SEND_TELEMETRY = 'false'
 $env:VERCEL_TELEMETRY_DISABLED = '1'
 $env:DO_NOT_TRACK = '1'
 $env:NO_COLOR = '1'
@@ -19,7 +17,6 @@ $clStarted = [DateTime]::UtcNow
 $clMaxItems = 500
 $clMaxPages = 10
 $clMaxBytes = 1048576
-$clCfApi = 'https://api.cloudflare.com/client/v4'
 $clGhOwner = '^[A-Za-z0-9][A-Za-z0-9-]{0,38}$'
 function Throw-Cl([string]$id) { throw $id }
 # A CLI installed after CloudLink started is on the registry PATH, not on the one this process
@@ -142,66 +139,19 @@ function Project-ClIdentity($data) {
   }
   return $out
 }
-function Get-ClCf([string]$path, $query) {
-  if ($path -notmatch '^/zones$|^/zones/[a-fA-F0-9]{32}/dns_records$|^/accounts/[a-fA-F0-9]{32}/(workers/scripts|pages/projects)$') { Throw-Cl 'cli-scope-failed' }
-  $pairs = @($query.GetEnumerator() | ForEach-Object { [Uri]::EscapeDataString([string]$_.Key) + '=' + [Uri]::EscapeDataString([string]$_.Value) })
-  $url = $clCfApi + $path + '?' + ($pairs -join '&')
-  $request = [Net.HttpWebRequest]::CreateHttp($url)
-  $request.Method = 'GET'
-  $request.AllowAutoRedirect = $false
-  $request.Timeout = (Get-ClTimeout) * 1000
-  $request.ReadWriteTimeout = $request.Timeout
-  foreach ($key in $clAuthHeaders.Keys) { $request.Headers[$key] = $clAuthHeaders[$key] }
-  $request.Accept = 'application/json'
-  try { $response = $request.GetResponse() }
-  catch {
-    # PowerShell wraps a failed .NET call, so the HTTP status sits on an inner WebException.
-    $failure = $_.Exception
-    while ($failure -and $failure -isnot [Net.WebException]) { $failure = $failure.InnerException }
-    $failedResponse = if ($failure) { $failure.Response } else { $null }
-    try {
-      if ($failedResponse -and [int]$failedResponse.StatusCode -in @(401,403)) { Throw-Cl 'cli-scope-permission' }
-      if ($failedResponse -and [int]$failedResponse.StatusCode -eq 404 -and $path -match '^/accounts/[^/]+/(workers/scripts|pages/projects)$') {
-        return @{success=$true;result=@();result_info=@{total_pages=1}}
-      }
-      Throw-Cl 'cli-scope-failed'
-    } finally { if ($failedResponse) { $failedResponse.Dispose() } }
-  }
-  try {
-    if ([int]$response.StatusCode -ne 200) { Throw-Cl 'cli-scope-failed' }
-    $stream = $response.GetResponseStream()
-    $memory = [IO.MemoryStream]::new()
-    try {
-      $buffer = New-Object byte[] 8192
-      while (($count = $stream.Read($buffer,0,$buffer.Length)) -gt 0) {
-        if ($memory.Length + $count -gt $clMaxBytes) { Throw-Cl 'cli-scope-failed' }
-        $memory.Write($buffer,0,$count)
-        Get-ClTimeout > $null
-      }
-      $body = [Text.Encoding]::UTF8.GetString($memory.ToArray())
-      try { $data = ConvertFrom-Json -InputObject $body -ErrorAction Stop } catch { Throw-Cl 'cli-scope-failed' }
-      if ($data.success -ne $true -or $data.result -isnot [array]) {
-        if (@($data.errors | Where-Object { $_.code -in @(10000,10001,9103,9106,9109) }).Count) { Throw-Cl 'cli-scope-permission' }
-        Throw-Cl 'cli-scope-failed'
-      }
-      return $data
-    } finally { $memory.Dispose(); $stream.Dispose() }
-  } finally { $response.Dispose() }
-}
-function Get-ClCfList([string]$path, $query, [int]$size = 100) {
+function Get-ClCfList([string[]]$arguments, [int]$size = 100) {
   $all = [Collections.Generic.List[object]]::new()
-  # A smaller page size gets more requests, so every list keeps the same item ceiling.
+  # List commands return one JSON page; keep the same item ceiling across sizes.
   $limit = [Math]::Ceiling($clMaxPages * 100 / $size)
   for ($page=1; $page -le $limit; $page++) {
-    $query.page=$page; $query.per_page=$size
-    $data=Get-ClCf $path $query
-    foreach ($item in $data.result) {
+    $data=Invoke-ClJson ($arguments + @('--page',[string]$page,'--per-page',[string]$size))
+    if ($data -isnot [array]) { Throw-Cl 'cli-command-unsupported' }
+    if ($data.Count -eq 0) { return ,$all.ToArray() }
+    foreach ($item in $data) {
       if ($all.Count -ge 1000) { Throw-Cl 'cli-scope-failed' }
       $all.Add($item)
     }
-    $total=$data.result_info.total_pages
-    if ($null -ne $total -and ([string]$total -notmatch '^[0-9]{1,16}$' -or [decimal]$total -gt 9007199254740991)) { Throw-Cl 'cli-scope-failed' }
-    if (($null -ne $total -and $page -ge $total) -or ($null -eq $total -and @($data.result).Count -lt $size)) { return ,$all.ToArray() }
+    if ($data.Count -lt $size) { return ,$all.ToArray() }
   }
   Throw-Cl 'cli-scope-failed'
 }
@@ -307,9 +257,11 @@ try {
   if ($clProvider -eq 'github' -and $clOperation -in @('github-scope','github-owners')) {
     $clResult=Get-ClGithub
   } elseif ($clOperation -eq 'discover') {
-    $name = switch ($clProvider) { 'cloudflare' { 'wrangler' } 'vercel' { 'vercel' } 'oracle' { 'oci' } 'github' { 'gh' } default { Throw-Cl 'cli-command-unsupported' } }
+    $name = switch ($clProvider) { 'cloudflare' { 'cf' } 'vercel' { 'vercel' } 'oracle' { 'oci' } 'github' { 'gh' } default { Throw-Cl 'cli-command-unsupported' } }
     $found = Get-Command -Name $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    $clResult = if ($found) { @{ installed=$true; path=$found.Source } } else { @{ installed=$false } }
+    $node = Get-Command -Name node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    $nodeVersion = if ($node) { (& $node.Source --version 2>&1 | Out-String).Trim() } else { '' }
+    $clResult = if ($found) { @{ installed=$true; path=$found.Source; nodeVersion=$nodeVersion } } else { @{ installed=$false; nodeVersion=$nodeVersion } }
   } elseif ($clOperation -eq 'version') {
     $old=$ErrorActionPreference; $ErrorActionPreference='Continue'
     try { $text=(& $clBinary --version 2>&1 | Out-String) } finally { $ErrorActionPreference=$old }
@@ -337,7 +289,7 @@ try {
       }
     } else {
       try {
-        $data=if ($clProvider -eq 'cloudflare') { Invoke-ClJson @('whoami','--json') } else { Invoke-ClJson @('whoami','--format=json') }
+        $data=if ($clProvider -eq 'cloudflare') { Invoke-ClJson @('auth','whoami','--json') } else { Invoke-ClJson @('whoami','--format=json') }
         $clResult=Project-ClIdentity $data
         if ($clProvider -eq 'vercel' -and $clResult.loggedIn -ne $false -and $clResult.authenticated -ne $false) {
           $teams=[Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal); $seen=[Collections.Generic.HashSet[string]]::new(); $next=$null
@@ -415,50 +367,43 @@ try {
       }
     } elseif ($clProvider -eq 'cloudflare') {
       if ($clAccount -notmatch '^[a-fA-F0-9]{32}$') { Throw-Cl 'cli-account-unavailable' }
-      $auth=Invoke-ClJson @('auth','token','--json')
-      if ($auth.type -in @('oauth','api_token') -and $auth.token -is [string] -and $auth.token -and $auth.token -notmatch '[\x00-\x1f\x7f]') {
-        $clAuthHeaders=@{Authorization=('Bearer '+$auth.token)}
-      } elseif ($auth.type -eq 'api_key' -and $auth.key -is [string] -and $auth.key -and $auth.email -is [string] -and $auth.email -and ($auth.key+$auth.email) -notmatch '[\x00-\x1f\x7f]') {
-        $clAuthHeaders=@{'X-Auth-Key'=$auth.key;'X-Auth-Email'=$auth.email}
-      } else { Throw-Cl 'cli-command-unsupported' }
-      $auth=$null
-      try {
-        $zones=Get-ClCfList '/zones' @{'account.id'=$clAccount}
-        $dnsReadable=$true
-        foreach ($zone in $zones) {
-          if ($zone.account.id -ne $clAccount -or $zone.id -notmatch '^[a-fA-F0-9]{32}$') { Throw-Cl 'cli-scope-failed' }
-          $addresses=[Collections.Generic.List[string]]::new()
-          if ($dnsReadable) {
-            try {
-              foreach ($type in @('A','AAAA')) {
-                $records=Get-ClCfList ('/zones/'+$zone.id+'/dns_records') @{type=$type}
-                foreach ($record in $records) { if ($record.content -is [string] -and $record.content -and $addresses.Count -lt 500) { $addresses.Add($record.content) } }
-              }
-            } catch {
-              # Addresses only link a zone to a recorded server. A login that lists zones but
-              # may not read their records (wrangler login has no such scope) keeps its catalog.
-              if ($_.Exception.Message -ne 'cli-scope-permission') { throw }
-              $dnsReadable=$false
+      $env:CLOUDFLARE_ACCOUNT_ID = $clAccount
+      $dnsReadable=$true
+      $zones=Get-ClCfList @('zones','list','--account-id',$clAccount)
+      foreach ($zone in $zones) {
+        if ($zone.id -notmatch '^[a-fA-F0-9]{32}$' -or -not $zone.name -or ($zone.account -and $zone.account.id -and $zone.account.id -cne $clAccount)) { Throw-Cl 'cli-scope-failed' }
+        $addresses=[Collections.Generic.List[string]]::new()
+        if ($dnsReadable) {
+          try {
+            foreach ($type in @('A','AAAA')) {
+              $records=Get-ClCfList @('dns','records','list','--zone',$zone.id,'--type',$type)
+              foreach ($record in $records) { if ($record.content -is [string] -and $record.content -and $addresses.Count -lt 500) { $addresses.Add($record.content) } }
             }
+          } catch {
+            # Addresses only link a zone to a recorded server. A login that lists zones but
+            # may not read their records keeps its catalog.
+            if ($_.Exception.Message -ne 'cli-scope-permission') { throw }
+            $dnsReadable=$false
           }
-          Add-ClItem @{id=('zone:'+$zone.id);kind='zone';name=(Clean-Cl $zone.name);addresses=@($addresses.ToArray())}
         }
-        # The scripts endpoint is SinglePage and ignores page/per_page.
-        $workers=Get-ClCf ('/accounts/'+$clAccount+'/workers/scripts') @{}
-        foreach ($worker in $workers.result) {
-          $workerId=if ($worker.tag -is [string] -and $worker.tag) { $worker.tag } else { $worker.id }
-          Add-ClItem @{id=('worker:'+$workerId);kind='worker';name=(Clean-Cl $worker.id)}
-        }
-        # Pages rejects a per_page above 10 with HTTP 400 (error 8000024).
-        $pages=Get-ClCfList ('/accounts/'+$clAccount+'/pages/projects') @{} 10
-        foreach ($project in $pages) {
-          $source=$project.source.config
-          $repoSource=if ($project.source.type -ceq 'github') {Project-ClGithubSource @{type='github';owner=$source.owner;repo_name=$source.repo_name;repo_id=$source.repo_id}} else {$null}
-          $item=@{id=('pages:'+$project.name);kind='pages';name=(Clean-Cl $project.name)}
-          if ($null -ne $repoSource) {$item.repoSource=$repoSource}
-          Add-ClItem $item
-        }
-      } finally { $clAuthHeaders=$null }
+        Add-ClItem @{id=('zone:'+$zone.id);kind='zone';name=(Clean-Cl $zone.name);addresses=@($addresses.ToArray())}
+      }
+      $workers=Get-ClCfList @('workers','list')
+      foreach ($worker in $workers) {
+        if (-not $worker.id -and -not $worker.name) { Throw-Cl 'cli-scope-failed' }
+        $workerId=if ($worker.id) { $worker.id } else { $worker.name }
+        $workerName=if ($worker.name) { $worker.name } else { $worker.id }
+        Add-ClItem @{id=('worker:'+$workerId);kind='worker';name=(Clean-Cl $workerName)}
+      }
+      $pages=Get-ClCfList @('pages','list')
+      foreach ($project in $pages) {
+        if (-not $project.name) { Throw-Cl 'cli-scope-failed' }
+        $source=$project.source.config
+        $repoSource=if ($project.source.type -ceq 'github') {Project-ClGithubSource @{type='github';owner=$source.owner;repo_name=$source.repo_name;repo_id=$source.repo_id}} else {$null}
+        $item=@{id=('pages:'+$project.name);kind='pages';name=(Clean-Cl $project.name)}
+        if ($null -ne $repoSource) {$item.repoSource=$repoSource}
+        Add-ClItem $item
+      }
     } elseif ($clProvider -eq 'github') {
       $clResult=Get-ClGithub
     } else { Throw-Cl 'cli-command-unsupported' }

@@ -114,6 +114,144 @@ pub(crate) fn invocation(words: &[String]) -> Invocation {
     out
 }
 
+/// Opaque scripts feed content CloudLink cannot inspect into an interpreter.
+/// This is a text-level backstop for `curl … | sh`, `base64 -d … | sh`,
+/// `eval "$(…)"`, and shell `-c "$(…)"`, including inside expansions.
+pub(crate) fn opaque_script(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let segments: Vec<&str> = lower.split('|').collect();
+    for pair in segments.windows(2) {
+        let left = pair[0].trim();
+        let right = pair[1].trim_start();
+        let Some(word) = right.split_whitespace().next() else {
+            continue;
+        };
+        if !["sh", "bash", "zsh", "dash"].contains(&word) || left.is_empty() {
+            continue;
+        }
+        // A `-c` script is literal and judged normally; a bare shell (or `-s`)
+        // reads content CloudLink cannot see.
+        let rest = right[word.len()..].trim_start();
+        let reads_stdin = rest.is_empty()
+            || rest.starts_with("-s")
+            || rest
+                .split_whitespace()
+                .all(|option| option.starts_with('-') && option != "-c" && option != "-lc" && option != "-ic");
+        if reads_stdin {
+            return true;
+        }
+    }
+    if let Some(index) = lower.find("eval") {
+        let rest = &lower[index + 4..];
+        if rest.contains("$(") || rest.contains('`') {
+            return true;
+        }
+    }
+    for shell in ["sh", "bash", "zsh", "dash"] {
+        let mut start = 0;
+        while let Some(found) = lower[start..].find(shell) {
+            let index = start + found;
+            let before = lower[..index].chars().next_back();
+            let after = lower[index + shell.len()..].chars().next();
+            let boundary = before.is_none_or(|c| !c.is_ascii_alphanumeric()) && after.is_none_or(|c| !c.is_ascii_alphanumeric());
+            if boundary {
+                let rest = &lower[index + shell.len()..];
+                let option = rest.trim_start();
+                if option.starts_with("-c")
+                    && option.split_whitespace().nth(1).is_some_and(|word| word.contains("$(") || word.contains('`'))
+                {
+                    return true;
+                }
+            }
+            start = index + shell.len();
+        }
+    }
+    false
+}
+
+/// When the structure is unparsed, scan the original text for the operations
+/// that must never run silently in auto-ops. Red lines are checked separately.
+pub(crate) fn conservative_scan(text: &str) -> Option<&'static str> {
+    let lower = text.to_ascii_lowercase();
+    let has = |needle: &str| lower.contains(needle);
+    if opaque_script(text) {
+        return Some("opaque-script");
+    }
+    if has("drop database")
+        || has("drop schema")
+        || has("drop table")
+        || has("truncate table")
+        || has("delete from")
+        || has("dropdb")
+        || has("mysqladmin")
+        || has("dropdatabase(")
+        || has("mkfs")
+        || has("wipefs")
+        || has("dd if=") && has("of=/dev/")
+        || has("flushall")
+        || has("flushdb")
+        || (has("rm ") || has("rm\t"))
+            && (has("-r") || has("-f"))
+            && (has("/var/lib/") || has(" ~") || has(" / ") || has(" /home") || has(" /*"))
+    {
+        return Some("data-delete");
+    }
+    if has("volume rm")
+        || has("volume prune")
+        || has("down -v")
+        || has("down --volumes")
+        || has("prune --volumes")
+        || has(" kube") && has("delete") && (has(" pv") || has(" pvc") || has("namespace") || has("--all"))
+    {
+        return Some("volume-delete");
+    }
+    if has("release delete") || has("run delete") || has("gh api") && has("delete") {
+        return Some("github-delete");
+    }
+    if [
+        " delete ",
+        " remove ",
+        " purge ",
+        " destroy ",
+        " terminate ",
+    ]
+    .iter()
+    .any(|verb| has(verb))
+    {
+        return Some("cli-destroy");
+    }
+    if has("reboot")
+        || has("shutdown")
+        || has("poweroff")
+        || has("halt")
+        || has("systemctl reboot")
+        || has("init 0")
+        || has("init 6")
+    {
+        return Some("host-reboot");
+    }
+    let firewall_query = has("iptables -l") || has(" nft list") || has("ufw status") || has("ufw show") || has("--list");
+    if !firewall_query
+        && ["iptables", "ip6tables", "nft ", "ufw ", "firewall-cmd"]
+            .iter()
+            .any(|tool| has(tool))
+    {
+        return Some("firewall");
+    }
+    if has("/etc/ssh/")
+        || has("sshd_config")
+        || has("authorized_keys")
+        || has("stop sshd")
+        || has("stop ssh")
+        || has("restart ssh")
+        || has("pkill ssh")
+        || has("killall ssh")
+    {
+        return Some("ssh-config");
+    }
+    None
+}
+
 fn command_words(words: &[String]) -> &[String] {
     let i = shell::executable(words);
     words.get(i..).unwrap_or_default()
@@ -332,15 +470,31 @@ fn dangerous(words: &[String], critical: &[String], depth: usize) -> Option<&'st
     }
     if name.starts_with("mkfs")
         || ["wipefs", "dropdb"].contains(&name)
+        || name == "mysqladmin" && words.iter().any(|s| s.eq_ignore_ascii_case("drop"))
         || name == "dd" && words.iter().any(|s| s.starts_with("of=/dev/"))
         || name == "redis-cli"
             && words
                 .iter()
                 .any(|s| s.eq_ignore_ascii_case("flushall") || s.eq_ignore_ascii_case("flushdb"))
         || ["psql", "mysql"].contains(&name)
-            && (all.contains("drop database") || all.contains("drop schema") || all.contains("truncate table"))
+            && (all.contains("drop database")
+                || all.contains("drop schema")
+                || all.contains("drop table")
+                || all.contains("truncate table"))
+        || ["mongo", "mongosh"].contains(&name) && all.contains("dropdatabase(")
     {
         return Some("data-delete");
+    }
+    if name == "kubectl"
+        && words.iter().any(|s| s == "delete")
+        && (words.iter().any(|s| ["pv", "pvc", "namespace", "namespaces"].contains(&s.as_str()))
+            || words.iter().any(|s| s == "--all" || s.starts_with("--all=")))
+    {
+        return Some(if words.iter().any(|s| ["pv", "pvc"].contains(&s.as_str())) {
+            "volume-delete"
+        } else {
+            "data-delete"
+        });
     }
     if name == "rm"
         && words.iter().any(|s| {
@@ -350,6 +504,9 @@ fn dangerous(words: &[String], critical: &[String], depth: usize) -> Option<&'st
         for target in words.iter().skip(1).filter(|s| !s.starts_with('-')) {
             let parts: Vec<_> = target.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
             if target.starts_with('/') && (parts.len() <= 2 || parts.contains(&".."))
+                || ["/var/lib/docker", "/var/lib/mysql", "/var/lib/postgresql", "/var/lib/mongodb", "/var/lib/redis"]
+                    .iter()
+                    .any(|prefix| target.starts_with(prefix))
                 || target == "~"
                 || target == "~/"
                 || target.starts_with("$HOME")
@@ -659,9 +816,12 @@ fn judge_inner(
             return Some(reason);
         }
     }
+    if opaque_script(remote) {
+        return Some("opaque-script");
+    }
     let unsupported = outer_unsafe || parsed.unparsed || parsed.expansion;
     if unsupported {
-        return Some("unparsed");
+        return if auto_ops { conservative_scan(remote) } else { Some("unparsed") };
     }
     if parsed.commands.is_empty() {
         return Some("unparsed");
@@ -673,7 +833,7 @@ fn judge_inner(
         return None;
     }
     if changes.iter().any(|simple| shell::writes_redirect(simple) || !routine_change(&simple.words)) {
-        return Some("unparsed");
+        return if auto_ops { conservative_scan(remote) } else { Some("unparsed") };
     }
     (!auto_ops).then_some("read-only")
 }

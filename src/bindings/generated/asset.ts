@@ -39,7 +39,7 @@ export type CliAssetInput = { type: "cli", id?: string, name: string,
  */
 production: boolean, summary: string, guardrails: Guardrails, notes: string, cliProvider: CliProvider, account: string | null, scope?: Array<CliScopeItem>, github?: GithubCreateInput, };
 
-export type CliBinary = "wrangler" | "vercel" | "oci" | "gh";
+export type CliBinary = "cf" | "vercel" | "oci" | "gh";
 
 export type CliEnvState = { installed: boolean, version?: string, path?: string, authenticated: boolean, expired: boolean, account?: string, accounts?: Array<string>, checkedAt: string, };
 
@@ -58,6 +58,25 @@ defaultBranch?: string,
 visibility?: RepoVisibility, repoSource?: RepoSource, };
 
 export type CliScopeKind = "zone" | "worker" | "pages" | "project" | "instance" | "repo";
+
+/**
+ * `cli-setup://changed`：阶段进度，命令结果仍以重新检测为准
+ */
+export type CliSetupChangedEvent = { id: string, provider: CliProvider, envId: EnvId, state: CliSetupState, step?: CliSetupStep, };
+
+/**
+ * F-104 AC2（P9b）：前端只传 provider / 环境 / 安装方式，命令由后端查固定表
+ */
+export type CliSetupRequest = { provider: CliProvider, envId: EnvId, method: string, };
+
+/**
+ * 返回这次设置的 ID 和初始阶段，避免事件先于 IPC 返回时界面闪空
+ */
+export type CliSetupStarted = { id: string, state: CliSetupState, step?: CliSetupStep, };
+
+export type CliSetupState = "waiting-install" | "waiting-login" | "ready" | "failed" | "timed-out";
+
+export type CliSetupStep = "install" | "login";
 
 /**
  * 录入的连接（save_asset）。imported 只有别名，连接信息由用户的 ssh config 维护

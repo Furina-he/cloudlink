@@ -24,7 +24,7 @@ const RELEASE = {
   notes: [
     "探测速度提升约 30%，大列表滚动更流畅。",
     "",
-    "- 护栏识别更多 wrangler 子命令",
+    "- 护栏识别更多 cf 子命令",
     "- 修复 WSL 路径中含空格时的分发问题",
     "- **详情**见 [发布说明](https://example.com/release)",
   ].join("\n"),
