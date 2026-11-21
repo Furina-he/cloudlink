@@ -262,7 +262,10 @@ mod tests {
     use super::*;
     #[test]
     fn sftp_batch_paths_are_literal_and_cannot_inject_a_second_command() {
-        assert_eq!(quote("/tmp/a space *?[x] {a,b}").unwrap(), r#""/tmp/a space *?[x] {a,b}""#);
+        assert_eq!(
+            quote("/tmp/a space *?[x] {a,b}").unwrap(),
+            r#""/tmp/a space *?[x] {a,b}""#
+        );
         assert_eq!(quote(r#"a"b'c"#).unwrap(), r#""a"'"'"b'c""#);
         assert_eq!(
             glob_quote("/tmp/a space *?[x] {a,b}", false).unwrap(),

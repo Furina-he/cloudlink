@@ -399,7 +399,11 @@ impl Backend {
     /// 这个环境里装了哪些 Agent：先看目录，Claude Code 和 Codex 再看 PATH 里有没有命令（2026-11-07）
     fn detect_agents(&self, env: &EnvContext) -> Vec<DetectedAgent> {
         let mut agents = deliver::agents::detect(env);
-        for (brand, binary) in [(AgentBrand::ClaudeCode, "claude"), (AgentBrand::Codex, "codex")] {
+        for (brand, binary) in [
+            (AgentBrand::ClaudeCode, "claude"),
+            (AgentBrand::Codex, "codex"),
+            (AgentBrand::Antigravity, "agy"),
+        ] {
             if !agents.iter().any(|a| a.brand == brand) && self.binary_on_path(env, binary) {
                 agents.push(deliver::agents::found(brand));
             }
@@ -465,7 +469,7 @@ impl Backend {
                 }
                 // 只认自己目录的 Agent 检测到以后才加；用户已经把这个目录加成自定义目录时不重复
                 let Some(dir) = agent.skills_dir() else { continue };
-                let path = env.native_in_home(&dir);
+                let path = env.native_in_home(dir);
                 if !(agent.always_listed() || detected_agent)
                     || known
                         .iter()
@@ -1089,27 +1093,130 @@ impl Backend {
         {
             return Err(AppError::ipc(IpcErrorId::NotFound));
         }
-        let mut items = self
+        let fetched = self
             .cli
-            .scope(&self.cli_contexts()?, req.provider, account, &self.list_assets()?)?;
-        if let Some(id) = req.asset_id {
-            let _edit = self.edit_at(epoch)?;
-            let mut asset = self.database()?.require_asset(&id)?;
-            let Asset::Cli(cli) = &mut asset else {
-                return Err(AppError::ipc(IpcErrorId::NotFound));
-            };
-            if cli.account.as_deref() != account {
-                return Err(AppError::ipc(IpcErrorId::CliAccountUnavailable));
+            .scope(&self.cli_contexts()?, req.provider, account, &self.list_assets()?);
+        match fetched {
+            Ok(mut items) => {
+                if let Some(id) = req.asset_id {
+                    let _edit = self.edit_at(epoch)?;
+                    let mut asset = self.database()?.require_asset(&id)?;
+                    let Asset::Cli(cli) = &mut asset else {
+                        return Err(AppError::ipc(IpcErrorId::NotFound));
+                    };
+                    if cli.account.as_deref() != account {
+                        return Err(AppError::ipc(IpcErrorId::CliAccountUnavailable));
+                    }
+                    let mut config = cli.effective_cloud_scope();
+                    config.canonicalize();
+                    for item in &mut items {
+                        item.selected = config.includes(&item.id);
+                    }
+                    config.snapshot_status = CloudSnapshotStatus::Complete;
+                    config.snapshot_error_id = None;
+                    config.checked_at = Some(crate::time::now_rfc3339());
+                    cli.cli.scope = items.clone();
+                    cli.cloud_scope = Some(config);
+                    cli.updated_at = crate::time::now_rfc3339();
+                    self.database()?.upsert_asset(&asset)?;
+                    self.publish_locked()?;
+                }
+                Ok(items)
             }
-            for item in &mut items {
-                item.selected = cli.cli.scope.iter().any(|old| old.id == item.id && old.selected);
+            Err(error) => {
+                // Failed refresh on a saved cloud asset preserves its known snapshot and
+                // records degraded status instead of wiping the catalog.
+                if let Some(id) = req.asset_id
+                    && let Ok(_edit) = self.edit_at(epoch)
+                    && let Ok(db) = self.database()
+                    && let Ok(mut asset) = db.require_asset(&id)
+                    && let Asset::Cli(cli) = &mut asset
+                    && cli.account.as_deref() == account
+                {
+                    let mut config = cli.effective_cloud_scope();
+                    config.snapshot_status = CloudSnapshotStatus::Failed;
+                    config.snapshot_error_id = Some(error.to_ipc().id);
+                    config.checked_at = Some(crate::time::now_rfc3339());
+                    cli.cloud_scope = Some(config);
+                    cli.updated_at = crate::time::now_rfc3339();
+                    let _ = db.upsert_asset(&asset);
+                }
+                Err(error)
             }
-            cli.cli.scope = items.clone();
-            cli.updated_at = crate::time::now_rfc3339();
-            self.database()?.upsert_asset(&asset)?;
-            self.publish_locked()?;
         }
-        Ok(items)
+    }
+
+    pub fn save_cloud_scope(&self, req: CloudScopeSaveRequest) -> Result<SaveResult> {
+        let epoch = self.reset_epoch.load(Ordering::SeqCst);
+        if !crate::cli::valid_cloud_scope_ids(&req.selected_ids)
+            || !crate::cli::valid_cloud_scope_ids(&req.excluded_ids)
+        {
+            return Err(AppError::ipc(IpcErrorId::CliScopeFailed));
+        }
+        let _edit = self.edit_at(epoch)?;
+        let mut asset = self.database()?.require_asset(&req.asset_id)?;
+        let Asset::Cli(cli) = &mut asset else {
+            return Err(AppError::ipc(IpcErrorId::NotFound));
+        };
+        if cli.cli_provider == CliProvider::Github {
+            return Err(AppError::ipc(IpcErrorId::NotFound));
+        }
+        let old = cli.effective_cloud_scope();
+        if old.revision != req.expected_revision {
+            return Err(AppError::ipc_with(
+                IpcErrorId::CliScopeFailed,
+                params! {"reason" => "revision-changed"},
+            ));
+        }
+        let known: BTreeSet<&str> = cli.cli.scope.iter().map(|s| s.id.as_str()).collect();
+        match req.mode {
+            CloudScopeMode::Manual => {
+                if req.selected_ids.iter().any(|id| !known.contains(id.as_str())) {
+                    return Err(AppError::ipc(IpcErrorId::CliScopeFailed));
+                }
+            }
+            CloudScopeMode::Auto => {
+                if req
+                    .excluded_ids
+                    .iter()
+                    .any(|id| !known.contains(id.as_str()) && !old.excluded_ids.contains(id))
+                {
+                    return Err(AppError::ipc(IpcErrorId::CliScopeFailed));
+                }
+            }
+        }
+        let mut next = CloudScopeConfig {
+            mode: req.mode,
+            excluded_ids: if req.mode == CloudScopeMode::Auto {
+                req.excluded_ids
+            } else {
+                Vec::new()
+            },
+            selected_ids: if req.mode == CloudScopeMode::Manual {
+                req.selected_ids
+            } else {
+                Vec::new()
+            },
+            snapshot_status: old.snapshot_status,
+            snapshot_error_id: old.snapshot_error_id,
+            checked_at: old.checked_at.clone(),
+            revision: old.revision,
+        };
+        next.canonicalize();
+        if !old.same_authority(&next) {
+            next.revision = old
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| AppError::ipc(IpcErrorId::CliScopeFailed))?;
+        }
+        for item in &mut cli.cli.scope {
+            item.selected = next.includes(&item.id);
+        }
+        cli.cloud_scope = Some(next);
+        cli.updated_at = crate::time::now_rfc3339();
+        self.database()?.upsert_asset(&asset)?;
+        let statuses = self.publish_locked()?;
+        self.save_result(asset, statuses)
     }
 
     pub fn set_cli_scope(&self, asset_id: &str, selected_ids: &[String]) -> Result<SaveResult> {
@@ -1179,14 +1286,36 @@ impl Backend {
         if selected_ids.iter().any(|id| !cli.cli.scope.iter().any(|s| &s.id == id)) {
             return Err(AppError::ipc(IpcErrorId::CliScopeFailed));
         }
+        let old = cli.effective_cloud_scope();
+        let mut next = old.clone();
+        match next.mode {
+            CloudScopeMode::Auto => {
+                next.excluded_ids.retain(|id| !selected_ids.contains(id));
+                next.excluded_ids.extend(
+                    cli.cli
+                        .scope
+                        .iter()
+                        .filter(|item| !selected_ids.contains(&item.id))
+                        .map(|item| item.id.clone()),
+                );
+            }
+            CloudScopeMode::Manual => {
+                next.selected_ids = selected_ids.to_vec();
+            }
+        }
+        next.canonicalize();
+        if !old.same_authority(&next) {
+            next.revision = old.revision.saturating_add(1);
+        }
         for item in &mut cli.cli.scope {
-            item.selected = selected_ids.contains(&item.id);
+            item.selected = next.includes(&item.id);
         }
         if adds_scope {
             cli.cli.scope = self
                 .cli
                 .validate_scope(cli.cli_provider, cli.account.as_deref(), &cli.cli.scope)?;
         }
+        cli.cloud_scope = Some(next);
         cli.updated_at = crate::time::now_rfc3339();
         self.database()?.upsert_asset(&asset)?;
         let statuses = self.publish_locked()?;

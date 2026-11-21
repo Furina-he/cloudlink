@@ -569,3 +569,50 @@ fn compile_twenty_servers_is_fast() {
         assert!(p95_ms <= 200.0, "p95 {p95_ms} ms");
     }
 }
+
+#[test]
+fn auto_cloud_scope_renders_dynamic_resources_and_exclusions() {
+    use crate::model::asset::{CloudScopeConfig, CloudScopeMode, CloudSnapshotStatus};
+    let mut cf = testkit::cloudflare();
+    cf.cloud_scope = Some(CloudScopeConfig {
+        mode: CloudScopeMode::Auto,
+        excluded_ids: vec!["zone_2".into()],
+        selected_ids: Vec::new(),
+        snapshot_status: CloudSnapshotStatus::Complete,
+        snapshot_error_id: None,
+        checked_at: Some("2026-11-21T00:00:00Z".into()),
+        revision: 1,
+    });
+    let p = compile_with(&[Asset::Cli(cf.clone())], &SkillConfig::default());
+    assert!(!p.blocked, "{:#?}", p.lint);
+    let detail = &p
+        .files
+        .iter()
+        .find(|f| f.path == "references/cloudflare.md")
+        .unwrap()
+        .content;
+    assert!(detail.contains("## Resources"), "{detail}");
+    assert!(detail.contains("Auto scope follows this account"), "{detail}");
+    assert!(
+        detail.contains("Excluded resources (do not touch): `personal.me` (`zone_2`)"),
+        "{detail}"
+    );
+    assert!(detail.contains("Known snapshot (not an exhaustive list):"), "{detail}");
+
+    // When the known snapshot is empty (e.g. failed fetch or empty account), no empty table is rendered.
+    cf.cli.scope.clear();
+    cf.cloud_scope.as_mut().unwrap().excluded_ids.clear();
+    let p_empty = compile_with(&[Asset::Cli(cf)], &SkillConfig::default());
+    assert!(!p_empty.blocked, "{:#?}", p_empty.lint);
+    let detail_empty = &p_empty
+        .files
+        .iter()
+        .find(|f| f.path == "references/cloudflare.md")
+        .unwrap()
+        .content;
+    assert!(
+        detail_empty.contains("Auto scope follows this account"),
+        "{detail_empty}"
+    );
+    assert!(!detail_empty.contains("| Kind | Name |"), "{detail_empty}");
+}

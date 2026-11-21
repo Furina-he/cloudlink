@@ -377,6 +377,7 @@ pub fn cloudflare() -> CliAsset {
                 },
             ],
         },
+        cloud_scope: None,
         github: None,
     }
 }
@@ -429,6 +430,7 @@ pub fn github() -> CliAsset {
                 repo("repo:R_notes", "octo/notes", "master", RepoVisibility::Public, false),
             ],
         },
+        cloud_scope: None,
         github: None,
     }
 }

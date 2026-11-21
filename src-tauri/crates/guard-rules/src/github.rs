@@ -456,18 +456,87 @@ fn git_judge(github: &Value, args: &[String]) -> Option<&'static str> {
 fn routine_options(args: &[String]) -> bool {
     crate::shell::checked_arguments(
         args,
-        &["--draft", "--fill", "--fill-first", "--fill-verbose", "--merge", "--squash", "--rebase",
-            "--auto", "--disable-auto", "--delete-branch", "--approve", "--request-changes", "--comment",
-            "--edit-last", "--create-if-none", "--failed", "--debug", "--prerelease", "--generate-notes",
-            "--verify-tag", "--fail-on-no-commits", "--force", "--yes", "-y", "--json"],
-        &["--repo", "-R", "--title", "-t", "--body", "-b", "--body-file", "-F", "--base", "-B",
-            "--head", "-H", "--reviewer", "-r", "--assignee", "-a", "--label", "-l", "--milestone", "-m",
-            "--project", "-p", "--template", "--reason", "--add-label", "--remove-label", "--add-assignee",
-            "--remove-assignee", "--add-reviewer", "--remove-reviewer", "--add-project", "--remove-project",
-            "--subject", "--match-head-commit", "--ref", "--field", "-f", "--raw-field", "--job",
-            "--notes", "-n", "--notes-file", "--target", "--discussion-category", "--color", "-c",
-            "--description", "-d", "--name", "--notes-start-tag"],
-    ).is_some()
+        &[
+            "--draft",
+            "--fill",
+            "--fill-first",
+            "--fill-verbose",
+            "--merge",
+            "--squash",
+            "--rebase",
+            "--auto",
+            "--disable-auto",
+            "--delete-branch",
+            "--approve",
+            "--request-changes",
+            "--comment",
+            "--edit-last",
+            "--create-if-none",
+            "--failed",
+            "--debug",
+            "--prerelease",
+            "--generate-notes",
+            "--verify-tag",
+            "--fail-on-no-commits",
+            "--force",
+            "--yes",
+            "-y",
+            "--json",
+        ],
+        &[
+            "--repo",
+            "-R",
+            "--title",
+            "-t",
+            "--body",
+            "-b",
+            "--body-file",
+            "-F",
+            "--base",
+            "-B",
+            "--head",
+            "-H",
+            "--reviewer",
+            "-r",
+            "--assignee",
+            "-a",
+            "--label",
+            "-l",
+            "--milestone",
+            "-m",
+            "--project",
+            "-p",
+            "--template",
+            "--reason",
+            "--add-label",
+            "--remove-label",
+            "--add-assignee",
+            "--remove-assignee",
+            "--add-reviewer",
+            "--remove-reviewer",
+            "--add-project",
+            "--remove-project",
+            "--subject",
+            "--match-head-commit",
+            "--ref",
+            "--field",
+            "-f",
+            "--raw-field",
+            "--job",
+            "--notes",
+            "-n",
+            "--notes-file",
+            "--target",
+            "--discussion-category",
+            "--color",
+            "-c",
+            "--description",
+            "-d",
+            "--name",
+            "--notes-start-tag",
+        ],
+    )
+    .is_some()
 }
 
 /// None means a supported allowance; a reason is either a permanent denial, an
@@ -670,7 +739,11 @@ mod tests {
             vec!["api", "orgs/acme/repos"],
             vec!["secret", "list", "-R", "acme/app"],
         ] {
-            assert_eq!(judge(&resource("confirm-changes"), &args(&words), None), None, "{words:?}");
+            assert_eq!(
+                judge(&resource("confirm-changes"), &args(&words), None),
+                None,
+                "{words:?}"
+            );
         }
         assert_eq!(
             judge(
@@ -693,11 +766,19 @@ mod tests {
             None
         );
         assert_eq!(
-            judge(&resource("confirm-changes"), &args(&["repo", "archive", "acme/app"]), None),
+            judge(
+                &resource("confirm-changes"),
+                &args(&["repo", "archive", "acme/app"]),
+                None
+            ),
             Some("github-dangerous")
         );
         assert_eq!(
-            judge(&resource("auto-ops"), &args(&["release", "delete", "1", "-R", "acme/app"]), None),
+            judge(
+                &resource("auto-ops"),
+                &args(&["release", "delete", "1", "-R", "acme/app"]),
+                None
+            ),
             Some("github-delete")
         );
     }
@@ -744,7 +825,11 @@ mod tests {
             Some("unparsed")
         );
         assert_eq!(
-            judge(&resource("confirm-changes"), &args(&["repo", "view", "other/app"]), None),
+            judge(
+                &resource("confirm-changes"),
+                &args(&["repo", "view", "other/app"]),
+                None
+            ),
             Some("cli-scope")
         );
         assert_eq!(
@@ -857,7 +942,11 @@ mod tests {
             Some("github-delete")
         );
         assert_eq!(
-            judge(&resource("confirm-changes"), &args(&["push", "origin", "main"]), Some("git")),
+            judge(
+                &resource("confirm-changes"),
+                &args(&["push", "origin", "main"]),
+                Some("git")
+            ),
             None
         );
         assert_eq!(

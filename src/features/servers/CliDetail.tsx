@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod"
-import { ChevronDownIcon, EllipsisIcon, FolderOpenIcon, PackageIcon, PencilIcon, RefreshCwIcon, Trash2Icon } from "lucide-react"
+import { EllipsisIcon, FolderOpenIcon, PackageIcon, PencilIcon, RefreshCwIcon, Trash2Icon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { FormProvider, useForm, useWatch, type Control } from "react-hook-form"
 import { useShallow } from "zustand/react/shallow"
@@ -7,25 +7,25 @@ import { useShallow } from "zustand/react/shallow"
 import type { CliAsset } from "@/bindings"
 import { PreviewSheet } from "@/components/app/PreviewSheet"
 import { ProviderMark } from "@/components/app/ProviderMark"
-import { CopyValue, ListGroup, PrefRow } from "@/components/app/SettingsList"
+import { ListGroup } from "@/components/app/SettingsList"
 import { CONN_STATE, StateText } from "@/components/app/StateBadge"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { copy } from "@/lib/copy"
 import { detailFileOf, isBundledReference } from "@/lib/paths"
 import { cliFormSchema, type CliFormValues } from "@/lib/schemas"
-import { cliEnvStatus, selectCanDistribute, selectCliAccount, selectCliProblem, useAssetStore } from "@/stores/assets"
+import { cliEnvStatus, selectCanDistribute, selectCliAccount, selectCliProblem } from "@/stores/assets"
 import { useCliStore } from "@/stores/cli"
 import { emptyGithubScope, useGithubStore } from "@/stores/github"
 import { selectInclusionsByAsset, useDeliveryStore } from "@/stores/deliveries"
 import { useUIStore } from "@/stores/ui"
-import { serverActions, toastError } from "./actions"
-import { scopeSummary, useLinkedAliases } from "./cliSummary"
-import { CliEnvList, CliScopeList, RecheckButton } from "./CliParts"
+import { serverActions } from "./actions"
+import { useLinkedAliases } from "./cliSummary"
+import { CliEnvList } from "./CliParts"
+import { CloudAccountGroup, CloudResourcesGroup, CloudSnapshotNote } from "./CloudScopeParts"
+import { CloudScopeDialog } from "./CloudScopeDialog"
 import { GithubAccountGroup, GithubReposGroup, GithubSnapshotNote } from "./GithubParts"
 import { GithubScopeDialog } from "./GithubScopeDialog"
 import { DetailPage, DetailTitle, NotesRow, PermissionGroup, ProblemRow, RecentActivityGroup, RulesGroup, SummaryRow } from "./DetailParts"
@@ -151,64 +151,9 @@ function CliHeader({ asset, name, production, titleRef, onEditProfile, onRefresh
   )
 }
 
-/** 开放范围（F-104）：弹出对话框勾选，勾选立即生效 */
-function ScopeDialog({ asset, open, onOpenChange }: { asset: CliAsset; open: boolean; onOpenChange: (open: boolean) => void }) {
-  const detection = useCliStore((s) => s.byProvider[asset.cliProvider])
-  const setScope = (ids: string[]) => void useAssetStore.getState().setCliScope(asset.id, ids).catch(toastError)
-  const addAsServer = (item: { name: string; address?: string }) => {
-    onOpenChange(false)
-    useUIStore.getState().startCreate("ssh", { prefill: { host: item.address ?? "", name: item.name } })
-  }
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="grid-cols-[minmax(0,1fr)] sm:max-w-[580px]" closeLabel={copy.common.close}>
-        <DialogHeader>
-          <DialogTitle>{copy.detail.rows.scopeEdit}</DialogTitle>
-          <DialogDescription>{copy.cli.scopeHint}</DialogDescription>
-        </DialogHeader>
-        <ScrollArea className="-mx-4 max-h-[60vh] min-h-0">
-          <div className="px-4 pb-1">
-            <CliScopeList
-              provider={asset.cliProvider}
-              items={asset.cli.scope}
-              loading={!!detection?.scopeLoading}
-              waiting={!selectCanDistribute(asset).ok}
-              onChange={setScope}
-              onAddAsServer={addAsServer}
-            />
-          </div>
-        </ScrollArea>
-        <DialogFooter>
-          <RecheckButton detecting={!!detection?.detecting} onClick={() => serverActions.recheckCli(asset)} />
-          <Button onClick={() => onOpenChange(false)}>{copy.common.done}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-/** 账号：当前账号、开放范围（弹出按钮） */
-function AccountGroup({ asset, onScope }: { asset: CliAsset; onScope: () => void }) {
-  const account = selectCliAccount(asset)
-  const github = asset.cliProvider === "github"
-  return (
-    <ListGroup id="detail-account" title={copy.detail.groups.account}>
-      <PrefRow label={copy.detail.rows.account}>
-        {account ? <CopyValue value={account} label={copy.detail.rows.account} /> : <span className="text-xs text-muted-foreground">{copy.common.none}</span>}
-      </PrefRow>
-      <PrefRow label={copy.detail.rows.scope} hint={github ? copy.detail.rows.reposHint : copy.detail.rows.scopeHint}>
-        <Button variant="secondary" size="sm" aria-haspopup="dialog" onClick={onScope}>
-          {scopeSummary(asset)}
-          <ChevronDownIcon data-icon="inline-end" />
-        </Button>
-      </PrefRow>
-    </ListGroup>
-  )
-}
-
 /**
  * 云平台和代码托管的详情视图（PRD 6.4）：全宽一页，没有 Tab。名称、环境、用途、红线、笔记编辑即保存；
- * 开放范围勾选立即生效
+ * 范围统一为「自动跟随 / 手动选择」动态模型，点击「管理范围」在弹窗中修改
  */
 export function CliDetail({ asset }: { asset: CliAsset }) {
   const values = useMemo(() => cliValuesOf(asset), [asset])
@@ -225,6 +170,7 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
   const github = useGithubStore((s) => s.byKey[asset.id]) ?? emptyGithubScope
   const setup = useCliStore((s) => s.setups[asset.cliProvider])
   const detecting = asset.cliProvider === "github" ? github.loading : !!detection?.detecting
+  const scopeLoading = asset.cliProvider === "github" ? github.loading : !!detection?.scopeLoading || !!detection?.detecting
   const refresh = () => {
     if (asset.cliProvider === "github") {
       void useGithubStore.getState().load({ assetId: asset.id, force: true })
@@ -259,7 +205,11 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
           <GithubAccountGroup asset={asset} onScope={() => setScopeOpen(true)} />
           <GithubSnapshotNote config={asset.github} error={github.error} loading={github.loading} />
           <GithubReposGroup asset={asset} />
-        </> : <AccountGroup asset={asset} onScope={() => setScopeOpen(true)} />}
+        </> : <>
+          <CloudAccountGroup asset={asset} onScope={() => setScopeOpen(true)} />
+          <CloudSnapshotNote config={asset.cloudScope} error={detection?.scopeError} loading={scopeLoading} onRetry={refresh} />
+          <CloudResourcesGroup asset={asset} loading={scopeLoading} onRefresh={refresh} />
+        </>}
         {/* 「重新检测」只在标题行：这里再放一个是重复的；一键安装登录由后端轮询并自动刷新 */}
         <ListGroup id="detail-envs" title={copy.detail.groups.envs}>
           <div className="flex flex-col gap-2 px-3.5 py-3">
@@ -281,7 +231,7 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
         <RulesGroup rules={asset.guardrails.rules} />
         <RecentActivityGroup assetId={asset.id} />
       </DetailPage>
-      {asset.cliProvider === "github" ? scopeOpen && <GithubScopeDialog asset={asset} onClose={() => setScopeOpen(false)} /> : <ScopeDialog asset={asset} open={scopeOpen} onOpenChange={setScopeOpen} />}
+      {asset.cliProvider === "github" ? scopeOpen && <GithubScopeDialog asset={asset} onClose={() => setScopeOpen(false)} /> : scopeOpen && <CloudScopeDialog asset={asset} onClose={() => setScopeOpen(false)} />}
       {profileOpen && <ProfileDialog asset={asset} onClose={() => setProfileOpen(false)} />}
       <CliPreview asset={asset} control={form.control} dirty={form.formState.isDirty} />
     </FormProvider>

@@ -7,9 +7,9 @@ export type AddCustomTargetRequest = { envId: EnvId, label: string, path: string
 /**
  * CloudLink 认得的 Agent 品牌（2026-11-07）。检测依据和读取的目录见 `deliver::agents`
  */
-export type AgentBrand = "claude-code" | "codex" | "cursor" | "windsurf" | "gemini-cli" | "copilot" | "opencode" | "cline" | "roo-code" | "kilo-code" | "goose" | "amp" | "qwen-code" | "droid" | "augment" | "crush" | "junie" | "warp" | "trae" | "trae-cn" | "kiro" | "continue";
+export type AgentBrand = "claude-code" | "codex" | "cursor" | "windsurf" | "gemini-cli" | "antigravity" | "copilot" | "opencode" | "cline" | "roo-code" | "kilo-code" | "goose" | "amp" | "qwen-code" | "droid" | "augment" | "crush" | "junie" | "warp" | "trae" | "trae-cn" | "kiro" | "continue";
 
-export type AgentId = "claude-code" | "universal" | "trae" | "trae-cn" | "kiro" | "continue" | "custom";
+export type AgentId = "claude-code" | "universal" | "antigravity" | "trae" | "trae-cn" | "kiro" | "continue" | "custom";
 
 /**
  * `deliveries://backed-up`：提示条「已恢复，改动的版本已备份 · 撤销」

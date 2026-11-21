@@ -11,7 +11,8 @@ use super::backend::Backend;
 use super::requests::{CliRequest, CopyKeyRequest, DeleteOptions, MergeNote, SettingsPatch, TerminalRequest};
 use crate::error::{AppError, Result};
 use crate::model::asset::{
-    Asset, AssetInput, CliEnvState, CliScopeItem, CliSetupRequest, CliSetupStarted, ImportHost, Mode,
+    Asset, AssetInput, CliEnvState, CliScopeItem, CliSetupRequest, CliSetupStarted, CloudScopeSaveRequest, ImportHost,
+    Mode,
 };
 use crate::model::compile::{CompilePreview, CompileStatus, PreviewRequest, Relation, SkillConfig};
 use crate::model::connection::{ConnectionTestRequest, KeyCheck, KeyCheckRequest};
@@ -228,6 +229,11 @@ pub async fn set_cli_scope(
     selected_ids: Vec<String>,
 ) -> Result<SaveResult> {
     blocking(state, move |backend| backend.set_cli_scope(&asset_id, &selected_ids)).await
+}
+
+#[tauri::command]
+pub async fn save_cloud_scope(state: State<'_, Arc<Backend>>, req: CloudScopeSaveRequest) -> Result<SaveResult> {
+    blocking(state, move |backend| backend.save_cloud_scope(req)).await
 }
 
 #[tauri::command]

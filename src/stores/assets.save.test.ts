@@ -50,7 +50,7 @@ function snapshot(asset: Asset, key = "saved"): SaveResult {
 /** 内存里的 IPC 替身；不调用真实 Tauri、配置目录或凭据库。 */
 function saveResult(input: AssetInput): SaveResult {
   const latest = state().byId[input.id!]
-  if (input.type === "cli" && latest.type === "cli") return snapshot({ ...latest, ...input, github: latest.github, id: latest.id })
+  if (input.type === "cli" && latest.type === "cli") return snapshot({ ...latest, ...input, cloudScope: latest.cloudScope, github: latest.github, id: latest.id })
   if (input.type === "vps" && latest.type === "vps") {
     return snapshot({
       ...latest,

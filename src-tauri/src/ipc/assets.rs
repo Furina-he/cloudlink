@@ -239,6 +239,9 @@ impl Backend {
                 if validate && input.cli_provider != CliProvider::Github && input.github.is_some() {
                     return Err(AppError::ipc(IpcErrorId::SettingsInvalid));
                 }
+                if validate && input.cli_provider == CliProvider::Github && input.cloud_scope.is_some() {
+                    return Err(AppError::ipc(IpcErrorId::SettingsInvalid));
+                }
                 let github_receipt = if input.cli_provider == CliProvider::Github && old.is_none() && validate {
                     let request = input.github.as_ref().ok_or_else(|| {
                         AppError::ipc_with(
@@ -271,13 +274,46 @@ impl Backend {
                 } else {
                     Default::default()
                 };
-                let scope = if let Some(receipt) = &github_receipt {
-                    receipt.scope.clone()
+                let (scope, cloud_scope) = if let Some(receipt) = &github_receipt {
+                    (receipt.scope.clone(), None)
                 } else if let Some(old) = old.filter(|_| input.cli_provider == CliProvider::Github) {
                     // Profile saves cannot overwrite concurrent scope/identity changes.
-                    old.cli.scope.clone()
+                    (old.cli.scope.clone(), None)
+                } else if input.cli_provider != CliProvider::Github
+                    && old.is_none()
+                    && let Some(cs_input) = &input.cloud_scope
+                {
+                    if validate {
+                        let (items, cfg) = self.cli.validate_cloud_scope_create(
+                            input.cli_provider,
+                            input.account.as_deref(),
+                            cs_input,
+                        )?;
+                        (items, Some(cfg))
+                    } else {
+                        let mut cfg = CloudScopeConfig {
+                            mode: cs_input.mode,
+                            excluded_ids: cs_input.excluded_ids.clone(),
+                            selected_ids: cs_input.selected_ids.clone(),
+                            snapshot_status: CloudSnapshotStatus::Complete,
+                            snapshot_error_id: None,
+                            checked_at: Some(now.clone()),
+                            revision: 1,
+                        };
+                        cfg.canonicalize();
+                        let items = input
+                            .scope
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|mut item| {
+                                item.selected = cfg.includes(&item.id);
+                                item
+                            })
+                            .collect();
+                        (items, Some(cfg))
+                    }
                 } else {
-                    match input.scope {
+                    let items = match input.scope {
                         Some(items) if validate => {
                             self.cli
                                 .validate_scope(input.cli_provider, input.account.as_deref(), &items)?
@@ -285,7 +321,17 @@ impl Backend {
                         Some(items) => items,
                         None if unchanged_account => old.unwrap().cli.scope.clone(),
                         None => Vec::new(),
-                    }
+                    };
+                    let cfg = if input.cli_provider == CliProvider::Github {
+                        None
+                    } else if let Some(old) = old.filter(|_| unchanged_account) {
+                        old.cloud_scope
+                            .clone()
+                            .or_else(|| Some(CloudScopeConfig::legacy(&items)))
+                    } else {
+                        Some(CloudScopeConfig::legacy(&items))
+                    };
+                    (items, cfg)
                 };
                 let account = github
                     .as_ref()
@@ -329,6 +375,7 @@ impl Backend {
                         env_states: states,
                         scope,
                     },
+                    cloud_scope,
                     github,
                 }))
             }

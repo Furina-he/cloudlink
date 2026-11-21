@@ -975,7 +975,12 @@ mod tests {
             assert_eq!(spec.program.file_name().unwrap(), "wsl.exe");
             let position = spec.args.iter().position(|arg| arg == "-F").unwrap();
             assert_eq!(spec.args[position + 1], expected);
-            assert!(!spec.args.iter().any(|arg| ["-c", "-lc", "-ilc"].contains(&arg.as_str())));
+            assert!(
+                !spec
+                    .args
+                    .iter()
+                    .any(|arg| ["-c", "-lc", "-ilc"].contains(&arg.as_str()))
+            );
         }
     }
 

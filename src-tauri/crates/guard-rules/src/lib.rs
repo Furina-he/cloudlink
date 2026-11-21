@@ -68,14 +68,21 @@ pub fn policy_valid(policy: &Value) -> bool {
                                     resource.get("provider").and_then(Value::as_str),
                                     Some("cloudflare" | "vercel" | "oracle" | "github")
                                 ))
-                            && resource.get("scope").is_none_or(|v| {
-                                v.as_array().is_some_and(|a| {
-                                    a.len() <= 10_000
-                                        && a.iter().all(|s| {
-                                            ["id", "name", "kind"].iter().all(|key| {
-                                                s.get(*key).and_then(Value::as_str).is_some_and(|s| s.len() <= 1024)
+                            && resource
+                                .get("scopeMode")
+                                .is_none_or(|v| matches!(v.as_str(), Some("auto" | "manual")))
+                            && ["scope", "excludedScope"].iter().all(|key| {
+                                resource.get(*key).is_none_or(|v| {
+                                    v.as_array().is_some_and(|a| {
+                                        a.len() <= 10_000
+                                            && a.iter().all(|s| {
+                                                ["id", "name", "kind"].iter().all(|field| {
+                                                    s.get(*field)
+                                                        .and_then(Value::as_str)
+                                                        .is_some_and(|s| s.len() <= 1024)
+                                                })
                                             })
-                                        })
+                                    })
                                 })
                             })
                     })
@@ -306,8 +313,12 @@ pub fn deny_output(decisions: &[Decision]) -> Option<Value> {
         }
         "cli-scope" => "The requested cloud resource is outside the selected CloudLink scope.",
         "file-transfer" => "Use the resource's CloudLink runner single-file put/get entry, not direct file transfer.",
-        "interactive" => "Interactive SSH is not supported. Use the resource's CloudLink runner with an explicit remote command.",
-        "unparsed" => "CloudLink could not classify this command. Use the resource's CloudLink runner for one-time approval when the target is explicit; uncertain targets remain denied.",
+        "interactive" => {
+            "Interactive SSH is not supported. Use the resource's CloudLink runner with an explicit remote command."
+        }
+        "unparsed" => {
+            "CloudLink could not classify this command. Use the resource's CloudLink runner for one-time approval when the target is explicit; uncertain targets remain denied."
+        }
         "critical-service" | "ssh-config" | "firewall" | "host-reboot" | "volume-delete" | "data-delete"
         | "cli-destroy" | "github-delete" | "github-dangerous" | "opaque-script" => {
             "This change requires one-time approval through the resource's CloudLink runner in either mode."

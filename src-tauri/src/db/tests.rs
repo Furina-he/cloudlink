@@ -54,7 +54,7 @@ fn real_use_migration_keeps_old_modes_conservative_in_assets_settings_and_probe_
     )
     .unwrap();
     let db = Db::init(conn).unwrap();
-    assert_eq!(db.schema_version().unwrap(), 7);
+    assert_eq!(db.schema_version().unwrap(), SCHEMA_VERSION);
     for index in 0..3 {
         let expected = if index < 2 { "confirm-changes" } else { "auto-ops" };
         let id = format!("legacy-{index}");
@@ -307,4 +307,33 @@ fn migration_v5_turns_env_tag_into_the_production_switch() {
     let by_id = |id: &str| db.get_asset(id).unwrap().unwrap();
     assert!(by_id(hk.id()).production());
     assert!(!by_id(dev.id()).production());
+}
+
+#[test]
+fn migration_v8_keeps_existing_cloud_assets_conservatively_manual() {
+    use crate::model::asset::{CloudScopeMode, CloudSnapshotStatus};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("data.db");
+    let db = Db::open(&path).unwrap();
+    let mut cf = testkit::cloudflare();
+    cf.cloud_scope = None;
+    let gh = testkit::github();
+    db.upsert_asset(&Asset::Cli(cf.clone())).unwrap();
+    db.upsert_asset(&Asset::Cli(gh.clone())).unwrap();
+    db.conn.execute("UPDATE schema_version SET version = 7", []).unwrap();
+    drop(db);
+
+    let db = Db::open(&path).unwrap();
+    assert_eq!(db.schema_version().unwrap(), SCHEMA_VERSION);
+    let migrated_cf = db.require_asset(&cf.id).unwrap();
+    let cs = migrated_cf.as_cli().unwrap().cloud_scope.as_ref().unwrap();
+    assert_eq!(cs.mode, CloudScopeMode::Manual);
+    assert_eq!(cs.snapshot_status, CloudSnapshotStatus::Complete);
+    assert_eq!(cs.revision, 1);
+    assert!(cs.excluded_ids.is_empty());
+    let mut selected = cs.selected_ids.clone();
+    selected.sort();
+    assert_eq!(selected, vec!["worker_1", "zone_1", "zone_3"]);
+    let migrated_gh = db.require_asset(&gh.id).unwrap();
+    assert!(migrated_gh.as_cli().unwrap().cloud_scope.is_none());
 }

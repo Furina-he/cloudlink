@@ -793,6 +793,27 @@ fn render_cli(a: &CliAsset, all: &[Asset], entry: &ExecutionEntry) -> String {
             visibility: s.visibility.map(RepoVisibility::as_str).unwrap_or("-"),
         })
         .collect();
+    let cloud_scope = (a.cli_provider != CliProvider::Github).then(|| a.effective_cloud_scope());
+    let cloud_auto = cloud_scope
+        .as_ref()
+        .is_some_and(|config| config.mode == crate::model::asset::CloudScopeMode::Auto);
+    let cloud_excluded: Vec<String> = cloud_scope
+        .as_ref()
+        .filter(|config| config.mode == crate::model::asset::CloudScopeMode::Auto)
+        .map(|config| {
+            config
+                .excluded_ids
+                .iter()
+                .map(|id| {
+                    a.cli
+                        .scope
+                        .iter()
+                        .find(|s| &s.id == id)
+                        .map_or_else(|| code(id), |s| format!("{} ({})", code(&s.name), code(&s.id)))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     render(
         "cli",
         serde_json::json!({
@@ -813,6 +834,8 @@ fn render_cli(a: &CliAsset, all: &[Asset], entry: &ExecutionEntry) -> String {
             "github_auto": github.is_some_and(|config| config.mode == GithubScopeMode::Auto && !config.migration_pending),
             "github_status": github_snapshot.map(|snapshot| serde_json::to_value(snapshot.status).expect("snapshot status")),
             "github_excluded": github.map(|config| config.excluded_repo_ids.iter().map(|id| code(id)).collect::<Vec<_>>()).unwrap_or_default(),
+            "cloud_auto": cloud_auto,
+            "cloud_excluded": cloud_excluded,
             "account": account.as_deref().map(code),
             "account_flag": account.as_deref().map(|x| account_flag(a.cli_provider, x)),
             "role": one_line(&a.summary),

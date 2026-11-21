@@ -66,19 +66,50 @@ function saveCli(input: CliAssetInput) {
   const envs = [...new Set(compileUnits().map((u) => u.envId))]
   const rest = { ...input }
   delete rest.scope
+  delete rest.cloudScope
   delete rest.github
   const github = input.cliProvider === "github" && !prev ? prepareGithubCreate(input) : undefined
+  const cloudScope =
+    prev?.cloudScope ??
+    (input.cliProvider !== "github"
+      ? input.cloudScope
+        ? {
+            mode: input.cloudScope.mode,
+            selectedIds: input.cloudScope.mode === "manual" ? [...new Set(input.cloudScope.selectedIds)].sort() : [],
+            excludedIds: input.cloudScope.mode === "auto" ? [...new Set(input.cloudScope.excludedIds)].sort() : [],
+            snapshotStatus: "complete" as const,
+            checkedAt: now(),
+            revision: 1,
+          }
+        : {
+            mode: "manual" as const,
+            selectedIds: (input.scope ?? []).filter((s) => s.selected).map((s) => s.id).sort(),
+            excludedIds: [],
+            snapshotStatus: "complete" as const,
+            checkedAt: now(),
+            revision: 1,
+          }
+      : undefined)
   if (prev && input.production !== prev.production) cancelMockExecutions(prev.id)
+  const initialScope = (input.scope ?? []).map((item) => ({
+    ...item,
+    selected: cloudScope
+      ? cloudScope.mode === "auto"
+        ? !cloudScope.excludedIds.includes(item.id)
+        : cloudScope.selectedIds.includes(item.id)
+      : item.selected,
+  }))
   const asset: CliAsset = {
     ...rest,
     id: prev?.id ?? newId("ast"),
     handle: prev?.handle ?? nextCliHandle(input.cliProvider),
     account: prev?.account ?? github?.account ?? input.account,
+    cloudScope,
     github: prev?.github ?? github?.github,
     cli: prev?.cli ?? github?.cli ?? {
       binary: CLI_BINARY[input.cliProvider],
       envStates: Object.fromEntries(envs.map((e) => [e, db.cliMachine[input.cliProvider][e] ?? { installed: false, authenticated: false, expired: false, checkedAt: now() }])),
-      scope: input.scope ?? [],
+      scope: initialScope,
     },
     agent: prev?.agent ?? { agents: [], mode: "confirm-changes" },
     createdAt: prev?.createdAt ?? now(),

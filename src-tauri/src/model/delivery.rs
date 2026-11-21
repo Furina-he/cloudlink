@@ -13,6 +13,7 @@ pub enum AgentId {
     ClaudeCode,
     /// 通用目录 `~/.agents/skills`：Codex、Cursor、Gemini CLI 等大多数 Agent 都读这里（4.5）
     Universal,
+    Antigravity,
     Trae,
     TraeCn,
     Kiro,
@@ -22,9 +23,10 @@ pub enum AgentId {
 
 impl AgentId {
     /// CloudLink 自己维护的目标，按显示顺序
-    pub const BUILTIN: [AgentId; 6] = [
+    pub const BUILTIN: [AgentId; 7] = [
         AgentId::ClaudeCode,
         AgentId::Universal,
+        AgentId::Antigravity,
         AgentId::Trae,
         AgentId::TraeCn,
         AgentId::Kiro,
@@ -35,6 +37,7 @@ impl AgentId {
         match self {
             AgentId::ClaudeCode => "claude-code",
             AgentId::Universal => "universal",
+            AgentId::Antigravity => "antigravity",
             AgentId::Trae => "trae",
             AgentId::TraeCn => "trae-cn",
             AgentId::Kiro => "kiro",
@@ -44,14 +47,15 @@ impl AgentId {
     }
 
     /// 内置目标的全局 skills 目录（相对家目录）
-    pub fn skills_dir(self) -> Option<[&'static str; 2]> {
+    pub fn skills_dir(self) -> Option<&'static [&'static str]> {
         Some(match self {
-            AgentId::ClaudeCode => [".claude", "skills"],
-            AgentId::Universal => [".agents", "skills"],
-            AgentId::Trae => [".trae", "skills"],
-            AgentId::TraeCn => [".trae-cn", "skills"],
-            AgentId::Kiro => [".kiro", "skills"],
-            AgentId::Continue => [".continue", "skills"],
+            AgentId::ClaudeCode => &[".claude", "skills"],
+            AgentId::Universal => &[".agents", "skills"],
+            AgentId::Antigravity => &[".gemini", "config", "skills"],
+            AgentId::Trae => &[".trae", "skills"],
+            AgentId::TraeCn => &[".trae-cn", "skills"],
+            AgentId::Kiro => &[".kiro", "skills"],
+            AgentId::Continue => &[".continue", "skills"],
             AgentId::Custom => return None,
         })
     }
@@ -61,6 +65,7 @@ impl AgentId {
         match self {
             AgentId::ClaudeCode => "Claude Code",
             AgentId::Universal => "Agent Skills",
+            AgentId::Antigravity => "Antigravity",
             AgentId::Trae => "Trae",
             AgentId::TraeCn => "Trae CN",
             AgentId::Kiro => "Kiro",
@@ -85,6 +90,7 @@ pub enum AgentBrand {
     Cursor,
     Windsurf,
     GeminiCli,
+    Antigravity,
     Copilot,
     Opencode,
     Cline,

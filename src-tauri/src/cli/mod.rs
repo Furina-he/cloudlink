@@ -16,7 +16,10 @@ use serde_json::Value;
 
 use crate::env::EnvContext;
 use crate::error::{AppError, Result};
-use crate::model::asset::{Asset, CliEnvState, CliProvider, CliScopeItem, CliScopeKind, RepoVisibility};
+use crate::model::asset::{
+    Asset, CliEnvState, CliProvider, CliScopeItem, CliScopeKind, CloudScopeConfig, CloudScopeCreateInput,
+    CloudScopeMode, CloudSnapshotStatus, RepoVisibility,
+};
 use crate::model::env::EnvId;
 use crate::model::misc::IpcErrorId;
 use crate::params;
@@ -91,6 +94,7 @@ pub trait Runner: Send + Sync {
 struct Cache {
     states: BTreeMap<(CliProvider, EnvId), CliEnvState>,
     catalogs: BTreeMap<(CliProvider, String), Vec<CliScopeItem>>,
+    scope_errors: BTreeMap<(CliProvider, String), IpcErrorId>,
     github: BTreeMap<(String, String), crate::model::github::GithubScopeResult>,
 }
 
@@ -141,6 +145,9 @@ impl Service {
             .collect();
         cache
             .catalogs
+            .retain(|(p, a), _| *p != provider || accounts.contains(a));
+        cache
+            .scope_errors
             .retain(|(p, a), _| *p != provider || accounts.contains(a));
         Ok(states)
     }
@@ -290,11 +297,11 @@ impl Service {
             }
             (account, candidates)
         };
-        self.cache
-            .lock()
-            .map_err(|_| AppError::internal("CLI cache lock"))?
-            .catalogs
-            .remove(&(provider, account.clone()));
+        {
+            let mut cache = self.cache.lock().map_err(|_| AppError::internal("CLI cache lock"))?;
+            cache.catalogs.remove(&(provider, account.clone()));
+            cache.scope_errors.remove(&(provider, account.clone()));
+        }
         let mut last_error = AppError::ipc(IpcErrorId::CliScopeFailed);
         for (env, path) in candidates {
             let result = self.runner.run(
@@ -319,12 +326,102 @@ impl Service {
                         return Err(AppError::ipc(IpcErrorId::CliAccountUnavailable));
                     }
                     cache.catalogs.insert((provider, account.clone()), items.clone());
+                    cache.scope_errors.remove(&(provider, account.clone()));
                     return Ok(items);
                 }
                 Err(error) => last_error = error,
             }
         }
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.scope_errors.insert((provider, account), last_error.to_ipc().id);
+        }
         Err(last_error)
+    }
+
+    /// Validates a newly created cloud CLI asset under the dynamic auto/manual scope model.
+    /// In auto mode, a failed or missing catalog snapshot never blocks saving the account;
+    /// exclusions and manual selections still require verified catalog IDs.
+    pub fn validate_cloud_scope_create(
+        &self,
+        provider: CliProvider,
+        account: Option<&str>,
+        input: &CloudScopeCreateInput,
+    ) -> Result<(Vec<CliScopeItem>, CloudScopeConfig)> {
+        if !valid_cloud_scope_ids(&input.selected_ids) || !valid_cloud_scope_ids(&input.excluded_ids) {
+            return Err(AppError::ipc(IpcErrorId::CliScopeFailed));
+        }
+        let cache = self.cache.lock().map_err(|_| AppError::internal("CLI cache lock"))?;
+        let account = account
+            .map(String::from)
+            .or_else(|| {
+                cache
+                    .states
+                    .iter()
+                    .filter(|((p, _), s)| *p == provider && s.authenticated && !s.expired)
+                    .find_map(|(_, s)| s.accounts.as_ref()?.first().cloned())
+            })
+            .ok_or_else(|| AppError::ipc(IpcErrorId::CliAccountUnavailable))?;
+        if !cache.states.iter().any(|((p, _), state)| {
+            *p == provider
+                && state.authenticated
+                && !state.expired
+                && state
+                    .accounts
+                    .as_ref()
+                    .is_some_and(|accounts| accounts.contains(&account))
+        }) {
+            return Err(AppError::ipc(IpcErrorId::CliAccountUnavailable));
+        }
+        let now = crate::time::now_rfc3339();
+        let catalog = cache.catalogs.get(&(provider, account.clone()));
+        let last_error = cache.scope_errors.get(&(provider, account)).copied();
+        let (items, snapshot_status, snapshot_error_id) = match catalog {
+            Some(known) => {
+                let ids: BTreeSet<&str> = known.iter().map(|i| i.id.as_str()).collect();
+                let check = match input.mode {
+                    CloudScopeMode::Auto => &input.excluded_ids,
+                    CloudScopeMode::Manual => &input.selected_ids,
+                };
+                if check.iter().any(|id| !ids.contains(id.as_str())) {
+                    return Err(AppError::ipc(IpcErrorId::CliScopeFailed));
+                }
+                (known.clone(), CloudSnapshotStatus::Complete, None)
+            }
+            None => {
+                if (input.mode == CloudScopeMode::Auto && !input.excluded_ids.is_empty())
+                    || (input.mode == CloudScopeMode::Manual && !input.selected_ids.is_empty())
+                {
+                    return Err(AppError::ipc(IpcErrorId::CliScopeFailed));
+                }
+                (Vec::new(), CloudSnapshotStatus::Failed, last_error)
+            }
+        };
+        let mut config = CloudScopeConfig {
+            mode: input.mode,
+            excluded_ids: if input.mode == CloudScopeMode::Auto {
+                input.excluded_ids.clone()
+            } else {
+                Vec::new()
+            },
+            selected_ids: if input.mode == CloudScopeMode::Manual {
+                input.selected_ids.clone()
+            } else {
+                Vec::new()
+            },
+            snapshot_status,
+            snapshot_error_id,
+            checked_at: Some(now),
+            revision: 1,
+        };
+        config.canonicalize();
+        let scope = items
+            .into_iter()
+            .map(|mut item| {
+                item.selected = config.includes(&item.id);
+                item
+            })
+            .collect();
+        Ok((scope, config))
     }
 
     /// The draft controls only selection. Names, types, addresses and links come from the
@@ -642,6 +739,14 @@ pub(crate) fn valid_github_host(host: &str) -> bool {
         && host
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.'))
+}
+
+pub(crate) fn valid_cloud_scope_ids(ids: &[String]) -> bool {
+    ids.len() <= MAX_SCOPE
+        && ids.iter().collect::<BTreeSet<_>>().len() == ids.len()
+        && ids
+            .iter()
+            .all(|id| !id.is_empty() && id.len() <= 256 && !id.chars().any(char::is_control))
 }
 
 pub(crate) fn valid_github_ids(ids: &[String]) -> bool {

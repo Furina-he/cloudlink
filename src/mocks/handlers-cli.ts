@@ -6,6 +6,8 @@ import type {
   CliScopeItem,
   CliSetupState,
   CliSetupStep,
+  CloudScopeConfig,
+  CloudScopeSaveRequest,
   EnvId,
   ServerAsset,
   GithubScopeResult,
@@ -108,6 +110,21 @@ async function refreshScope(req: CliRequest) {
     return result.scope
   }
   await sleep(300)
+  if (scenario === "cli-scope-failed") {
+    if (req.assetId) {
+      const asset = cliById(req.assetId)
+      const cfg: CloudScopeConfig = asset.cloudScope ?? {
+        mode: "manual",
+        selectedIds: asset.cli.scope.filter((s) => s.selected).map((s) => s.id),
+        excludedIds: [],
+        snapshotStatus: "complete",
+        revision: 1,
+      }
+      asset.cloudScope = { ...cfg, snapshotStatus: "failed", snapshotErrorId: "cli-command-unsupported", checkedAt: now() }
+      asset.updatedAt = now()
+    }
+    fail("cli-command-unsupported")
+  }
   const ready = agentEnvs()
     .map((env) => db.cliMachine[req.provider][env])
     .filter((state) => state && cliEnvStatus(state) === "ready")
@@ -133,14 +150,66 @@ async function refreshScope(req: CliRequest) {
   const items = linkZones(catalog)
   if (!req.assetId) return items
   const asset = cliById(req.assetId)
+  const cfg: CloudScopeConfig = asset.cloudScope ?? {
+    mode: "manual",
+    selectedIds: asset.cli.scope.filter((s) => s.selected).map((s) => s.id),
+    excludedIds: [],
+    snapshotStatus: "complete",
+    revision: 1,
+  }
   const merged = items.map((x) => ({
     ...x,
-    selected: asset.cli.scope.find((s) => s.id === x.id)?.selected ?? false,
+    selected: cfg.mode === "auto" ? !cfg.excludedIds.includes(x.id) : cfg.selectedIds.includes(x.id),
   }))
   asset.cli.scope = merged
+  asset.cloudScope = { ...cfg, snapshotStatus: "complete", snapshotErrorId: undefined, checkedAt: now() }
   asset.updatedAt = now()
   recompile({ silent: true })
   return merged
+}
+
+async function saveCloudScope(req: CloudScopeSaveRequest) {
+  const asset = cliById(req.assetId)
+  if (asset.cliProvider === "github") fail("not-found")
+  const old: CloudScopeConfig = asset.cloudScope ?? {
+    mode: "manual",
+    selectedIds: asset.cli.scope.filter((s) => s.selected).map((s) => s.id),
+    excludedIds: [],
+    snapshotStatus: "complete",
+    revision: 1,
+  }
+  if (old.revision !== req.expectedRevision) fail("cli-scope-failed", { reason: "revision-changed" })
+  const known = new Set(asset.cli.scope.map((s) => s.id))
+  if (req.mode === "manual" && req.selectedIds.some((id) => !known.has(id))) fail("cli-scope-failed")
+  if (req.mode === "auto" && req.excludedIds.some((id) => !known.has(id) && !old.excludedIds.includes(id))) fail("cli-scope-failed")
+  const selectedIds = req.mode === "manual" ? [...new Set(req.selectedIds)].sort() : []
+  const excludedIds = req.mode === "auto" ? [...new Set(req.excludedIds)].sort() : []
+  const same =
+    old.mode === req.mode &&
+    JSON.stringify([...old.selectedIds].sort()) === JSON.stringify(selectedIds) &&
+    JSON.stringify([...old.excludedIds].sort()) === JSON.stringify(excludedIds)
+  if (!same) cancelMockExecutions(req.assetId)
+  const next: CloudScopeConfig = {
+    ...old,
+    mode: req.mode,
+    selectedIds,
+    excludedIds,
+    revision: same ? old.revision : old.revision + 1,
+  }
+  asset.cloudScope = next
+  asset.cli.scope = asset.cli.scope.map((x) => ({
+    ...x,
+    selected: next.mode === "auto" ? !next.excludedIds.includes(x.id) : next.selectedIds.includes(x.id),
+  }))
+  asset.updatedAt = now()
+  logActivity({
+    kind: "cli",
+    assetId: req.assetId,
+    messageId: "cli-scope-updated",
+    params: { alias: asset.handle, count: asset.cli.scope.filter((x) => x.selected).length },
+    ok: true,
+  })
+  return saveSnapshot(asset)
 }
 
 async function setScope(assetId: string, selectedIds: string[]) {
@@ -218,4 +287,5 @@ export const cliHandlers: Record<string, (a: Args) => unknown> = {
   refresh_cli_scope: (a) => refreshScope(a.req as CliRequest),
   set_cli_scope: (a) =>
     setScope(a.assetId as string, a.selectedIds as string[]),
+  save_cloud_scope: (a) => saveCloudScope(a.req as CloudScopeSaveRequest),
 }

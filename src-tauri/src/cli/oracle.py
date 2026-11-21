@@ -55,7 +55,7 @@ def profiles():
     return found
 
 
-def call(arguments, identity=False, allow_unavailable=False):
+def call(arguments, identity=False, allow_unavailable=False, empty_as_list=False):
     try:
         result = subprocess.run(
             [BINARY, "--profile", ACCOUNT, "--config-file", CONFIG_FILE, "--output", "json"] + arguments,
@@ -79,8 +79,11 @@ def call(arguments, identity=False, allow_unavailable=False):
         fail("cli-command-unsupported")
     if identity:
         return {"authenticated": True, "expired": False}
+    stripped = result.stdout.strip()
+    if empty_as_list and (not stripped or stripped == b"null"):
+        return []
     try:
-        data = json.loads(result.stdout)
+        data = json.loads(stripped)
         if not isinstance(data, list):
             fail("cli-command-unsupported")
         return data
@@ -110,7 +113,7 @@ def main():
     compartments = [tenancy] + call([
         "iam", "compartment", "list", "--compartment-id", tenancy, "--access-level", "ACCESSIBLE",
         "--compartment-id-in-subtree", "true", "--all", "--query", "data[].id",
-    ])
+    ], allow_unavailable=True, empty_as_list=True)
     if len(compartments) > 100:
         fail("cli-scope-failed")
     items = []
@@ -125,7 +128,7 @@ def main():
         instances = call([
             "compute", "instance", "list", "--compartment-id", compartment, "--all",
             "--query", 'data[].{id:id,name:"display-name",state:"lifecycle-state"}',
-        ], allow_unavailable=True)
+        ], allow_unavailable=True, empty_as_list=True)
         for instance in instances:
             if not isinstance(instance, dict):
                 fail("cli-scope-failed")
@@ -138,7 +141,7 @@ def main():
             vnics = call([
                 "compute", "instance", "list-vnics", "--instance-id", instance_id,
                 "--all", "--query", 'data[]."public-ip"',
-            ], allow_unavailable=True)
+            ], allow_unavailable=True, empty_as_list=True)
             address = next((ip for ip in vnics if isinstance(ip, str) and ip), None)
             name = instance.get("name")
             if not isinstance(name, str):

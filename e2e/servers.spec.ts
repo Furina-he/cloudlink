@@ -436,7 +436,7 @@ test.describe("云平台 CLI（PRD 6.5 分支 B、F-104）", () => {
     await expect(guide).toContainText("pip install oci-cli")
     await expect(guide).toContainText("需要先装好 Python 3")
     await shot(page, "cli-02-install-guide")
-    await expect(wizard.getByRole("checkbox", { name: "oci-web-1" })).toBeVisible()
+    await expect(wizard.getByRole("checkbox", { name: "提供 oci-web-1 给 Agent" })).toBeChecked()
     await shot(page, "cli-02-oracle")
 
     await windows.getByRole("button", { name: "安装并登录" }).click()
@@ -444,7 +444,6 @@ test.describe("云平台 CLI（PRD 6.5 分支 B、F-104）", () => {
     // 不切回窗口、不按回车：后端自己轮询到就绪
     await expect(windows).toContainText("已就绪")
 
-    await wizard.getByRole("checkbox", { name: "oci-web-1" }).check()
     await wizard.getByRole("button", { name: "保存并启用" }).click()
     const feedback = toastText(page, "Oracle Cloud 已添加，3 个目录已同步，其余尚未完成")
     await expect(feedback).toBeVisible()
@@ -489,7 +488,21 @@ test.describe("云平台 CLI（PRD 6.5 分支 B、F-104）", () => {
     expect(errors).toEqual([])
   })
 
-test("Vercel：WSL 未登录，提示条「去登录」后自动变为已就绪；范围勾选立即生效", async ({ page }) => {
+  test("资源列表拉取失败时，自动跟随仍可直接保存并启用", async ({ page }) => {
+    const errors = collectConsoleErrors(page)
+    await ready(page, "?mock=cli-scope-failed")
+    await page.keyboard.press("Control+n")
+    await page.getByRole("region", { name: "添加资源" }).getByRole("button", { name: /Oracle Cloud/ }).click()
+    const wizard = page.getByRole("region", { name: "添加 Oracle Cloud" })
+    await expect(wizard.getByText(/资源列表未能读取，但自动跟随不受影响/)).toBeVisible()
+    await expect(wizard.getByRole("button", { name: "保存并启用" })).toBeEnabled()
+    await wizard.getByRole("button", { name: "保存并启用" }).click()
+    await expect(wizard).toHaveCount(0)
+    await expect(row(page, "oracle")).toBeVisible()
+    expect(errors).toEqual([])
+  })
+
+test("Vercel：WSL 未登录，提示条「去登录」后自动变为已就绪；管理范围弹窗切换与保存", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
     await openServer(page, "vercel", "Vercel")
@@ -505,14 +518,14 @@ test("Vercel：WSL 未登录，提示条「去登录」后自动变为已就绪�
     // cf／vercel／gh 在后台登录并由 CLI 打开浏览器，进度自己推进；不需要切回窗口
     await expect(panel.getByText(/还没有登录/)).toHaveCount(0)
 
-    await panel.getByRole("button", { name: /^2 个项目/ }).click()
-    const scope = page.getByRole("dialog", { name: "选择开放范围" })
-    const playground = scope.getByRole("checkbox", { name: "playground" })
-    // 勾选立即生效：等后端回写后才显示勾上
+    await panel.getByRole("button", { name: "管理范围", exact: true }).click()
+    const scope = page.getByRole("dialog", { name: "管理范围", exact: true })
+    const playground = scope.getByRole("checkbox", { name: "提供 playground 给 Agent" })
     await playground.click()
     await expect(playground).toBeChecked()
     await shot(page, "cli-05-scope-dialog")
-    await scope.getByRole("button", { name: "完成" }).click()
+    await scope.getByRole("button", { name: "保存范围", exact: true }).click()
+    await expect(scope).toHaveCount(0)
     await expect(panel.getByRole("button", { name: "切换账号" }).first()).toBeVisible()
     await shot(page, "cli-05-vercel-ready")
     await back(page)
@@ -523,8 +536,9 @@ test("Vercel：WSL 未登录，提示条「去登录」后自动变为已就绪�
   test("Cloudflare：域名自动关联 hk-edge", async ({ page }) => {
     await ready(page)
     await openServer(page, "cloudflare", "Cloudflare")
-    await inspector(page).getByRole("button", { name: /个域名/ }).click()
-    await expect(page.getByRole("dialog", { name: "选择开放范围" }).getByText("已关联服务器 hk-edge")).toBeVisible()
+    await expect(inspector(page).getByText("已关联服务器 hk-edge")).toBeVisible()
+    await inspector(page).getByRole("button", { name: "管理范围", exact: true }).click()
+    await expect(page.getByRole("dialog", { name: "管理范围", exact: true }).getByText("已关联服务器 hk-edge")).toBeVisible()
     await shot(page, "cli-06-cloudflare")
   })
 })

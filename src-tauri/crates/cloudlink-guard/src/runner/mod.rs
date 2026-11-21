@@ -52,6 +52,7 @@ fn known_agent(agent: &str) -> bool {
             | "cursor"
             | "windsurf"
             | "gemini-cli"
+            | "antigravity"
             | "copilot"
             | "opencode"
             | "cline"
@@ -520,8 +521,7 @@ fn perform(
             // prints `Aborted.` and exits 0. Nothing was executed.
             if route["provider"] == "cloudflare"
                 && output.state == "succeeded"
-                && std::str::from_utf8(&output.stderr)
-                    .is_ok_and(|text| text.trim_end().ends_with("Aborted."))
+                && std::str::from_utf8(&output.stderr).is_ok_and(|text| text.trim_end().ends_with("Aborted."))
             {
                 output.state = "failed";
                 output.reason = Some("cli-aborted");

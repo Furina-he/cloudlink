@@ -1,6 +1,7 @@
 // 手写契约（PRD 3.3）。资源分两类：服务器（SSH，type "vps"）和云平台（CLI，type "cli"）；档位与分发是资源的属性
 import type { EnvId } from "./env"
 import type { GithubConfig, GithubCreateInput } from "./github"
+import type { IpcErrorId } from "./misc"
 
 export type AssetType = "vps" | "cli"
 /** 云平台 CLI：cloudflare（cf）、vercel（vercel）、oracle（oci）。v0.1 每家一个资源，标识就是这个值（F-101 AC1） */
@@ -227,6 +228,35 @@ export interface CliInfo {
   scope: CliScopeItem[]
 }
 
+export type CloudScopeMode = "auto" | "manual"
+
+export type CloudSnapshotStatus = "complete" | "partial" | "failed"
+
+/** 非 GitHub 云平台（Cloudflare / Vercel / Oracle Cloud）的动态范围配置（2026-11-21，对齐 GitHub） */
+export interface CloudScopeConfig {
+  mode: CloudScopeMode
+  excludedIds: string[]
+  selectedIds: string[]
+  snapshotStatus: CloudSnapshotStatus
+  snapshotErrorId?: IpcErrorId
+  checkedAt?: string
+  revision: number
+}
+
+export interface CloudScopeCreateInput {
+  mode: CloudScopeMode
+  selectedIds: string[]
+  excludedIds: string[]
+}
+
+export interface CloudScopeSaveRequest {
+  assetId: string
+  expectedRevision: number
+  mode: CloudScopeMode
+  selectedIds: string[]
+  excludedIds: string[]
+}
+
 /** 云平台（CLI） */
 export interface CliAsset extends AssetBase {
   type: "cli"
@@ -235,6 +265,7 @@ export interface CliAsset extends AssetBase {
   handle: string
   /** 绑定的账号（CliEnvState.accounts 中的一项）；同一家每个账号只接入一次。null 表示跟随 CLI 当前登录 */
   account: string | null
+  cloudScope?: CloudScopeConfig
   github?: GithubConfig
   cli: CliInfo
 }
@@ -267,9 +298,10 @@ export type ServerAssetInput = Omit<ServerAsset, "id" | "connection" | "agent" |
   testId?: string
 }
 
-/** 云平台资源的输入。检测结果和范围由后端维护，范围勾选走 set_cli_scope（立即生效）；新建时 scope 带上向导里勾选的结果 */
-export type CliAssetInput = Omit<CliAsset, "id" | "handle" | "agent" | "cli" | "github" | "createdAt" | "updatedAt"> & {
+/** 云平台资源的输入。检测结果和范围由后端维护，范围变更走 save_cloud_scope / save_github_scope */
+export type CliAssetInput = Omit<CliAsset, "id" | "handle" | "agent" | "cli" | "cloudScope" | "github" | "createdAt" | "updatedAt"> & {
   id?: string
+  cloudScope?: CloudScopeCreateInput
   github?: GithubCreateInput
   scope?: CliScopeItem[]
 }

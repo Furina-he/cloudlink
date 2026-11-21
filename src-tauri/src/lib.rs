@@ -131,6 +131,7 @@ pub fn run() {
             ipc::commands::start_cli_setup,
             ipc::commands::refresh_cli_scope,
             ipc::commands::set_cli_scope,
+            ipc::commands::save_cloud_scope,
             ipc::commands::get_github_scope,
             ipc::commands::save_github_scope,
             ipc::commands::get_runtime_status,

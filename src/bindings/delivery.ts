@@ -3,9 +3,9 @@ import type { EnvId } from "./env"
 
 /**
  * CloudLink 维护的目标（4.5，2026-11-07）：Claude Code、通用目录 `~/.agents/skills`（Codex、Cursor 等大多数 Agent 读这里），
- * 只认自己目录的 Trae、Trae CN、Kiro、Continue（检测到才有），以及自定义目录
+ * 只认自己目录的 Antigravity（`~/.gemini/config/skills`）、Trae、Trae CN、Kiro、Continue（检测到才有），以及自定义目录
  */
-export type AgentId = "claude-code" | "universal" | "trae" | "trae-cn" | "kiro" | "continue" | "custom"
+export type AgentId = "claude-code" | "universal" | "antigravity" | "trae" | "trae-cn" | "kiro" | "continue" | "custom"
 
 /** CloudLink 认得的 Agent 品牌（2026-11-07），只用来显示谁会读到哪份 Skill */
 export type AgentBrand =
@@ -14,6 +14,7 @@ export type AgentBrand =
   | "cursor"
   | "windsurf"
   | "gemini-cli"
+  | "antigravity"
   | "copilot"
   | "opencode"
   | "cline"

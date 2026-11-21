@@ -53,21 +53,40 @@ pub fn project_policy(assets: &[Asset]) -> Value {
                         .map(|service| service.name.as_str()).collect::<Vec<_>>()
                 })
             }
-            Asset::Cli(cli) => json!({
-                "id": cli.id,
-                "kind": "cli",
-                "handle": cli.handle,
-                "mode": cli.agent.mode,
-                "production": cli.production,
-                "github": github_projection(cli.github.as_ref()),
-                "envIds": cli.cli.env_states.keys().collect::<Vec<_>>(),
-                "agentKeys": cli.agent.agents,
-                "provider": cli.cli_provider,
-                "account": cli.account,
-                "scope": cli.cli.scope.iter().filter(|scope| scope.selected).map(|scope| json!({
-                    "id": scope.id, "kind": scope.kind, "name": scope.name
-                })).collect::<Vec<_>>()
-            }),
+            Asset::Cli(cli) => {
+                let mut value = json!({
+                    "id": cli.id,
+                    "kind": "cli",
+                    "handle": cli.handle,
+                    "mode": cli.agent.mode,
+                    "production": cli.production,
+                    "github": github_projection(cli.github.as_ref()),
+                    "envIds": cli.cli.env_states.keys().collect::<Vec<_>>(),
+                    "agentKeys": cli.agent.agents,
+                    "provider": cli.cli_provider,
+                    "account": cli.account,
+                    "scope": cli.cli.scope.iter().filter(|scope| scope.selected).map(|scope| json!({
+                        "id": scope.id, "kind": scope.kind, "name": scope.name
+                    })).collect::<Vec<_>>()
+                });
+                if cli.cli_provider != crate::model::asset::CliProvider::Github {
+                    let config = cli.effective_cloud_scope();
+                    let excluded: Vec<Value> = config
+                        .excluded_ids
+                        .iter()
+                        .map(|id| {
+                            if let Some(item) = cli.cli.scope.iter().find(|s| &s.id == id) {
+                                json!({"id": item.id, "kind": item.kind, "name": item.name})
+                            } else {
+                                json!({"id": id, "kind": "unknown", "name": id})
+                            }
+                        })
+                        .collect();
+                    value["scopeMode"] = serde_json::to_value(config.mode).expect("scope mode serializes");
+                    value["excludedScope"] = Value::Array(excluded);
+                }
+                value
+            }
         })
         .collect();
     json!({ "managedBy": "cloudlink", "kind": "guard-policy", "version": 1, "resources": resources })

@@ -78,6 +78,23 @@ PowerShell:
 {% endif %}
 {% endif %}
 {% else %}
+{% if cloud_auto %}
+## Resources
+Auto scope follows this account: current and future resources this account can access (including products not listed below), except any excluded items.
+{% if cloud_excluded %}
+Excluded resources (do not touch): {{ cloud_excluded | join(", ") }}.
+{% endif %}
+{% if scope %}
+
+Known snapshot (not an exhaustive list):
+
+| Kind | Name | Linked server |
+| --- | --- | --- |
+{% for s in scope %}
+| {{ s.kind }} | {{ s.name }} | {{ s.linked }} |
+{% endfor %}
+{% endif %}
+{% else %}
 ## Scope
 Only operate on these resources; ask the user before touching anything else in the account.
 
@@ -86,6 +103,7 @@ Only operate on these resources; ask the user before touching anything else in t
 {% for s in scope %}
 | {{ s.kind }} | {{ s.name }} | {{ s.linked }} |
 {% endfor %}
+{% endif %}
 {% endif %}
 {% if notes %}
 

@@ -22,7 +22,7 @@ struct Brand {
 }
 
 use AgentBrand as B;
-use AgentId::{ClaudeCode as Claude, Continue, Kiro, Trae, TraeCn, Universal};
+use AgentId::{Antigravity, ClaudeCode as Claude, Continue, Kiro, Trae, TraeCn, Universal};
 
 const CATALOG: &[Brand] = &[
     Brand {
@@ -49,12 +49,20 @@ const CATALOG: &[Brand] = &[
         extensions: &[],
         reads: &[Universal],
     },
-    // 只有 `~/.gemini` 不算：Antigravity 也会建这个目录
+    // 只有 `~/.gemini` 不算：Antigravity 与 Gemini CLI 都会建这个父目录
     Brand {
         brand: B::GeminiCli,
         markers: &[&[".gemini", "settings.json"]],
         extensions: &[],
         reads: &[Universal],
+    },
+    // Antigravity 桌面版/IDE（~/.gemini/antigravity）与 Antigravity CLI agy（~/.gemini/antigravity-cli）
+    // 共用同一套 Customization System，全局 Skills 均从 ~/.gemini/config/skills 发现
+    Brand {
+        brand: B::Antigravity,
+        markers: &[&[".gemini", "antigravity"], &[".gemini", "antigravity-cli"]],
+        extensions: &[],
+        reads: &[Antigravity],
     },
     Brand {
         brand: B::Copilot,
@@ -309,15 +317,22 @@ mod tests {
     #[test]
     fn a_bare_gemini_folder_or_unrelated_extension_is_not_an_agent() {
         let tmp = tempfile::tempdir().unwrap();
-        // Antigravity 也建 ~/.gemini；cline 主题扩展不是 Cline
+        // 裸 ~/.gemini 不算任何 Agent；cline 主题扩展不是 Cline
         let env = home(
             tmp.path(),
-            &[".gemini/antigravity", ".vscode/extensions/someone.cline-theme-1.0.0"],
+            &[".gemini", ".vscode/extensions/someone.cline-theme-1.0.0"],
             &[],
         );
         assert!(brands(&env).is_empty());
         assert!(!target_detected(AgentId::Universal, &detect(&env)));
         assert!(!target_detected(AgentId::ClaudeCode, &detect(&env)));
+        assert!(!target_detected(AgentId::Antigravity, &detect(&env)));
+
+        // ~/.gemini/antigravity 或 ~/.gemini/antigravity-cli 识别为 Antigravity（读 ~/.gemini/config/skills）
+        let agy_env = home(tmp.path(), &[".gemini/antigravity"], &[]);
+        assert_eq!(brands(&agy_env), [B::Antigravity]);
+        assert!(target_detected(AgentId::Antigravity, &detect(&agy_env)));
+        assert!(!target_detected(AgentId::Universal, &detect(&agy_env)));
     }
 
     #[test]

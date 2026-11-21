@@ -153,12 +153,16 @@ pub(crate) fn opaque_script(text: &str) -> bool {
             let index = start + found;
             let before = lower[..index].chars().next_back();
             let after = lower[index + shell.len()..].chars().next();
-            let boundary = before.is_none_or(|c| !c.is_ascii_alphanumeric()) && after.is_none_or(|c| !c.is_ascii_alphanumeric());
+            let boundary =
+                before.is_none_or(|c| !c.is_ascii_alphanumeric()) && after.is_none_or(|c| !c.is_ascii_alphanumeric());
             if boundary {
                 let rest = &lower[index + shell.len()..];
                 let option = rest.trim_start();
                 if option.starts_with("-c")
-                    && option.split_whitespace().nth(1).is_some_and(|word| word.contains("$(") || word.contains('`'))
+                    && option
+                        .split_whitespace()
+                        .nth(1)
+                        .is_some_and(|word| word.contains("$(") || word.contains('`'))
                 {
                     return true;
                 }
@@ -208,15 +212,9 @@ pub(crate) fn conservative_scan(text: &str) -> Option<&'static str> {
     if has("release delete") || has("run delete") || has("gh api") && has("delete") {
         return Some("github-delete");
     }
-    if [
-        " delete ",
-        " remove ",
-        " purge ",
-        " destroy ",
-        " terminate ",
-    ]
-    .iter()
-    .any(|verb| has(verb))
+    if [" delete ", " remove ", " purge ", " destroy ", " terminate "]
+        .iter()
+        .any(|verb| has(verb))
     {
         return Some("cli-destroy");
     }
@@ -230,7 +228,8 @@ pub(crate) fn conservative_scan(text: &str) -> Option<&'static str> {
     {
         return Some("host-reboot");
     }
-    let firewall_query = has("iptables -l") || has(" nft list") || has("ufw status") || has("ufw show") || has("--list");
+    let firewall_query =
+        has("iptables -l") || has(" nft list") || has("ufw status") || has("ufw show") || has("--list");
     if !firewall_query
         && ["iptables", "ip6tables", "nft ", "ufw ", "firewall-cmd"]
             .iter()
@@ -487,7 +486,9 @@ fn dangerous(words: &[String], critical: &[String], depth: usize) -> Option<&'st
     }
     if name == "kubectl"
         && words.iter().any(|s| s == "delete")
-        && (words.iter().any(|s| ["pv", "pvc", "namespace", "namespaces"].contains(&s.as_str()))
+        && (words
+            .iter()
+            .any(|s| ["pv", "pvc", "namespace", "namespaces"].contains(&s.as_str()))
             || words.iter().any(|s| s == "--all" || s.starts_with("--all=")))
     {
         return Some(if words.iter().any(|s| ["pv", "pvc"].contains(&s.as_str())) {
@@ -504,9 +505,15 @@ fn dangerous(words: &[String], critical: &[String], depth: usize) -> Option<&'st
         for target in words.iter().skip(1).filter(|s| !s.starts_with('-')) {
             let parts: Vec<_> = target.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
             if target.starts_with('/') && (parts.len() <= 2 || parts.contains(&".."))
-                || ["/var/lib/docker", "/var/lib/mysql", "/var/lib/postgresql", "/var/lib/mongodb", "/var/lib/redis"]
-                    .iter()
-                    .any(|prefix| target.starts_with(prefix))
+                || [
+                    "/var/lib/docker",
+                    "/var/lib/mysql",
+                    "/var/lib/postgresql",
+                    "/var/lib/mongodb",
+                    "/var/lib/redis",
+                ]
+                .iter()
+                .any(|prefix| target.starts_with(prefix))
                 || target == "~"
                 || target == "~/"
                 || target.starts_with("$HOME")
@@ -745,20 +752,48 @@ fn read_only(words: &[String], depth: usize) -> bool {
 /// The short, auditable auto-operations allowlist. Everything else remains an
 /// approval candidate after credential/high-risk checks, even if it tokenizes.
 fn routine_change(words: &[String]) -> bool {
-    let Some(name) = words.first().map(|word| shell::binary(word)) else { return false };
+    let Some(name) = words.first().map(|word| shell::binary(word)) else {
+        return false;
+    };
     let args = &words[1..];
     match name {
         "docker" => match args.first().map(String::as_str) {
-            Some("start" | "restart" | "stop") => shell::checked_arguments(&args[1..], &[], &["--time", "-t"])
-                .is_some_and(|targets| !targets.is_empty()),
+            Some("start" | "restart" | "stop") => {
+                shell::checked_arguments(&args[1..], &[], &["--time", "-t"]).is_some_and(|targets| !targets.is_empty())
+            }
             Some("pull") => shell::checked_arguments(&args[1..], &["--quiet", "-q"], &["--platform"])
                 .is_some_and(|targets| targets.len() == 1),
             Some("compose") => {
                 let Some(parts) = shell::checked_arguments(
                     &args[1..],
-                    &["-d", "--detach", "--build", "--no-build", "--no-deps", "--wait", "--force-recreate", "--no-recreate", "--quiet", "-q"],
-                    &["-f", "--file", "-p", "--project-name", "--project-directory", "--profile", "--timeout", "-t", "--wait-timeout", "--pull", "--policy"],
-                ) else { return false };
+                    &[
+                        "-d",
+                        "--detach",
+                        "--build",
+                        "--no-build",
+                        "--no-deps",
+                        "--wait",
+                        "--force-recreate",
+                        "--no-recreate",
+                        "--quiet",
+                        "-q",
+                    ],
+                    &[
+                        "-f",
+                        "--file",
+                        "-p",
+                        "--project-name",
+                        "--project-directory",
+                        "--profile",
+                        "--timeout",
+                        "-t",
+                        "--wait-timeout",
+                        "--pull",
+                        "--policy",
+                    ],
+                ) else {
+                    return false;
+                };
                 matches!(parts.first(), Some(&"up" | &"start" | &"restart" | &"pull"))
             }
             _ => false,
@@ -769,7 +804,9 @@ fn routine_change(words: &[String]) -> bool {
             routine_change(&normalized)
         }
         "systemctl" => shell::checked_arguments(args, &["--user", "--system", "--no-block", "--quiet", "-q"], &[])
-            .is_some_and(|parts| parts.len() >= 2 && matches!(parts[0], "start" | "restart" | "reload" | "try-restart")),
+            .is_some_and(|parts| {
+                parts.len() >= 2 && matches!(parts[0], "start" | "restart" | "reload" | "try-restart")
+            }),
         "nginx" => args.len() == 2 && args[0] == "-s" && args[1] == "reload",
         _ => false,
     }
@@ -821,19 +858,32 @@ fn judge_inner(
     }
     let unsupported = outer_unsafe || parsed.unparsed || parsed.expansion;
     if unsupported {
-        return if auto_ops { conservative_scan(remote) } else { Some("unparsed") };
+        return if auto_ops {
+            conservative_scan(remote)
+        } else {
+            Some("unparsed")
+        };
     }
     if parsed.commands.is_empty() {
         return Some("unparsed");
     }
-    let changes: Vec<&Simple> = parsed.commands.iter().filter(|simple| {
-        shell::writes_redirect(simple) || !read_only(&simple.words, 0)
-    }).collect();
+    let changes: Vec<&Simple> = parsed
+        .commands
+        .iter()
+        .filter(|simple| shell::writes_redirect(simple) || !read_only(&simple.words, 0))
+        .collect();
     if changes.is_empty() {
         return None;
     }
-    if changes.iter().any(|simple| shell::writes_redirect(simple) || !routine_change(&simple.words)) {
-        return if auto_ops { conservative_scan(remote) } else { Some("unparsed") };
+    if changes
+        .iter()
+        .any(|simple| shell::writes_redirect(simple) || !routine_change(&simple.words))
+    {
+        return if auto_ops {
+            conservative_scan(remote)
+        } else {
+            Some("unparsed")
+        };
     }
     (!auto_ops).then_some("read-only")
 }

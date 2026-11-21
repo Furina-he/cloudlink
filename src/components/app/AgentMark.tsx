@@ -2,6 +2,7 @@
 // Agent 一律使用官方品牌 SVG Logo（取自 @lobehub/icons-static-svg，MIT，不自绘）；
 // 通用目录（~/.agents/skills，很多 Agent 共用）用 BlocksIcon；没有官方 Logo 的品牌和未知的自定义名称用 BotIcon，不用文字缩写。
 import ampSvg from "@lobehub/icons-static-svg/icons/amp.svg?raw"
+import antigravitySvg from "@lobehub/icons-static-svg/icons/antigravity.svg?raw"
 import claudeSvg from "@lobehub/icons-static-svg/icons/claude.svg?raw"
 import clineSvg from "@lobehub/icons-static-svg/icons/cline.svg?raw"
 import codexSvg from "@lobehub/icons-static-svg/icons/codex.svg?raw"
@@ -32,6 +33,7 @@ function pathsOf(svg: string): string[] {
 }
 
 const CLAUDE_PATHS = pathsOf(claudeSvg)
+const ANTIGRAVITY_PATHS = pathsOf(antigravitySvg)
 const CODEX_PATHS = pathsOf(codexSvg)
 const OPENAI_PATHS = pathsOf(openaiSvg)
 const CURSOR_PATHS = pathsOf(cursorSvg)
@@ -57,6 +59,7 @@ const LOGO_BY_BRAND: Partial<Record<AgentBrand, string[]>> = {
   cursor: CURSOR_PATHS,
   windsurf: WINDSURF_PATHS,
   "gemini-cli": GEMINI_PATHS,
+  antigravity: ANTIGRAVITY_PATHS,
   copilot: COPILOT_PATHS,
   opencode: OPENCODE_PATHS,
   cline: CLINE_PATHS,
@@ -74,6 +77,7 @@ const LOGO_BY_BRAND: Partial<Record<AgentBrand, string[]>> = {
 /** 按内置目标匹配官方 Logo（通用目录单独处理） */
 const LOGO_BY_AGENT: Partial<Record<AgentId, string[]>> = {
   "claude-code": CLAUDE_PATHS,
+  antigravity: ANTIGRAVITY_PATHS,
   trae: TRAE_PATHS,
   "trae-cn": TRAE_PATHS,
   kiro: KIRO_PATHS,
@@ -83,6 +87,9 @@ const LOGO_BY_AGENT: Partial<Record<AgentId, string[]>> = {
 const LOGO_BY_NAME: Record<string, string[]> = {
   claude: CLAUDE_PATHS,
   claudecode: CLAUDE_PATHS,
+  antigravity: ANTIGRAVITY_PATHS,
+  agy: ANTIGRAVITY_PATHS,
+  googleantigravity: ANTIGRAVITY_PATHS,
   codex: CODEX_PATHS,
   codexcli: CODEX_PATHS,
   openai: OPENAI_PATHS,
@@ -115,6 +122,7 @@ const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "")
 const LIT_GLYPH: Record<AgentId, string> = {
   "claude-code": "text-agent-claude",
   universal: "text-foreground",
+  antigravity: "text-foreground",
   trae: "text-foreground",
   "trae-cn": "text-foreground",
   kiro: "text-foreground",
@@ -129,6 +137,7 @@ const SIGNAL_TILE = "aria-pressed:border-transparent aria-pressed:bg-signal-soft
 export const AGENT_TILE_ON: Record<AgentId, string> = {
   "claude-code": SIGNAL_TILE,
   universal: SIGNAL_TILE,
+  antigravity: SIGNAL_TILE,
   trae: SIGNAL_TILE,
   "trae-cn": SIGNAL_TILE,
   kiro: SIGNAL_TILE,

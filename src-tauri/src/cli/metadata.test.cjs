@@ -490,3 +490,39 @@ def fake_call(arguments, **kwargs):
 `);
   assert.deepEqual(metadata, { error: "cli-scope-failed" });
 });
+
+test("Windows OCI treats empty stdout from empty compartments or instances as empty arrays", windowsOnly, () => {
+  const metadata = powershellBridge("scope", "oracle", `
+function Get-ClOciConfig { $script:clOciConfigFile='D:/isolated-cli-review/config'; $p=[Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal);$p['DEFAULT']='ocid1.tenancy.test.example';$p['Production']='';return $p }
+function ClFake {
+  if ($args -contains 'compartment') { '["ocid1.compartment.test.empty"]';return }
+  if ($args -contains 'ocid1.compartment.test.empty') { return }
+  if ($args -contains 'list-vnics') { 'null';return }
+  '[{"id":"ocid1.instance.test.only","display-name":"Solo","lifecycle-state":"RUNNING"}]'
+}`);
+  assert.deepEqual(metadata.items, [
+    { id: "ocid1.instance.test.only", kind: "instance", name: "Solo", address: null },
+  ]);
+});
+
+test("Windows OCI with zero sub-compartments and zero instances succeeds with an empty scope", windowsOnly, () => {
+  const metadata = powershellBridge("scope", "oracle", `
+function Get-ClOciConfig { $script:clOciConfigFile='D:/isolated-cli-review/config'; $p=[Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal);$p['DEFAULT']='ocid1.tenancy.test.example';$p['Production']='';return $p }
+function ClFake { return }
+`);
+  assert.deepEqual(metadata, { items: [] });
+});
+
+test("OCI Python bridge treats empty stdout and JSON null as empty lists", () => {
+  const metadata = oracleBridge("scope", `
+def fake_call(arguments, **kwargs):
+    if 'compartment' in arguments:
+        return subprocess.CompletedProcess(arguments,0,b'',b'')
+    if 'list-vnics' in arguments:
+        return subprocess.CompletedProcess(arguments,0,b'null\\n',b'')
+    return reply(arguments,[{'id':'ocid1.instance.test.root','name':'RootVM','state':'RUNNING'}])
+`);
+  assert.deepEqual(metadata.items, [
+    { id: "ocid1.instance.test.root", kind: "instance", name: "RootVM", address: null },
+  ]);
+});

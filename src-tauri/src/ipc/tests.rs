@@ -432,6 +432,7 @@ fn cli_input(account: &str, scope: Option<Vec<CliScopeItem>>) -> CliAssetInput {
         cli_provider: CliProvider::Cloudflare,
         account: Some(account.into()),
         scope,
+        cloud_scope: None,
         github: None,
     }
 }
@@ -1046,9 +1047,37 @@ fn failed_scope_refresh_keeps_saved_selection_and_prevents_stale_catalog_save() 
         fixture.backend.refresh_cli_scope(cli_request(None, Some(saved.id()))),
         IpcErrorId::CliScopePermission,
     );
+    let after_fail = fixture.backend.database().unwrap().require_asset(saved.id()).unwrap();
     assert_eq!(
-        fixture.backend.database().unwrap().require_asset(saved.id()).unwrap(),
-        saved
+        after_fail.as_cli().unwrap().cli.scope,
+        saved.as_cli().unwrap().cli.scope
+    );
+    assert_eq!(
+        after_fail
+            .as_cli()
+            .unwrap()
+            .cloud_scope
+            .as_ref()
+            .unwrap()
+            .snapshot_status,
+        CloudSnapshotStatus::Failed
+    );
+    assert_eq!(
+        after_fail
+            .as_cli()
+            .unwrap()
+            .cloud_scope
+            .as_ref()
+            .unwrap()
+            .snapshot_error_id,
+        Some(IpcErrorId::CliScopePermission)
+    );
+    assert!(
+        after_fail
+            .as_cli()
+            .unwrap()
+            .effective_cloud_scope()
+            .same_authority(&saved.as_cli().unwrap().effective_cloud_scope())
     );
     let mut draft = cli_input(ACCOUNT_A, Some(catalog));
     draft.id = Some(saved.id().into());
@@ -2479,4 +2508,109 @@ fn adding_an_include_drops_the_startup_result() {
     fixture.events.clear();
     fixture.backend.detect_environments().unwrap();
     assert!(fixture.events.contains("deliveries://changed"));
+}
+
+#[test]
+fn auto_cloud_scope_saves_without_catalog_and_supports_mode_switching_with_optimistic_locking() {
+    let runner = Arc::new(MetadataRunner::default());
+    let fixture = Fixture::with_runner(runner.clone(), false);
+    runner.deny_scope.store(true, Ordering::SeqCst);
+    fixture.backend.detect_cli_environment(cli_request(None, None)).unwrap();
+    assert_ipc(
+        fixture.backend.refresh_cli_scope(cli_request(Some(ACCOUNT_A), None)),
+        IpcErrorId::CliScopePermission,
+    );
+
+    // Auto mode saves cleanly even when scope pull failed (non-blocking onboarding).
+    let mut input = cli_input(ACCOUNT_A, None);
+    input.cloud_scope = Some(CloudScopeCreateInput {
+        mode: CloudScopeMode::Auto,
+        selected_ids: Vec::new(),
+        excluded_ids: Vec::new(),
+    });
+    let saved = fixture.backend.save_asset(AssetInput::Cli(input)).unwrap();
+    let cli = saved.asset.as_cli().unwrap();
+    let cs = cli.cloud_scope.as_ref().unwrap();
+    assert_eq!(cs.mode, CloudScopeMode::Auto);
+    assert_eq!(cs.snapshot_status, CloudSnapshotStatus::Failed);
+    assert_eq!(cs.snapshot_error_id, Some(IpcErrorId::CliScopePermission));
+    assert!(cli.cli.scope.is_empty());
+
+    // Once scope refresh succeeds, items are selected automatically under auto mode.
+    runner.deny_scope.store(false, Ordering::SeqCst);
+    let refreshed = fixture
+        .backend
+        .refresh_cli_scope(cli_request(None, Some(&cli.id)))
+        .unwrap();
+    assert!(!refreshed.is_empty());
+    assert!(refreshed.iter().all(|item| item.selected));
+    let after_ok = fixture.backend.database().unwrap().require_asset(&cli.id).unwrap();
+    let cs_ok = after_ok.as_cli().unwrap().cloud_scope.as_ref().unwrap();
+    assert_eq!(cs_ok.snapshot_status, CloudSnapshotStatus::Complete);
+    assert_eq!(cs_ok.snapshot_error_id, None);
+    assert_eq!(cs_ok.revision, 1);
+
+    // Subsequent failed refresh preserves the known snapshot while marking status failed.
+    runner.deny_scope.store(true, Ordering::SeqCst);
+    assert_ipc(
+        fixture.backend.refresh_cli_scope(cli_request(None, Some(&cli.id))),
+        IpcErrorId::CliScopePermission,
+    );
+    let after_fail = fixture.backend.database().unwrap().require_asset(&cli.id).unwrap();
+    assert_eq!(after_fail.as_cli().unwrap().cli.scope.len(), refreshed.len());
+    assert_eq!(
+        after_fail
+            .as_cli()
+            .unwrap()
+            .cloud_scope
+            .as_ref()
+            .unwrap()
+            .snapshot_status,
+        CloudSnapshotStatus::Failed
+    );
+
+    // Excluding an item in auto mode increments revision and rejects stale revisions.
+    let first_id = refreshed[0].id.clone();
+    let excluded = fixture
+        .backend
+        .save_cloud_scope(CloudScopeSaveRequest {
+            asset_id: cli.id.clone(),
+            expected_revision: 1,
+            mode: CloudScopeMode::Auto,
+            selected_ids: Vec::new(),
+            excluded_ids: vec![first_id.clone()],
+        })
+        .unwrap();
+    let cs_excl = excluded.asset.as_cli().unwrap().cloud_scope.as_ref().unwrap();
+    assert_eq!(cs_excl.revision, 2);
+    assert_eq!(cs_excl.excluded_ids, vec![first_id.clone()]);
+    assert!(!excluded.asset.as_cli().unwrap().cli.scope[0].selected);
+
+    assert_ipc(
+        fixture.backend.save_cloud_scope(CloudScopeSaveRequest {
+            asset_id: cli.id.clone(),
+            expected_revision: 1,
+            mode: CloudScopeMode::Manual,
+            selected_ids: Vec::new(),
+            excluded_ids: Vec::new(),
+        }),
+        IpcErrorId::CliScopeFailed,
+    );
+
+    // Switching to manual preserves explicit selectedIds.
+    let manual = fixture
+        .backend
+        .save_cloud_scope(CloudScopeSaveRequest {
+            asset_id: cli.id.clone(),
+            expected_revision: 2,
+            mode: CloudScopeMode::Manual,
+            selected_ids: vec![first_id.clone()],
+            excluded_ids: Vec::new(),
+        })
+        .unwrap();
+    let cs_man = manual.asset.as_cli().unwrap().cloud_scope.as_ref().unwrap();
+    assert_eq!(cs_man.mode, CloudScopeMode::Manual);
+    assert_eq!(cs_man.revision, 3);
+    assert_eq!(cs_man.selected_ids, vec![first_id]);
+    assert!(manual.asset.as_cli().unwrap().cli.scope[0].selected);
 }

@@ -7,6 +7,7 @@ import type {
   CliAsset,
   CliEnvState,
   CliScopeItem,
+  CloudScopeSaveRequest,
   DeleteResult,
   DistributeBlockReason,
   DistributeResult,
@@ -51,6 +52,7 @@ interface AssetState {
   setMode: (id: string, mode: Mode, beforeSend?: (latest: Asset) => void) => Promise<void>
   /** 范围勾选立即生效（PRD 6.4）；乐观更新，失败时恢复 */
   setCliScope: (id: string, selectedIds: string[]) => Promise<void>
+  saveCloudScope: (req: CloudScopeSaveRequest) => Promise<SaveResult>
   saveGithubScope: (req: GithubScopeSaveRequest) => Promise<SaveResult>
   _upsert: (asset: Asset) => void
   _patchAgent: (id: string, patch: Partial<AssetAgent>) => void
@@ -194,6 +196,19 @@ export const useAssetStore = create<AssetState>()((set, get) => {
       get()._upsert(result.asset)
       useSkillStore.getState()._onCompiled(result.statuses)
       useDeliveryStore.getState()._onChanged(result)
+    }),
+
+    saveCloudScope: (req) => enqueue(req.assetId, async () => {
+      if (!get().byId[req.assetId]) throw { id: "not-found" } satisfies IpcError
+      try {
+        const result = await ipc.saveCloudScope(req)
+        get()._upsert(result.asset)
+        useSkillStore.getState()._onCompiled(result.statuses)
+        useDeliveryStore.getState()._onChanged(result)
+        return result
+      } catch (e) {
+        throw toIpcError(e)
+      }
     }),
 
     saveGithubScope: (req) => enqueue(req.assetId, async () => {

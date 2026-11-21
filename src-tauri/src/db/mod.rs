@@ -116,6 +116,18 @@ const MIGRATIONS: &[&str] = &[
     UPDATE probe_results SET merged_json = json_set(merged_json, '$.asset.agent.mode', 'confirm-changes')
     WHERE json_extract(merged_json, '$.asset.agent.mode') IN ('read-only', 'standard');
     "#,
+    // v8: F-104 dynamic cloud scope; existing cloud accounts stay conservatively manual.
+    r#"
+    UPDATE assets SET json = json_set(json, '$.cloudScope', json_object(
+        'mode', 'manual',
+        'selectedIds', json(COALESCE((SELECT json_group_array(json_extract(item.value, '$.id'))
+            FROM json_each(assets.json, '$.cli.scope') AS item WHERE json_extract(item.value, '$.selected') = 1), '[]')),
+        'excludedIds', json('[]'),
+        'snapshotStatus', 'complete',
+        'revision', 1))
+    WHERE type = 'cli' AND json_extract(json, '$.cliProvider') IN ('cloudflare', 'vercel', 'oracle')
+        AND json_type(json, '$.cloudScope') IS NULL;
+    "#,
 ];
 
 pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;

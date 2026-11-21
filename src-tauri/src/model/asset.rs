@@ -679,6 +679,113 @@ pub struct CliInfo {
     pub scope: Vec<CliScopeItem>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "asset.ts")]
+pub enum CloudScopeMode {
+    Auto,
+    Manual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "asset.ts")]
+pub enum CloudSnapshotStatus {
+    Complete,
+    Partial,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "asset.ts")]
+pub struct CloudScopeConfig {
+    pub mode: CloudScopeMode,
+    pub excluded_ids: Vec<String>,
+    pub selected_ids: Vec<String>,
+    pub snapshot_status: CloudSnapshotStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub snapshot_error_id: Option<super::misc::IpcErrorId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub checked_at: Option<String>,
+    pub revision: u64,
+}
+
+impl CloudScopeConfig {
+    pub fn auto_default() -> Self {
+        Self {
+            mode: CloudScopeMode::Auto,
+            excluded_ids: Vec::new(),
+            selected_ids: Vec::new(),
+            snapshot_status: CloudSnapshotStatus::Complete,
+            snapshot_error_id: None,
+            checked_at: None,
+            revision: 1,
+        }
+    }
+
+    pub fn legacy(scope: &[CliScopeItem]) -> Self {
+        let mut selected_ids: Vec<String> = scope.iter().filter(|i| i.selected).map(|i| i.id.clone()).collect();
+        selected_ids.sort();
+        selected_ids.dedup();
+        Self {
+            mode: CloudScopeMode::Manual,
+            excluded_ids: Vec::new(),
+            selected_ids,
+            snapshot_status: CloudSnapshotStatus::Complete,
+            snapshot_error_id: None,
+            checked_at: None,
+            revision: 1,
+        }
+    }
+
+    pub fn includes(&self, id: &str) -> bool {
+        match self.mode {
+            CloudScopeMode::Auto => !self.excluded_ids.iter().any(|x| x == id),
+            CloudScopeMode::Manual => self.selected_ids.iter().any(|x| x == id),
+        }
+    }
+
+    pub fn canonicalize(&mut self) {
+        self.excluded_ids.sort();
+        self.excluded_ids.dedup();
+        self.selected_ids.sort();
+        self.selected_ids.dedup();
+    }
+
+    /// Timestamps and snapshot diagnostics do not change authority and must not advance
+    /// revision or invalidate pending approvals.
+    pub fn same_authority(&self, other: &Self) -> bool {
+        let mut left = self.clone();
+        let mut right = other.clone();
+        left.canonicalize();
+        right.canonicalize();
+        left.mode == right.mode && left.excluded_ids == right.excluded_ids && left.selected_ids == right.selected_ids
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, export_to = "asset.ts")]
+pub struct CloudScopeCreateInput {
+    pub mode: CloudScopeMode,
+    pub selected_ids: Vec<String>,
+    pub excluded_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, export_to = "asset.ts")]
+pub struct CloudScopeSaveRequest {
+    pub asset_id: String,
+    pub expected_revision: u64,
+    pub mode: CloudScopeMode,
+    pub selected_ids: Vec<String>,
+    pub excluded_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "asset.ts")]
@@ -700,6 +807,10 @@ pub struct CliAsset {
     pub handle: String,
     pub account: Option<String>,
     pub cli: CliInfo,
+    // F-104 (2026-11-21): dynamic auto/manual scope for Cloudflare, Vercel, and Oracle Cloud.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cloud_scope: Option<CloudScopeConfig>,
     // F-110: stable resource ownership is independent from the active gh login.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -707,6 +818,13 @@ pub struct CliAsset {
 }
 
 impl CliAsset {
+    /// Returns the explicit cloud scope config, or conservatively derives manual mode from legacy scope.
+    pub fn effective_cloud_scope(&self) -> CloudScopeConfig {
+        self.cloud_scope
+            .clone()
+            .unwrap_or_else(|| CloudScopeConfig::legacy(&self.cli.scope))
+    }
+
     /// A valid login does not authorize an incomplete or unbound repository scope.
     pub fn github_scope_ready(&self, env_id: &EnvId) -> bool {
         self.github.as_ref().is_some_and(|config| {
@@ -909,6 +1027,9 @@ pub struct CliAssetInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub scope: Option<Vec<CliScopeItem>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cloud_scope: Option<CloudScopeCreateInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub github: Option<super::github::GithubCreateInput>,

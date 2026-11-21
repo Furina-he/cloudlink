@@ -320,11 +320,16 @@ mod tests {
         fs::create_dir(&root).unwrap();
         let directory = root.join("routes");
         fs::create_dir(&directory).unwrap();
-        fs::write(root.join(".cloudlink.json"), br#"{"managedBy":"cloudlink","kind":"data"}"#).unwrap();
-        let files: serde_json::Map<String, Value> = (0..250).map(|index| {
-            (format!("ssh-{index:04}.conf"), Value::String("a".repeat(64)))
-        }).collect();
-        let receipt = serde_json::to_vec(&json!({"managedBy":"cloudlink","kind":"execution-routes","files":files})).unwrap();
+        fs::write(
+            root.join(".cloudlink.json"),
+            br#"{"managedBy":"cloudlink","kind":"data"}"#,
+        )
+        .unwrap();
+        let files: serde_json::Map<String, Value> = (0..250)
+            .map(|index| (format!("ssh-{index:04}.conf"), Value::String("a".repeat(64))))
+            .collect();
+        let receipt =
+            serde_json::to_vec(&json!({"managedBy":"cloudlink","kind":"execution-routes","files":files})).unwrap();
         assert!(receipt.len() as u64 > runtime::MAX_RUNTIME);
         fs::write(directory.join(".cloudlink.json"), receipt).unwrap();
         let manifest = json!({
@@ -334,10 +339,17 @@ mod tests {
         });
         fs::write(directory.join("manifest.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
         assert!(load(&root).is_ok());
-        for (path, kind) in [(root.join(".cloudlink.json"), "data"), (directory.join(".cloudlink.json"), "execution-routes")] {
+        for (path, kind) in [
+            (root.join(".cloudlink.json"), "data"),
+            (directory.join(".cloudlink.json"), "execution-routes"),
+        ] {
             runtime::read_owned_json(&path, kind, runtime::MAX_MANIFEST).unwrap();
         }
-        for path in [directory.join("manifest.json"), directory.join(".cloudlink.json"), root.join(".cloudlink.json")] {
+        for path in [
+            directory.join("manifest.json"),
+            directory.join(".cloudlink.json"),
+            root.join(".cloudlink.json"),
+        ] {
             assert!(runtime::safe_path(&path));
             let metadata = fs::symlink_metadata(&path).unwrap();
             assert!(metadata.is_file() && !runtime::is_link(&metadata));

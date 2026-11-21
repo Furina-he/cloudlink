@@ -55,6 +55,7 @@ const MODE_LABEL: Record<Mode, string> = {
 const AGENT_LABEL: Record<AgentId, string> = {
   "claude-code": "Claude Code",
   universal: "通用目录",
+  antigravity: "Antigravity",
   trae: "Trae",
   "trae-cn": "Trae CN",
   kiro: "Kiro",
@@ -65,6 +66,7 @@ const AGENT_LABEL: Record<AgentId, string> = {
 const AGENT_SHORT: Record<Exclude<AgentId, "custom">, string> = {
   "claude-code": "Claude Code",
   universal: "通用",
+  antigravity: "Antigravity",
   trae: "Trae",
   "trae-cn": "Trae CN",
   kiro: "Kiro",
@@ -77,6 +79,7 @@ const BRAND_NAME: Record<AgentBrand, string> = {
   cursor: "Cursor",
   windsurf: "Windsurf",
   "gemini-cli": "Gemini CLI",
+  antigravity: "Antigravity",
   copilot: "GitHub Copilot",
   opencode: "OpenCode",
   cline: "Cline",
@@ -800,6 +803,55 @@ export const copy = {
     evidenceSource: { "vercel-binding": "Vercel 项目绑定", "cloudflare-pages": "Cloudflare Pages 代码来源", "server-git-remote": "服务器工作目录的 git remote" } as Record<string, string>,
     relationNote: "部署关系只提供背景，不会改变 Agent 选择、档位或生产标记。",
     reloading: "重新核对中…",
+  },
+
+  /** 非 GitHub 云平台（Cloudflare / Vercel / Oracle Cloud）的动态范围（2026-11-21，对齐 GitHub） */
+  cloudScope: {
+    scopeTitle: "资源范围",
+    manageScope: "管理范围",
+    saveScope: "保存范围",
+    scopeSaved: "资源范围已更新",
+    scopeFoot: "勾选表示提供给 Agent；自动跟随时其他产品与新资源也会放行。",
+    mode: "提供范围",
+    modeLabel: { auto: "自动跟随", manual: "手动选择" },
+    autoHint: "提供此账号当前及未来全部资源（含其他云产品）；取消勾选的已知资源会排除。",
+    manualHint: "只提供已勾选的已知资源，新创建的资源不会自动加入。",
+    manualPreserved: "保留当前手动范围，刷新或打开编辑不会自动扩大",
+    expansion: (count: number) =>
+      count > 0
+        ? `转为自动跟随后，除本次新增的 ${count} 项已知资源外，未来创建的资源及其他云产品也会自动放行。`
+        : "转为自动跟随后，此账号当前及未来创建的全部资源及其他云产品都会自动放行。",
+    autoSummary: (excluded: number) =>
+      excluded > 0 ? `自动跟随 · 排除 ${excluded} 项` : "自动跟随 · 全部资源",
+    manualSummary: (selected: number) => `手动选择 · 已选 ${selected} 项`,
+    search: "搜索已知资源",
+    searchPlaceholder: "按名称搜索",
+    clearSearch: "清除搜索",
+    refresh: "刷新列表",
+    loading: "正在拉取已知资源…",
+    itemLabel: (name: string) => `提供 ${name} 给 Agent`,
+    excluded: "已排除",
+    notProvided: "未提供",
+    willAdd: "本次将新增",
+    snapshotFailedCreateAuto:
+      "资源列表未能读取，但自动跟随不受影响，可直接保存并启用；稍后可在详情页刷新。",
+    snapshotFailedCreateManual:
+      "资源列表未能读取，可先切回自动跟随直接保存，或稍后重试刷新。",
+    snapshotFailedDetail:
+      "上次拉取已知资源失败，已保留上次快照；自动跟随时 Agent 仍可操作此账号下的全部资源。",
+    snapshotPartial: "资源列表没有完整读取，已保留上次快照。",
+    listTitle: "已知资源",
+    table: "已知的云平台资源",
+    columns: { name: "名称", kind: "类型", link: "关联" },
+    noMatch: "没有匹配的资源。",
+    noneAvailableAuto:
+      "当前没有可列出的已知资源；自动跟随模式下，Agent 仍可操作此账号下的全部资源（含其他云产品）。",
+    noneAvailableManual: "当前账号下没有可选的已知资源。",
+    noneProvidedAuto:
+      "当前没有可列出的已知资源；自动跟随模式下，Agent 仍可操作此账号下的全部资源（含其他云产品）。",
+    noneProvidedManual: "还没有提供任何资源，可在「管理范围」里选择。",
+    relationNote:
+      "已知资源列表用于查看、排除与自动关联服务器；自动跟随模式下不限制其他云产品或新建资源。",
   },
 
   /** 添加资源（PRD 6.5） */
@@ -1841,7 +1893,7 @@ export const copy = {
   customTarget: {
     title: "添加自定义目录",
     description:
-      "Codex、Cursor、Gemini CLI 等大多数 Agent 已经读取通用目录，Trae、Kiro、Continue 检测到后会自动加入。只有 CloudLink 不认识的 Agent 才需要在这里指定它的全局 skills 目录。",
+      "Codex、Cursor、Gemini CLI 等大多数 Agent 已经读取通用目录，Antigravity、Trae、Kiro、Continue 检测到后会自动加入。只有 CloudLink 不认识的 Agent 才需要在这里指定它的全局 skills 目录。",
     name: "名称",
     path: "目录",
     pick: "选择目录",

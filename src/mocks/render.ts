@@ -200,13 +200,38 @@ function renderCliDetails(a: CliAsset, aliasById: (id: string) => string | undef
           "For the specifically checked high-risk Git operations, use `--tool git` and explicit Git arguments/branch; the runner verifies the actual push remote and repository. This is not an arbitrary local-program runner:",
           ...entryLines(settings, envId, "exec", a.id, "--tool git -- <git arguments>"),
         ]
-      : [
-          "## Scope",
-          "Only operate on these resources; ask the user before touching anything else in the account.",
-          "| Kind | Name | Linked server |",
-          "| --- | --- | --- |",
-          ...scope.map((x) => `| ${SCOPE_WORD[x.kind]} | ${code(x.name)} | ${(x.linkedAssetId && aliasById(x.linkedAssetId)) || "-"} |`),
-        ]),
+      : a.cloudScope?.mode === "auto"
+        ? [
+            "## Resources",
+            "Auto scope follows this account: current and future resources this account can access (including products not listed below), except any excluded items.",
+            ...(a.cloudScope.excludedIds.length
+              ? [
+                  `Excluded resources (do not touch): ${a.cloudScope.excludedIds
+                    .map((id) => {
+                      const item = a.cli.scope.find((x) => x.id === id)
+                      return item ? `${code(item.name)} (${code(item.id)})` : code(id)
+                    })
+                    .join(", ")}.`,
+                ]
+              : []),
+            ...(scope.length
+              ? [
+                  "",
+                  "Known snapshot (not an exhaustive list):",
+                  "",
+                  "| Kind | Name | Linked server |",
+                  "| --- | --- | --- |",
+                  ...scope.map((x) => `| ${SCOPE_WORD[x.kind]} | ${code(x.name)} | ${(x.linkedAssetId && aliasById(x.linkedAssetId)) || "-"} |`),
+                ]
+              : []),
+          ]
+        : [
+            "## Scope",
+            "Only operate on these resources; ask the user before touching anything else in the account.",
+            "| Kind | Name | Linked server |",
+            "| --- | --- | --- |",
+            ...scope.map((x) => `| ${SCOPE_WORD[x.kind]} | ${code(x.name)} | ${(x.linkedAssetId && aliasById(x.linkedAssetId)) || "-"} |`),
+          ]),
     ...(a.notes.trim() ? ["", "## Notes", a.notes.trim()] : []),
     "",
   ].join("\n")

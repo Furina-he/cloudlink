@@ -69,10 +69,11 @@ function ConvertFrom-ClJson([string]$raw) {
   if (-not $raw.Trim()) { return $null }
   try { return ,(ConvertFrom-Json -InputObject $raw -ErrorAction Stop) } catch { return $null }
 }
-function Invoke-ClJson([string[]]$arguments, [bool]$allowUnavailable = $false) {
+function Invoke-ClJson([string[]]$arguments, [bool]$allowUnavailable = $false, [bool]$emptyAsArray = $false) {
   $run = Invoke-ClCapture $arguments
   $code = $run.code
   $raw = $run.raw
+  $trimmed = $raw.Trim()
   $data = ConvertFrom-ClJson $raw
   if ($code -ne 0) {
     $diagnostic = $run.diagnostic
@@ -88,6 +89,10 @@ function Invoke-ClJson([string[]]$arguments, [bool]$allowUnavailable = $false) {
     if ($diagnostic -match 'permission|forbidden|403|unauthorized|401|NotAuthorized') { Throw-Cl 'cli-scope-permission' }
     Throw-Cl 'cli-command-unsupported'
   }
+  # OCI list commands exit 0 with empty stdout (or JSON null) whenever a tenancy or
+  # compartment has zero items. Only empty/null stdout becomes an empty array; malformed
+  # output still fails with cli-command-unsupported.
+  if ($emptyAsArray -and (-not $trimmed -or $trimmed -ceq 'null')) { return ,@() }
   if ($null -eq $data) { Throw-Cl 'cli-command-unsupported' }
   return ,$data
 }
@@ -342,7 +347,7 @@ try {
       $tenancy=$profiles[$clAccount]
       if (-not $tenancy -and $profiles.Contains('DEFAULT')) { $tenancy=$profiles['DEFAULT'] }
       if (-not $tenancy) { Throw-Cl 'cli-scope-failed' }
-      $compartments=Invoke-ClJson (Get-ClOciArgs @('iam','compartment','list','--compartment-id',$tenancy,'--access-level','ACCESSIBLE','--compartment-id-in-subtree','true','--all','--query','data[].id'))
+      $compartments=Invoke-ClJson (Get-ClOciArgs @('iam','compartment','list','--compartment-id',$tenancy,'--access-level','ACCESSIBLE','--compartment-id-in-subtree','true','--all','--query','data[].id')) $true $true
       if ($compartments -isnot [array]) { Throw-Cl 'cli-command-unsupported' }
       $ids=@($tenancy) + @($compartments)
       if ($ids.Count -gt 100) { Throw-Cl 'cli-scope-failed' }
@@ -351,12 +356,12 @@ try {
         if ($compartment -notmatch '^ocid1\.(tenancy|compartment)\.[A-Za-z0-9_.-]+$') { Throw-Cl 'cli-scope-failed' }
         # PS 5.1 removes inner quotes from native argv. Select the data array and
         # project dashed field names locally instead of passing quoted JMESPath.
-        $instances=Invoke-ClJson (Get-ClOciArgs @('compute','instance','list','--compartment-id',$compartment,'--all','--query','data')) $true
+        $instances=Invoke-ClJson (Get-ClOciArgs @('compute','instance','list','--compartment-id',$compartment,'--all','--query','data')) $true $true
         if ($instances -isnot [array]) { Throw-Cl 'cli-command-unsupported' }
         foreach ($instance in $instances) {
           if ($instance.id -notmatch '^ocid1\.instance\.[A-Za-z0-9_.-]+$') { Throw-Cl 'cli-scope-failed' }
           if ($instance.'lifecycle-state' -eq 'TERMINATED' -or -not $seen.Add($instance.id)) { continue }
-          $vnics=Invoke-ClJson (Get-ClOciArgs @('compute','instance','list-vnics','--instance-id',$instance.id,'--all','--query','data')) $true
+          $vnics=Invoke-ClJson (Get-ClOciArgs @('compute','instance','list-vnics','--instance-id',$instance.id,'--all','--query','data')) $true $true
           if ($vnics -isnot [array]) { Throw-Cl 'cli-command-unsupported' }
           $publicIps=@($vnics | Where-Object { $_.'public-ip' -is [string] -and $_.'public-ip' } | ForEach-Object { $_.'public-ip' })
           $address=$null

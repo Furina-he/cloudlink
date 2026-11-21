@@ -129,7 +129,7 @@ export function logActivity(item: Omit<ActivityItem, "id" | "at">) {
 /** 同一个 Agent 在各运行环境的目录共用一个 AgentKey：内置取 AgentId，自定义目录取 `custom:<名称>` */
 export const agentKeyOf = (agent: AgentId, label: string) => (agent === "custom" ? `custom:${label.trim()}` : agent)
 
-const AGENT_ORDER: Record<AgentId, number> = { "claude-code": 0, universal: 1, trae: 2, "trae-cn": 3, kiro: 4, continue: 5, custom: 6 }
+const AGENT_ORDER: Record<AgentId, number> = { "claude-code": 0, universal: 1, antigravity: 2, trae: 3, "trae-cn": 4, kiro: 5, continue: 6, custom: 7 }
 
 export const physicalUnit = (t: Target) => `${t.envId}|${t.envId === "windows" ? t.path.replaceAll("\\", "/").toLowerCase() : t.path}`
 export const directoryMembers = (t: Target) => db.targets.filter((other) => physicalUnit(other) === physicalUnit(t) && !db.crossEnvironmentTargets.has(other.id))
@@ -305,9 +305,20 @@ export function draftToAsset(input: AssetInput): Asset {
   if (input.type === "cli") {
     const rest = { ...input }
     delete rest.scope
+    delete rest.cloudScope
     delete rest.github
     const cli = saved?.type === "cli" ? saved.cli : { binary: "cf" as const, envStates: {}, scope: input.scope ?? [] }
-    return { ...rest, github: saved?.type === "cli" ? saved.github : undefined, id: input.id ?? "draft", handle: saved?.type === "cli" ? saved.handle : input.cliProvider, cli, agent, createdAt: saved?.createdAt ?? now(), updatedAt: now() }
+    return {
+      ...rest,
+      cloudScope: saved?.type === "cli" ? saved.cloudScope : undefined,
+      github: saved?.type === "cli" ? saved.github : undefined,
+      id: input.id ?? "draft",
+      handle: saved?.type === "cli" ? saved.handle : input.cliProvider,
+      cli,
+      agent,
+      createdAt: saved?.createdAt ?? now(),
+      updatedAt: now(),
+    }
   }
   const server = saved?.type === "vps" ? saved : undefined
   const c = input.connection

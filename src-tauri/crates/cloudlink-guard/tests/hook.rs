@@ -238,11 +238,21 @@ fn invalid_policy_never_bypasses_a_running_or_damaged_runtime() {
         assert_eq!(denied["hookSpecificOutput"]["permissionDecision"], "deny");
     };
     assert_blocked();
-    guard_rules::runtime::read_owned_json(&fixture.root.join("guard/.cloudlink.json"), "guard", guard_rules::runtime::MAX_RUNTIME).unwrap();
+    guard_rules::runtime::read_owned_json(
+        &fixture.root.join("guard/.cloudlink.json"),
+        "guard",
+        guard_rules::runtime::MAX_RUNTIME,
+    )
+    .unwrap();
     assert!(no_links(&fixture.root.join("guard")));
     fs::remove_file(fixture.root.join("guard/policy.json")).unwrap();
     assert_blocked();
-    guard_rules::runtime::read_owned_json(&fixture.root.join("runtime.json"), "runtime", guard_rules::runtime::MAX_RUNTIME).unwrap();
+    guard_rules::runtime::read_owned_json(
+        &fixture.root.join("runtime.json"),
+        "runtime",
+        guard_rules::runtime::MAX_RUNTIME,
+    )
+    .unwrap();
     assert!(no_links(&fixture.root));
     fs::write(fixture.root.join("runtime.json"), b"{").unwrap();
     assert_blocked();

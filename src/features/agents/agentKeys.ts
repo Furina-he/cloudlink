@@ -8,8 +8,8 @@ import { selectSettingsKnown, useSettingsStore } from "@/stores/settings"
 import { compileKey } from "@/stores/skills"
 import { selectAvailableEnvs, selectTargetsKnown, useTargetStore } from "@/stores/targets"
 
-/** 内置目标在前（Claude Code、通用目录、Trae、Kiro、Continue），自定义目录在后 */
-export const AGENT_ORDER: Record<AgentId, number> = { "claude-code": 0, universal: 1, trae: 2, "trae-cn": 3, kiro: 4, continue: 5, custom: 6 }
+/** 内置目标在前（Claude Code、通用目录、Antigravity、Trae、Kiro、Continue），自定义目录在后 */
+export const AGENT_ORDER: Record<AgentId, number> = { "claude-code": 0, universal: 1, antigravity: 2, trae: 3, "trae-cn": 4, kiro: 5, continue: 6, custom: 7 }
 
 export interface AgentOption {
   key: string

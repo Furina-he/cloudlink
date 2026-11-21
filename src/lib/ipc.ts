@@ -15,6 +15,7 @@ import type {
   CliScopeItem,
   CliSetupRequest,
   CliSetupStarted,
+  CloudScopeSaveRequest,
   CompilePreview,
   CompileStatus,
   ConnectionTestRequest,
@@ -112,6 +113,8 @@ export const ipc = {
   /** 范围勾选立即生效（PRD 6.4），重新编译（2026-11-02 补充） */
   setCliScope: (assetId: string, selectedIds: string[]) =>
     invoke<SaveResult>("set_cli_scope", { assetId, selectedIds }),
+  saveCloudScope: (req: CloudScopeSaveRequest) =>
+    invoke<SaveResult>("save_cloud_scope", { req }),
   getGithubScope: (req: GithubScopeRequest) => invoke<GithubScopeResult>("get_github_scope", { req }),
   saveGithubScope: (req: GithubScopeSaveRequest) => invoke<SaveResult>("save_github_scope", { req }),
   getRuntimeStatus: () => invoke<RuntimeStatus>("get_runtime_status"),
