@@ -205,8 +205,9 @@ export const serverActions = {
   },
 
   /**
-   * 资源行与详情的「去安装／去登录」（F-104 AC2，P9b）：后端按环境与安装方式查固定表，
-   * 在可见终端里依次安装并登录；等待状态由 `cli-setup://changed` 推进，不依赖窗口焦点
+   * 资源行与详情的「去安装／去登录」（F-104 AC2，P9b；2026-11-21）：后端按环境与安装方式
+   * 查固定表。cf／vercel／gh 在后台安装并由 CLI 打开浏览器，OCI 仍用可见终端；
+   * 等待状态由 `cli-setup://changed` 推进，不依赖窗口焦点
    */
   openCliTerminal(asset: CliAsset, envId: EnvId) {
     const method = installMethods(asset.cliProvider, envId)[0]

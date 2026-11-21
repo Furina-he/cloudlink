@@ -66,10 +66,13 @@ export function installMethods(provider: CliProvider, envId: EnvId): InstallMeth
 
 export const installCommand = (provider: CliProvider, envId: EnvId): string => installMethods(provider, envId)[0].command
 
-/** 登录命令。oci 用浏览器登录的 setup bootstrap，不再要用户手填 OCID（AC2，P9b） */
+/**
+ * 登录命令（AC2，P9b；2026-11-21 起 cf／vercel／gh 在后台运行并自己打开浏览器）。
+ * OCI 的 setup bootstrap 只有终端向导，仍会打开可见终端。必须与 Rust 的固定表逐字一致。
+ */
 export function loginCommand(provider: CliProvider): string {
-  if (provider === "cloudflare") return "cf auth login"
+  if (provider === "cloudflare") return "cf auth login --force"
   if (provider === "vercel") return "vercel login"
-  if (provider === "github") return "gh auth login"
+  if (provider === "github") return "gh auth login --web --clipboard --git-protocol https --hostname github.com"
   return "oci setup bootstrap"
 }

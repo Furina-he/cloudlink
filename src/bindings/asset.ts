@@ -172,7 +172,7 @@ export interface CliEnvState {
   checkedAt: string
 }
 
-/** 一键安装并登录（F-104 AC2，P9b）：前端只传这三个定位值，命令由 Rust 查固定表 */
+/** 一键安装并登录（F-104 AC2，P9b）：前端只传这三个定位值，命令由 Rust 查固定表。cf／vercel／gh 在后台运行并打开浏览器，OCI 保留可见终端 */
 export interface CliSetupRequest {
   provider: CliProvider
   envId: EnvId

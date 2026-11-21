@@ -290,7 +290,7 @@ export const assets: Asset[] = [
 
 /**
  * 本机各运行环境里 CLI 的实际情况，detect_cli_environment 读这张表。
- * Oracle：Windows 没装、WSL 已就绪，用来走添加向导；「打开终端」之后 Mock 把那个环境改成已就绪，切回窗口时自动刷新
+ * Oracle：Windows 没装、WSL 已就绪，用来走添加向导；点「安装并登录／登录」后 Mock 按阶段把那个环境改成已就绪，界面自己刷新
  */
 export const cliMachine: Record<CliProvider, Partial<Record<EnvId, CliEnvState>>> = {
   cloudflare: { windows: ready("1.0.0", `${WIN_NPM}cf.cmd`, "me@example.com"), [WSL]: ready("1.0.0", "/home/me/.local/share/pnpm/cf", "me@example.com") },

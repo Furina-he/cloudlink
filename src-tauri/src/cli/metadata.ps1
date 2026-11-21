@@ -395,7 +395,9 @@ try {
         $workerName=if ($worker.name) { $worker.name } else { $worker.id }
         Add-ClItem @{id=('worker:'+$workerId);kind='worker';name=(Clean-Cl $workerName)}
       }
-      $pages=Get-ClCfList @('pages','list')
+      # The Pages API rejects per_page above 10 (400 Invalid list options), unlike the
+      # Zones, DNS and Workers endpoints.
+      $pages=Get-ClCfList @('pages','list') -size 10
       foreach ($project in $pages) {
         if (-not $project.name) { Throw-Cl 'cli-scope-failed' }
         $source=$project.source.config

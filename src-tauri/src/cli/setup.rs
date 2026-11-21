@@ -1,12 +1,17 @@
-//! One-click CLI install and login (F-104 AC2, P9b). The terminal runs a fixed command
-//! table chosen by `{provider, environment, method}`; CloudLink never accepts a command
-//! string from the frontend, never reads credentials, and observes completion only through
-//! one-shot marker files and a fresh read-only environment check.
+//! One-click CLI install and login (F-104 AC2, P9b; revised 2026-11-21). A fixed command
+//! table chosen by `{provider, environment, method}` runs in a hidden process for the CLIs
+//! whose login is browser-based (`cf`, `vercel`, `gh`), so no console window appears; the
+//! CLI opens the authorization page itself. OCI's `oci setup bootstrap` is an interactive
+//! terminal wizard with no browser flow, so only that provider keeps a visible terminal.
+//! CloudLink never accepts a command string from the frontend, never reads credentials, and
+//! observes completion only through one-shot marker files and a fresh read-only environment
+//! check.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -17,6 +22,7 @@ use crate::model::asset::{CliProvider, CliSetupChangedEvent, CliSetupStarted, Cl
 use crate::model::env::EnvId;
 use crate::model::misc::IpcErrorId;
 use crate::paths::Paths;
+use crate::proc;
 
 use super::runner::{ps_quote, sh_quote};
 
@@ -41,13 +47,21 @@ impl Default for Timing {
     }
 }
 
-/// What the visible terminal should run. The Windows script is handed to PowerShell as
+/// What the setup process should run. The Windows script is handed to PowerShell as
 /// `-EncodedCommand`; the WSL script is written to the isolated CloudLink directory and
-/// executed by a fresh login shell.
+/// executed by a fresh login shell. `visible` is true only where the CLI login itself needs
+/// a terminal (OCI); the browser-based CLIs run hidden and open the authorization page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Launch {
-    Windows { script: String },
-    Wsl { distro: String, command: String },
+    Windows {
+        script: String,
+        visible: bool,
+    },
+    Wsl {
+        distro: String,
+        command: String,
+        visible: bool,
+    },
 }
 
 pub trait TerminalLauncher: Send + Sync {
@@ -63,26 +77,41 @@ impl TerminalLauncher for InertLauncher {
     }
 }
 
-/// Real launcher: Windows Terminal when available, otherwise a new console window.
+/// Real launcher. Hidden providers run with `CREATE_NO_WINDOW`; only OCI is shown in
+/// Windows Terminal (or a new console) because its login is an interactive terminal wizard.
 pub struct SystemLauncher;
 
 impl TerminalLauncher for SystemLauncher {
     fn launch(&self, launch: &Launch) -> Result<()> {
-        let (wt_args, program, args) = match launch {
-            Launch::Windows { script } => {
+        let (visible, program, args) = match launch {
+            Launch::Windows { script, visible } => {
                 let encoded = encode_powershell(script);
-                let args = vec![
-                    "-NoLogo".to_string(),
-                    "-NoProfile".to_string(),
-                    "-NoExit".to_string(),
-                    "-EncodedCommand".to_string(),
-                    encoded,
-                ];
-                let mut wt = vec!["new-tab".to_string(), "--".to_string(), "powershell.exe".to_string()];
-                wt.extend(args.iter().cloned());
-                (wt, "powershell.exe".to_string(), args)
+                let args = if *visible {
+                    vec![
+                        "-NoLogo".to_string(),
+                        "-NoProfile".to_string(),
+                        "-NoExit".to_string(),
+                        "-EncodedCommand".to_string(),
+                        encoded,
+                    ]
+                } else {
+                    vec![
+                        "-NoLogo".to_string(),
+                        "-NoProfile".to_string(),
+                        "-NonInteractive".to_string(),
+                        "-WindowStyle".to_string(),
+                        "Hidden".to_string(),
+                        "-EncodedCommand".to_string(),
+                        encoded,
+                    ]
+                };
+                (*visible, "powershell.exe".to_string(), args)
             }
-            Launch::Wsl { distro, command } => {
+            Launch::Wsl {
+                distro,
+                command,
+                visible,
+            } => {
                 let args = vec![
                     "-d".to_string(),
                     distro.clone(),
@@ -91,15 +120,31 @@ impl TerminalLauncher for SystemLauncher {
                     "-ilc".to_string(),
                     command.clone(),
                 ];
-                let mut wt = vec!["new-tab".to_string(), "--".to_string(), "wsl.exe".to_string()];
-                wt.extend(args.iter().cloned());
-                (wt, "wsl.exe".to_string(), args)
+                (*visible, "wsl.exe".to_string(), args)
             }
         };
-        if let Some(wt) = program_path("wt.exe")
-            && std::process::Command::new(wt).args(&wt_args).spawn().is_ok()
-        {
-            return Ok(());
+        if !visible {
+            // `proc::command` adds CREATE_NO_WINDOW; the child never gets a console window.
+            let mut command = proc::command(&program);
+            command
+                .args(&args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                // A CI marker inherited from the launcher must not turn user-facing login
+                // into a headless flow that refuses to open the browser.
+                .env_remove("CI");
+            return command
+                .spawn()
+                .map(|_| ())
+                .map_err(|_| AppError::ipc(IpcErrorId::TerminalCommandInvalid));
+        }
+        if let Some(wt) = program_path("wt.exe") {
+            let mut wt_args = vec!["new-tab".to_string(), "--".to_string(), program.clone()];
+            wt_args.extend(args.iter().cloned());
+            if std::process::Command::new(wt).args(&wt_args).spawn().is_ok() {
+                return Ok(());
+            }
         }
         let mut command = std::process::Command::new(&program);
         command.args(&args);
@@ -160,13 +205,22 @@ pub fn encode_powershell(script: &str) -> String {
     out
 }
 
+/// Browser-based login commands run without a terminal. `gh` needs `--web` and explicit
+/// host/protocol flags so it does not stop at its interactive questions.
 fn login_command(provider: CliProvider) -> &'static str {
     match provider {
-        CliProvider::Cloudflare => "cf auth login",
+        // `--force` matters for the ready-state "switch account" action: without it cf exits
+        // early with "You are already logged in" and the browser never opens.
+        CliProvider::Cloudflare => "cf auth login --force",
         CliProvider::Vercel => "vercel login",
         CliProvider::Oracle => "oci setup bootstrap",
-        CliProvider::Github => "gh auth login",
+        CliProvider::Github => "gh auth login --web --clipboard --git-protocol https --hostname github.com",
     }
+}
+
+/// Only OCI's setup wizard has no browser flow and must stay visible.
+fn needs_visible_terminal(provider: CliProvider) -> bool {
+    provider == CliProvider::Oracle
 }
 
 /// The only commands this feature may run. The method id must be one the wizard shows for
@@ -211,6 +265,10 @@ fn set_marker(quoted_path: &str, step: &str) -> String {
 
 fn windows_script(plan: &SetupPlan) -> String {
     let mut lines = vec!["$ErrorActionPreference = 'Continue'".to_string()];
+    // The app's inherited PATH predates any CLI installed after it started. Merge the
+    // registry on every run, including a login-only retry, or `oci` (installed by winget
+    // after CloudLink started) is not found by this fresh PowerShell.
+    lines.push(refresh_path().into());
     if let (Some(install), Some(marker)) = (plan.install, &plan.install_marker_script) {
         lines.push(ps_command(install));
         lines.push("$ok = $?".into());
@@ -240,8 +298,27 @@ fn windows_script(plan: &SetupPlan) -> String {
     lines.join("\n")
 }
 
-fn wsl_script(plan: &SetupPlan) -> String {
+fn wsl_script(plan: &SetupPlan, mount_prefix: &str) -> String {
     let mut lines = vec!["#!/bin/bash".to_string()];
+    // WSL has no browser of its own. The browser-based CLIs call `xdg-open`; a temporary
+    // shim forwards that URL to the Windows default browser through WSL interop. Only
+    // http(s) URLs are passed, and no shell evaluates the URL again. `rundll32` is a GUI
+    // entry point, so it does not flash a console window.
+    let open_browser = wsl_path(Path::new(r"C:\Windows\System32\rundll32.exe"), mount_prefix)
+        .unwrap_or_else(|| "/mnt/c/Windows/System32/rundll32.exe".into());
+    lines.push("cl_open=$(mktemp -d)".into());
+    lines.push("export cl_open".into());
+    lines.push("trap 'rm -rf \"$cl_open\"' EXIT".into());
+    lines.push("cat > \"$cl_open/xdg-open\" <<'CL_CLOUDLINK_OPEN'".into());
+    lines.push("#!/bin/sh".into());
+    lines.push("case \"$1\" in http://*|https://*) ;; *) exit 0 ;; esac".into());
+    lines.push(format!(
+        "\"{open_browser}\" url.dll,FileProtocolHandler \"$1\" >/dev/null 2>&1"
+    ));
+    lines.push("exit 0".into());
+    lines.push("CL_CLOUDLINK_OPEN".into());
+    lines.push("chmod +x \"$cl_open/xdg-open\"".into());
+    lines.push("export PATH=\"$cl_open:$PATH\"".into());
     if let (Some(install), Some(marker)) = (plan.install, &plan.install_marker_script) {
         lines.push(install.to_string());
         lines.push("code=$?".into());
@@ -249,7 +326,12 @@ fn wsl_script(plan: &SetupPlan) -> String {
         lines.push("if [ \"$code\" -eq 0 ]".into());
         lines.push("then".into());
     }
-    lines.push(format!("bash -ilc {}", sh_quote(plan.login)));
+    // A login profile can rebuild PATH; prepend the shim directory again inside the login
+    // shell so cf/vercel/gh still find `xdg-open`.
+    lines.push(format!(
+        "bash -ilc {}",
+        sh_quote(&format!("export PATH=\"$cl_open:$PATH\"; {}", plan.login))
+    ));
     lines.push("code=$?".into());
     if let Some(marker) = &plan.login_marker_script {
         lines.push(format!("printf 'login:%s' \"$code\" > {}", marker));
@@ -372,11 +454,13 @@ impl Setups {
             script_file: script_file.clone(),
         };
 
+        let visible = needs_visible_terminal(provider);
         let launch = if env.is_windows() {
             plan.install_marker_script = install_marker.as_ref().map(|path| ps_quote(&path.to_string_lossy()));
             plan.login_marker_script = Some(ps_quote(&login_marker.to_string_lossy()));
             Launch::Windows {
                 script: windows_script(&plan),
+                visible,
             }
         } else {
             let distro = env
@@ -391,7 +475,7 @@ impl Setups {
             };
             plan.install_marker_script = install_marker.as_deref().map(convert).transpose()?;
             plan.login_marker_script = Some(convert(&login_marker)?);
-            let script = wsl_script(&plan);
+            let script = wsl_script(&plan, &env.mount_prefix);
             let file = script_file
                 .as_ref()
                 .ok_or_else(|| AppError::ipc(IpcErrorId::TerminalCommandInvalid))?;
@@ -401,6 +485,7 @@ impl Setups {
             Launch::Wsl {
                 distro,
                 command: format!("bash -ilc {}", sh_quote(&format!("bash {}", sh_quote(&wsl_file)))),
+                visible,
             }
         };
 
@@ -710,7 +795,17 @@ mod tests {
         );
         assert_eq!(install_command(CliProvider::Cloudflare, &win, "bun"), None);
         assert_eq!(install_command(CliProvider::Vercel, &win, "curl"), None);
+        assert_eq!(login_command(CliProvider::Cloudflare), "cf auth login --force");
+        assert_eq!(login_command(CliProvider::Vercel), "vercel login");
         assert_eq!(login_command(CliProvider::Oracle), "oci setup bootstrap");
+        assert_eq!(
+            login_command(CliProvider::Github),
+            "gh auth login --web --clipboard --git-protocol https --hostname github.com"
+        );
+        assert!(needs_visible_terminal(CliProvider::Oracle));
+        assert!(!needs_visible_terminal(CliProvider::Cloudflare));
+        assert!(!needs_visible_terminal(CliProvider::Vercel));
+        assert!(!needs_visible_terminal(CliProvider::Github));
         let frontend = include_str!("../../../src/lib/cliProviders.ts");
         for command in [
             "npm install --global cf",
@@ -721,7 +816,10 @@ mod tests {
             "winget install --exact --id Oracle.OCI-CLI",
             "pip install oci-cli",
             "winget install --id GitHub.cli",
+            "cf auth login --force",
+            "vercel login",
             "oci setup bootstrap",
+            "gh auth login --web --clipboard --git-protocol https --hostname github.com",
         ] {
             assert!(frontend.contains(command), "frontend is missing {command}");
         }
@@ -780,9 +878,10 @@ mod tests {
         assert_eq!(event.state, CliSetupState::WaitingInstall);
         assert_eq!(started.state, CliSetupState::WaitingInstall);
         let launches = launcher.0.lock().unwrap();
-        let Launch::Windows { script } = &launches[0] else {
+        let Launch::Windows { script, visible } = &launches[0] else {
             panic!("expected a Windows launch")
         };
+        assert!(!visible, "browser-based login must not open a terminal");
         assert!(script.contains("npm install --global cf"));
         assert!(script.contains("cf auth login"));
         assert!(script.contains("Set-Content -LiteralPath"));
@@ -874,13 +973,85 @@ mod tests {
         assert!(script.is_file());
         let text = fs::read_to_string(&script).unwrap();
         assert!(text.contains("pip install oci-cli"));
-        assert!(text.contains("bash -ilc 'oci setup bootstrap'"));
-        let Launch::Wsl { distro, command } = &launcher.0.lock().unwrap()[0] else {
+        assert!(text.contains(r#"export PATH="$cl_open:$PATH"; oci setup bootstrap"#));
+        let Launch::Wsl {
+            distro,
+            command,
+            visible,
+        } = &launcher.0.lock().unwrap()[0]
+        else {
             panic!("expected a WSL launch")
         };
         assert_eq!(distro, "Ubuntu-24.04");
+        assert!(visible, "OCI keeps its interactive terminal");
         assert!(command.contains("/mnt/"));
         assert!(command.contains("bash -ilc"));
+        assert!(text.contains("xdg-open"));
+    }
+
+    #[test]
+    fn only_oci_gets_a_visible_terminal() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = Paths::isolated_in(temp.path());
+        let launcher = Arc::new(FakeLauncher(Mutex::new(Vec::new())));
+        let setups = Setups::with_timing(launcher.clone(), Timing::default());
+        let env = windows(&paths);
+        setups
+            .start(&paths, &env, CliProvider::Oracle, "winget", false, Instant::now())
+            .unwrap();
+        let launches = launcher.0.lock().unwrap();
+        let Launch::Windows { script, visible } = &launches[0] else {
+            panic!("expected a Windows launch")
+        };
+        assert!(visible, "OCI setup bootstrap is an interactive terminal wizard");
+        assert!(script.contains("oci setup bootstrap"));
+    }
+
+    #[test]
+    fn login_only_oci_setup_refreshes_the_registry_path_before_login() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = Paths::isolated_in(temp.path());
+        let launcher = Arc::new(FakeLauncher(Mutex::new(Vec::new())));
+        let setups = Setups::with_timing(launcher.clone(), Timing::default());
+        let env = windows(&paths);
+        let (state, _) = setups
+            .start(&paths, &env, CliProvider::Oracle, "winget", true, Instant::now())
+            .unwrap();
+        assert_eq!(state.state, CliSetupState::WaitingLogin);
+        let launches = launcher.0.lock().unwrap();
+        let Launch::Windows { script, .. } = &launches[0] else {
+            panic!("expected a Windows launch")
+        };
+        let refresh = script.find("GetEnvironmentVariable('Path','Machine')").unwrap();
+        let login = script.find("& oci setup bootstrap").unwrap();
+        assert!(refresh < login, "PATH must be refreshed before the login command");
+        assert!(
+            !script.contains("winget install"),
+            "installed CLI must not be reinstalled"
+        );
+    }
+
+    #[test]
+    fn cloudflare_wsl_setup_runs_hidden_with_a_windows_browser_shim() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = Paths::isolated_in(temp.path());
+        let launcher = Arc::new(FakeLauncher(Mutex::new(Vec::new())));
+        let setups = Setups::with_timing(launcher.clone(), Timing::default());
+        let env = wsl(&paths);
+        let (state, _) = setups
+            .start(&paths, &env, CliProvider::Cloudflare, "npm", false, Instant::now())
+            .unwrap();
+        let script = paths.data_dir.join("cli-setup").join(format!("{}.sh", state.id));
+        let text = fs::read_to_string(&script).unwrap();
+        assert!(text.contains("cf auth login --force"));
+        assert!(text.contains("export PATH=\"$cl_open:$PATH\""));
+        assert!(text.contains("xdg-open"));
+        assert!(text.contains("rundll32.exe"));
+        assert!(text.contains("url.dll,FileProtocolHandler"));
+        let Launch::Wsl { visible, .. } = &launcher.0.lock().unwrap()[0] else {
+            panic!("expected a WSL launch")
+        };
+        assert!(!visible);
     }
 
     #[test]

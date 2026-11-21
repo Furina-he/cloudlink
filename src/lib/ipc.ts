@@ -100,7 +100,7 @@ export const ipc = {
     assetId?: string
     account?: string
   }) => invoke<CliEnvStates>("detect_cli_environment", { req }),
-  /** F-104 AC2（P9b）：在可见终端里按固定命令表安装并登录；进度走 `cli-setup://changed` */
+  /** F-104 AC2（P9b）：按固定命令表安装并登录；cf／vercel／gh 在后台打开浏览器，OCI 保留终端；进度走 `cli-setup://changed` */
   startCliSetup: (req: CliSetupRequest) =>
     invoke<CliSetupStarted>("start_cli_setup", { req }),
   /** F-104 AC3：拉取账号下的可选资源；带 assetId 时保留已勾选的项并更新这项资源 */

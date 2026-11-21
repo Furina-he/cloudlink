@@ -1,4 +1,4 @@
-import { CopyIcon, PlusIcon, RefreshCwIcon, ServerIcon, SquareTerminalIcon } from "lucide-react"
+import { CopyIcon, DownloadIcon, LogInIcon, PlusIcon, RefreshCwIcon, ServerIcon, SquareTerminalIcon } from "lucide-react"
 import { motion } from "motion/react"
 import { useState } from "react"
 
@@ -30,7 +30,9 @@ const STATUS_ICON = {
 /**
  * 各运行环境的 CLI 状态（F-104 AC1、AC2）：只列已启用 Agent 所在的环境。
  * 未就绪时一个「安装并登录」／「登录」按钮；命令默认收起、可查看与复制。
- * 等待与失败状态来自后端 `cli-setup://changed`；showDetail 时再显示路径和「打开终端切换账号」。
+ * cf／vercel／gh 在后台安装并让 CLI 打开浏览器登录（2026-11-21），不再显示终端；
+ * 只有 OCI 的 setup bootstrap 仍用可见终端。等待与失败状态来自后端
+ * `cli-setup://changed`；showDetail 时再显示路径和切换账号入口。
  * 结果区域设置 aria-live（6.12），检测结果淡入 150ms（7.7）
  */
 export function CliEnvList({
@@ -75,12 +77,17 @@ export function CliEnvList({
         const waiting = run?.state === "waiting-install" || run?.state === "waiting-login"
         const failed = run?.state === "failed" || run?.state === "timed-out"
         const open = !!openByEnv[envId]
+        const terminal = provider === "oracle"
         const failure =
           run?.state === "timed-out"
             ? copy.cli.setupTimedOut
-            : run?.step === "login"
-              ? copy.cli.setupFailedLogin
-              : copy.cli.setupFailedInstall
+            : terminal
+              ? run?.step === "login"
+                ? copy.cli.setupFailedLoginTerminal
+                : copy.cli.setupFailedInstallTerminal
+              : run?.step === "login"
+                ? copy.cli.setupFailedLogin
+                : copy.cli.setupFailedInstall
         return (
           <motion.div key={`${envId}:${state.checkedAt}`} role="listitem" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.15 }}>
             <Item variant="outline" size="sm" className="items-start">
@@ -112,7 +119,13 @@ export function CliEnvList({
                 {showDetail && state.path && <ItemDescription className="truncate font-mono text-xs">{state.path}</ItemDescription>}
                 {waiting && (
                   <ItemDescription className="text-xs">
-                    {run?.state === "waiting-install" ? copy.cli.setupNoteInstall : copy.cli.setupNoteLogin}
+                    {terminal
+                      ? run?.state === "waiting-install"
+                        ? copy.cli.setupNoteInstallTerminal
+                        : copy.cli.setupNoteLoginTerminal
+                      : run?.state === "waiting-install"
+                        ? copy.cli.setupNoteInstall
+                        : copy.cli.setupNoteLogin}
                   </ItemDescription>
                 )}
                 {failed && <ItemDescription className="text-xs text-warning">{failure}</ItemDescription>}
@@ -140,14 +153,32 @@ export function CliEnvList({
               <ItemActions>
                 {status !== "ready" ? (
                   <Button variant="outline" size="xs" disabled={detecting} onClick={() => onSetup(envId, method.id)}>
-                    <SquareTerminalIcon data-icon="inline-start" />
-                    {waiting ? copy.cli.reopenTerminal : status === "not-installed" ? copy.cli.installAndLogin : copy.cli.login}
+                    {waiting ? (
+                      terminal ? (
+                        <SquareTerminalIcon data-icon="inline-start" />
+                      ) : (
+                        <RefreshCwIcon data-icon="inline-start" />
+                      )
+                    ) : terminal ? (
+                      <SquareTerminalIcon data-icon="inline-start" />
+                    ) : status === "not-installed" ? (
+                      <DownloadIcon data-icon="inline-start" />
+                    ) : (
+                      <LogInIcon data-icon="inline-start" />
+                    )}
+                    {waiting
+                      ? terminal
+                        ? copy.cli.reopenTerminal
+                        : copy.cli.restartSetup
+                      : status === "not-installed"
+                        ? copy.cli.installAndLogin
+                        : copy.cli.login}
                   </Button>
                 ) : (
                   showDetail && (
                     <Button variant="ghost" size="xs" onClick={() => onSetup(envId, methods[0].id)}>
-                      <SquareTerminalIcon data-icon="inline-start" />
-                      {copy.cli.switchAccount}
+                      {terminal ? <SquareTerminalIcon data-icon="inline-start" /> : <LogInIcon data-icon="inline-start" />}
+                      {terminal ? copy.cli.switchAccountTerminal : copy.cli.switchAccount}
                     </Button>
                   )
                 )}

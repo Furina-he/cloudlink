@@ -502,7 +502,7 @@ test("Vercel：WSL 未登录，提示条「去登录」后自动变为已就绪�
     await expect(panel.getByRole("button", { name: "重新检测", exact: true })).toHaveCount(1)
     await shot(page, "cli-04-vercel")
     await panel.getByRole("button", { name: "去登录" }).click()
-    // 终端窗口由后端打开，进度自己推进；不需要切回窗口
+    // cf／vercel／gh 在后台登录并由 CLI 打开浏览器，进度自己推进；不需要切回窗口
     await expect(panel.getByText(/还没有登录/)).toHaveCount(0)
 
     await panel.getByRole("button", { name: /^2 个项目/ }).click()
@@ -513,7 +513,7 @@ test("Vercel：WSL 未登录，提示条「去登录」后自动变为已就绪�
     await expect(playground).toBeChecked()
     await shot(page, "cli-05-scope-dialog")
     await scope.getByRole("button", { name: "完成" }).click()
-    await expect(panel.getByRole("button", { name: "打开终端切换账号" }).first()).toBeVisible()
+    await expect(panel.getByRole("button", { name: "切换账号" }).first()).toBeVisible()
     await shot(page, "cli-05-vercel-ready")
     await back(page)
     await expect(row(page, "vercel")).toHaveAccessibleName(/已登录/)

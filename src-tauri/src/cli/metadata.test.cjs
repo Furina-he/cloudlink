@@ -118,16 +118,16 @@ test("Cloudflare Workers paginate at 100 per page and keep their names", async (
   assert.equal(result.calls.filter(args => args[0] === "workers").length, 2);
 });
 
-test("Cloudflare Pages paginate at 100 per page", async () => {
+test("Cloudflare Pages paginate at the API maximum of 10 per page", async () => {
   const result = await bridge("scope", "cloudflare", args => {
     if (args[0] !== "pages") return [];
-    assert.equal(args[args.indexOf("--per-page") + 1], "100");
+    assert.equal(args[args.indexOf("--per-page") + 1], "10");
     const page = Number(args[args.indexOf("--page") + 1]);
     return page === 1
-      ? Array.from({ length: 100 }, (_, i) => ({ name: "site-" + i }))
-      : [{ name: "site-100" }];
+      ? Array.from({ length: 10 }, (_, i) => ({ name: "site-" + i }))
+      : [{ name: "site-10" }];
   });
-  assert.equal(result.metadata.items.length, 101);
+  assert.equal(result.metadata.items.length, 11);
   assert.equal(result.metadata.items[0].id, "pages:site-0");
   assert.equal(result.calls.filter(args => args[0] === "pages").length, 2);
 });
@@ -311,6 +311,24 @@ function Invoke-ClJson([string[]]$arguments,[bool]$allowUnavailable=$false) {
 `);
   assert.equal(metadata.items.filter(item => item.kind === "worker").length, 101);
   assert.equal(metadata.items.at(-1).id, "worker:last");
+});
+
+test("Windows Cloudflare Pages ask for the API maximum of ten per page", windowsOnly, () => {
+  const metadata = powershellBridge("scope", "cloudflare", `
+function Invoke-ClJson([string[]]$arguments,[bool]$allowUnavailable=$false) {
+  if ($arguments[0] -in @('zones','dns','workers')) { return ,@() }
+  if ($arguments[0] -eq 'pages') {
+    if ($arguments[-2] -ne '--per-page' -or $arguments[-1] -ne '10') { throw 'wrong-size' }
+    $page=[int]$arguments[$arguments.IndexOf('--page')+1]
+    if ($page -eq 1) { return ,@(0..9 | ForEach-Object { @{name=('site'+$_)} }) }
+    if ($page -eq 2) { return ,@(@{name='last'}) }
+    throw 'extra-page'
+  }
+  throw 'unexpected-command'
+}
+`);
+  assert.equal(metadata.items.filter(item => item.kind === "pages").length, 11);
+  assert.equal(metadata.items.at(-1).id, "pages:last");
 });
 
 test("Windows catalog responses over five hundred items stop at the limit", windowsOnly, () => {

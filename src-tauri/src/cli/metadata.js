@@ -177,7 +177,8 @@ async function main() {
     const name = typeof worker.name === "string" && worker.name ? worker.name : worker.id;
     add({ id: "worker:" + (worker.id || name), kind: "worker", name: clean(name) });
   }
-  for (const project of list(["pages", "list"])) {
+  // The Pages API rejects per_page above 10 (400 Invalid list options).
+  for (const project of list(["pages", "list"], 10)) {
     if (!project || typeof project.name !== "string" || !project.name) fail("cli-scope-failed");
     const source = project.source && project.source.config;
     const repoSource = project.source && typeof project.source.type === "string" && source
