@@ -70,7 +70,7 @@ Working with multiple AI coding agents against real VPS hosts and cloud accounts
 - **Dynamic Cloud Scope Management** — Cloudflare, Vercel, Oracle Cloud, and GitHub default to **auto-following** current and future resources under the linked account/owner—with stable per-item exclusions or manual selection whenever you want tighter boundaries.
 - **One Living Agent Skill (`cloudlink-servers`)** — Compiles verified connections, probed services (Docker, systemd, 1Panel, Baota), auto-derived topology links (DNS → server, jump hosts, GitHub repo → Vercel), and team conventions into a single clean Skill (`SKILL.md` + `references/*.md`) with **zero passwords, private keys, or API secrets**.
 - **Predictable Cross-Agent Delivery (Windows & WSL2)** — Syncs managed copies to **23 recognized AI agents** plus custom paths. Toggling one agent never silently toggles another; shared real directories publish only the explicit intersection; ownership (`.cloudlink.json`), symlinks, and Windows reparse points are checked before every write, with backup & undo on conflicts.
-- **Local Command Guardrails & Live Approvals** — All provided SSH and cloud CLI actions route through the bundled `cloudlink-guard` runner (with an automatic `PreToolUse` Bash hook for Claude Code). Choose **Confirm Changes** or **Auto-Ops** per resource, mark **Production** independently, and approve or deny sensitive commands right from the Activity view.
+- **Local Command Guardrails & Live Approvals** — All provided SSH and cloud CLI actions route through the bundled `cloudlink-guard` runner (with an automatic `PreToolUse` Bash hook for Claude Code). Choose **Confirm Changes** or **Auto-Ops** per resource, and approve or deny sensitive commands right from the Activity view.
 - **Cross-Agent Ops Memory** — Agents append durable findings (config paths, deploy quirks, maintenance windows) to `~/.cloudlink/inbox/<resource>.md`. CloudLink scans notes for secrets (powered by gitleaks rules) and prompt-injection patterns; once you approve a note, it recompiles and syncs to every authorized agent.
 - **Local-First Native Desktop** — Built with Tauri v2 + Rust. Zero accounts, zero telemetry, light/dark themes, top/side navigation, system tray residency, auto-start, and minisign-verified in-app updates via GitHub Releases.
 
@@ -112,7 +112,7 @@ flowchart LR
 
 ## Execution Modes & Guardrails
 
-Every new resource starts in **Confirm Changes**. **Production** is an independent risk marker (never a hidden third mode); enabling **Auto-Ops** on a production resource requires explicit confirmation and displays a persistent amber indicator.
+Every new resource starts in **Confirm Changes**. Switching any resource to **Auto-Ops** prompts for lightweight confirmation so you never expand execution privileges by accident.
 
 | Operation Category | Examples | `Confirm Changes` (Default) | `Auto-Ops` |
 | :--- | :--- | :---: | :---: |
@@ -154,13 +154,13 @@ Every new resource starts in **Confirm Changes**. **Production** is an independe
 
 ### Live Guardrail Approvals & Agent Notes Inbox
 
-Review risky commands (`Allow once` / `Deny`) alongside incoming agent notes—with automatic secret scanning and prompt-injection warnings before anything enters your Skill.
+Review pending change commands (`Allow once` / `Deny`), merge verified agent ops notes into your unified Skill, and inspect full multi-agent execution history in one view.
 
 <div align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/activity-dark.png" />
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/activity-light.png" />
-  <img src="docs/assets/activity-light.png" width="880" alt="CloudLink Activity view showing live command approvals and agent notes scanning" />
+  <img src="docs/assets/activity-light.png" width="880" alt="CloudLink Activity view showing live command approvals, agent notes inbox, and execution history" />
 </picture>
 </div>
 
@@ -169,7 +169,7 @@ Review risky commands (`Allow once` / `Deny`) alongside incoming agent notes—w
 <table>
   <tr>
     <td width="50%" valign="top">
-      <p align="center"><strong>Agent Targets, Guard Status &amp; Conflict Handling</strong></p>
+      <p align="center"><strong>Agent Targets, Guard Status &amp; Skill Content</strong></p>
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents-dark.png" />
         <source media="(prefers-color-scheme: light)" srcset="docs/assets/agents-light.png" />
@@ -177,11 +177,11 @@ Review risky commands (`Allow once` / `Deny`) alongside incoming agent notes—w
       </picture>
     </td>
     <td width="50%" valign="top">
-      <p align="center"><strong>Compiled English <code>SKILL.md</code> Preview &amp; Lint Checks</strong></p>
+      <p align="center"><strong>Compiled English <code>SKILL.md</code> Preview &amp; File Tree</strong></p>
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/assets/skill-preview-dark.png" />
         <source media="(prefers-color-scheme: light)" srcset="docs/assets/skill-preview-light.png" />
-        <img src="docs/assets/skill-preview-light.png" alt="CloudLink compiled SKILL.md preview sheet" />
+        <img src="docs/assets/skill-preview-light.png" alt="CloudLink compiled SKILL.md preview modal with file tree" />
       </picture>
     </td>
   </tr>

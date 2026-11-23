@@ -66,7 +66,7 @@
 - **云平台动态范围管理** — Cloudflare、Vercel、Oracle Cloud 和 GitHub 新接入均默认按绑定账号／归属**自动跟随当前及未来全部资源**，不再因预列举失败阻塞添加，同时支持稳定排除个别资源或切回手动选择（存量手动范围升级后不静默扩围）。
 - **一份活的总 Skill（`cloudlink-servers`）** — 将已验证连接、只读探测摘要（Docker、systemd、1Panel、宝塔）、自动推导的资源关系（域名 → 服务器、跳板机、代码仓 → 部署）与运维约定整理为单一英文 Skill（`SKILL.md` + `references/*.md`），**不含任何密码、私钥或 API Secret**。
 - **可预测的多 Agent 分发（Windows + WSL2）** — 自动识别 **23 款主流 AI Agent** 并支持自定义路径。点谁只改谁的选择，绝不悄悄联动其他 Agent；多 Agent 共用真实目录时仅写入明确选择的交集；写入前校验 `.cloudlink.json` 所有权、软链接与 Windows 重解析点，冲突支持备份接管与一键撤销。
-- **本地命令护栏与桌面实时审批** — 所有已提供资源的 SSH 与云 CLI 操作统一经独立 `cloudlink-guard` Runner 执行（Claude Code 额外自动接管 `PreToolUse` Hook 拦截可识别直连）。支持「确认变更／自动运维」两档与独立「生产」风险标记，并在「动态」视图实时审批。
+- **本地命令护栏与桌面实时审批** — 所有已提供资源的 SSH 与云 CLI 操作统一经独立 `cloudlink-guard` Runner 执行（Claude Code 额外自动接管 `PreToolUse` Hook 拦截可识别直连）。支持「确认变更／自动运维」两档，并在「动态」视图实时审批。
 - **跨 Agent 共享运维记忆（笔记收件箱）** — Agent 将排障学到的路径与注意事项写入 `~/.cloudlink/inbox/<资源>.md`。CloudLink 自动扫描疑似密钥（基于 gitleaks 规则）与提示词注入模式；你点一次并入，立刻重编译并同步给所有已授权 Agent。
 - **本地优先的原生桌面体验** — 基于 Tauri v2 + Rust 构建。零账号、零遥测，支持浅色／深色主题、顶栏／侧栏导航切换、系统托盘常驻、开机自启与基于 minisign 签名的应用内更新。
 
@@ -108,7 +108,7 @@ flowchart LR
 
 ## 执行档位与护栏策略
 
-所有新资源默认处于 **确认变更** 档。**生产** 是独立风险标记（不是隐藏的第三档）；为生产资源开启 **自动运维** 需要明确二次确认，并常驻琥珀色提醒。
+所有新资源默认处于 **确认变更** 档；任意资源切到 **自动运维** 时均会弹出轻确认，避免误开自动执行权限。
 
 | 操作类别 | 典型示例 | `确认变更`（默认） | `自动运维` |
 | :--- | :--- | :---: | :---: |
@@ -150,13 +150,13 @@ flowchart LR
 
 ### 实时命令审批与 Agent 笔记收件箱
 
-在同一页面处理高风险命令的「允许一次 / 拒绝」，并审阅 Agent 写下的运维笔记——自动标出疑似密钥与提示词注入，防止敏感内容混入 Skill。
+在同一页面处理待确认变更命令的「允许一次 / 拒绝」、一键将 Agent 运维笔记并入总 Skill，并查看跨 Agent 的完整执行记录。
 
 <div align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/activity-dark.png" />
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/activity-light.png" />
-  <img src="docs/assets/activity-light.png" width="880" alt="CloudLink 动态视图：实时命令审批与 Agent 笔记安全扫描" />
+  <img src="docs/assets/activity-light.png" width="880" alt="CloudLink 动态视图：实时命令审批、Agent 笔记收件箱与操作记录" />
 </picture>
 </div>
 
@@ -165,7 +165,7 @@ flowchart LR
 <table>
   <tr>
     <td width="50%" valign="top">
-      <p align="center"><strong>Agent 分发目标、护栏状态与同名冲突接管</strong></p>
+      <p align="center"><strong>Agent 分发目标、护栏状态与 Skill 内容</strong></p>
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents-dark.png" />
         <source media="(prefers-color-scheme: light)" srcset="docs/assets/agents-light.png" />
@@ -173,11 +173,11 @@ flowchart LR
       </picture>
     </td>
     <td width="50%" valign="top">
-      <p align="center"><strong>编译后的 <code>SKILL.md</code> 实时预览与检查</strong></p>
+      <p align="center"><strong>编译后的 <code>SKILL.md</code> 实时预览与文件树</strong></p>
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/assets/skill-preview-dark.png" />
         <source media="(prefers-color-scheme: light)" srcset="docs/assets/skill-preview-light.png" />
-        <img src="docs/assets/skill-preview-light.png" alt="CloudLink Skill 编译预览面板" />
+        <img src="docs/assets/skill-preview-light.png" alt="CloudLink Skill 编译预览与文件树弹窗" />
       </picture>
     </td>
   </tr>
