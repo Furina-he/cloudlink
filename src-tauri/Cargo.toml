@@ -1,6 +1,6 @@
 [package]
 name = "cloudlink"
-version = "0.5.1"
+version = "0.6.0"
 description = "CloudLink — servers and cloud CLIs for CLI agents, with guardrails"
 authors = ["NeverGiveUp"]
 license = "MIT"
