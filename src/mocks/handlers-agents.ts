@@ -1,7 +1,7 @@
 // Mock 命令：总 Skill 的全局内容与预览、Agent 目标、分发副本、护栏（F-201、F-204、F-301 到 F-306）
 import { emit } from "@tauri-apps/api/event"
 
-import type { AddCustomTargetRequest, BackupReason, Delivery, EnvId, PreviewRequest, SkillConfig } from "@/bindings"
+import type { AddCustomTargetRequest, BackupReason, Delivery, EnvId, PreviewRequest, SkillConfig, Target } from "@/bindings"
 import * as fx from "./fixtures"
 import { compileSkill } from "./lint"
 import { cancelMockExecutions } from "./handlers-execution"
@@ -23,31 +23,41 @@ function saveSkillConfig(input: SkillConfig) {
 const targetById = (id: string) => db.targets.find((t) => t.id === id) ?? fail("not-found")
 
 async function setTargetEnabled(id: string, enabled: boolean) {
-  const t = targetById(id)
+  return (await setTargetsEnabled([id], enabled))[0]
+}
+
+async function setTargetsEnabled(ids: string[], enabled: boolean) {
+  const targets = ids.map(targetById)
   await sleep(300)
-  if (t.enabled !== enabled) cancelMockExecutions()
-  t.enabled = enabled
-  t.detected = t.detected || enabled
-  if (!enabled) {
-    const members = directoryMembers(t)
-    const d = db.deliveries.find((x) => x.targetId === id)
-    if (members.some((other) => other.enabled) && d && d.status !== "missing") {
-      d.status = "shared"
-      d.statusDetail = { id: "shared-agent", params: { agents: members.filter((m) => m.enabled).map((m) => m.agentKey).join(",") } }
-      d.unitId = physicalUnit(t)
-      d.sharedAgentKeys = [...new Set(members.map((m) => m.agentKey))]
-    } else if (d && !["conflict", "broken", "modified"].includes(d.status) && !db.crossEnvironmentTargets.has(t.id)) {
-      db.deliveries = db.deliveries.filter((x) => !members.some((m) => m.id === x.targetId))
+  let changed = false
+  for (const t of targets) {
+    if (t.enabled !== enabled) changed = true
+    t.enabled = enabled
+    t.detected = t.detected || enabled
+  }
+  if (changed) cancelMockExecutions()
+  for (const t of targets) {
+    if (!enabled) {
+      const members = directoryMembers(t)
+      const d = db.deliveries.find((x) => x.targetId === t.id)
+      if (members.some((other) => other.enabled) && d && d.status !== "missing") {
+        d.status = "shared"
+        d.statusDetail = { id: "shared-agent", params: { agents: members.filter((m) => m.enabled).map((m) => m.agentKey).join(",") } }
+        d.unitId = physicalUnit(t)
+        d.sharedAgentKeys = [...new Set(members.map((m) => m.agentKey))]
+      } else if (d && !["conflict", "broken", "modified"].includes(d.status) && !db.crossEnvironmentTargets.has(t.id)) {
+        db.deliveries = db.deliveries.filter((x) => !members.some((m) => m.id === x.targetId))
+      }
+      logActivity({ kind: "remove", messageId: "remove-ok", params: { target: t.label, env: t.envId }, ok: true })
+    } else {
+      logActivity({ kind: "deliver", messageId: "deliver-ok", params: { target: t.label, env: t.envId }, ok: true })
     }
-    logActivity({ kind: "remove", messageId: "remove-ok", params: { target: t.label, env: t.envId }, ok: true })
-  } else {
-    logActivity({ kind: "deliver", messageId: "deliver-ok", params: { target: t.label, env: t.envId }, ok: true })
   }
   // 编译单元随目标增减：停用后这个 Agent 在该环境的那一份不再编译
   recompile({ silent: true })
   emitCompiled()
   emitDeliveries()
-  return t
+  return targets as Target[]
 }
 
 function addCustomTarget(req: AddCustomTargetRequest) {
@@ -169,7 +179,7 @@ export const agentHandlers: Record<string, (a: Args) => unknown> = {
   get_compile_status: () => Object.values(db.compile),
   list_targets: () => db.targets,
   set_target_enabled: (a) => setTargetEnabled(a.id as string, a.enabled as boolean),
-  set_targets_enabled: (a) => (a.ids as string[]).map((id) => setTargetEnabled(id, a.enabled as boolean)),
+  set_targets_enabled: (a) => setTargetsEnabled(a.ids as string[], a.enabled as boolean),
   add_custom_target: (a) => addCustomTarget(a.req as AddCustomTargetRequest),
   remove_custom_target: (a) => removeCustomTarget(a.id as string),
   list_inclusions: () => db.inclusions,

@@ -45,6 +45,7 @@ export function AgentPicker({
     const added = next.find((k) => !selected.includes(k))
     const removed = selected.find((k) => !next.includes(k))
     const key = added ?? removed
+    if (!key || (pending && key in pending)) return
     const agent = agents.find((a) => a.key === key)
     if (agent) serverActions.toggleAgent(asset, agent, !!added)
   }
@@ -77,7 +78,7 @@ export function AgentPicker({
         const tile = compact ? "size-7 border-transparent bg-transparent px-0 hover:bg-foreground/6" : "max-w-44"
         return (
           <Tooltip key={a.key}>
-            <TooltipTrigger render={<ToggleGroupItem value={a.key} disabled={(!on && !can.ok) || busy} aria-busy={busy || undefined} aria-label={copy.servers.agentToggle(alias, a.label)} className={cn(tile, AGENT_TILE_ON[a.agent], busy && "animate-pulse", !compact && (on ? "text-foreground" : "text-muted-foreground"))} />}>
+            <TooltipTrigger render={<ToggleGroupItem value={a.key} disabled={!on && !can.ok} aria-busy={busy || undefined} aria-label={copy.servers.agentToggle(alias, a.label)} className={cn(tile, AGENT_TILE_ON[a.agent], busy && "animate-pulse", !compact && (on ? "text-foreground" : "text-muted-foreground"))} />}>
               <AgentMark agent={a.agent} label={a.label} lit={on} />
               {!compact && <span className="truncate">{a.short}</span>}
             </TooltipTrigger>
