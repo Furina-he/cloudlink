@@ -360,30 +360,23 @@ test.describe("P8 标题与默认名称", () => {
   })
 })
 
-test.describe("真实体验：生产与模式独立", () => {
-  test("自动运维资源标生产先确认，取消与关闭生产都不改模式或停止检查", async ({ page }) => {
+test.describe("真实体验：执行模式轻确认（P10a 移除生产标记）", () => {
+  test("任意资源详情不再有生产开关，切换执行模式保持中性样式与运行态", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
     await openServer(page, "dev-box")
-    const production = page.getByRole("switch", { name: "生产环境", exact: true })
-    await expect(production).not.toBeChecked()
+    await expect(page.getByRole("switch", { name: "生产环境" })).toHaveCount(0)
     await expect(page.getByRole("button", { name: "自动运维", exact: true })).toHaveAttribute("aria-pressed", "true")
-    await production.click()
-    const dialog = page.getByRole("alertdialog", { name: /标记为生产环境并保持自动运维/ })
+    await page.getByRole("button", { name: "确认变更", exact: true }).click()
+    await expect(page.getByRole("alertdialog")).toHaveCount(0)
+    expect((await snapshot(page)).assets.find((asset) => asset.id === "ast_dev_box")).toMatchObject({ agent: { mode: "confirm-changes" } })
+    await page.getByRole("button", { name: "自动运维", exact: true }).click()
+    const dialog = page.getByRole("alertdialog", { name: /为 开发机 启用自动运维/ })
     await expect(dialog).toBeVisible()
-    // Modal focus protection removes the background switch from the accessibility tree.
-    expect((await snapshot(page)).assets.find((asset) => asset.id === "ast_dev_box")).toMatchObject({ production: false, agent: { mode: "auto-ops" } })
+    await expect(dialog).not.toContainText("生产环境")
     await dialog.getByRole("button", { name: "取消", exact: true }).click()
     await expect(dialog).toHaveCount(0)
-    expect((await snapshot(page)).assets.find((asset) => asset.id === "ast_dev_box")).toMatchObject({ production: false, agent: { mode: "auto-ops" } })
-    await production.click()
-    await dialog.getByRole("button", { name: "标记生产并保持", exact: true }).click()
-    await expect(production).toBeChecked()
-    expect((await snapshot(page)).assets.find((asset) => asset.id === "ast_dev_box")).toMatchObject({ production: true, agent: { mode: "auto-ops" } })
-    await production.click()
-    await expect(production).not.toBeChecked()
-    await expect(page.getByRole("alertdialog")).toHaveCount(0)
-    expect((await snapshot(page)).assets.find((asset) => asset.id === "ast_dev_box")).toMatchObject({ production: false, agent: { mode: "auto-ops" } })
+    expect((await snapshot(page)).assets.find((asset) => asset.id === "ast_dev_box")).toMatchObject({ agent: { mode: "confirm-changes" } })
     const runtime = await page.evaluate(async () => {
       const url = performance.getEntriesByType("resource").map((entry) => entry.name).find((name) => new URL(name).pathname === "/src/lib/ipc.ts")!
       const { ipc } = await import(/* @vite-ignore */ url) as typeof import("../src/lib/ipc")
@@ -393,22 +386,24 @@ test.describe("真实体验：生产与模式独立", () => {
     expect(errors).toEqual([])
   })
 
-  test("生产从确认变更启用自动运维先确认，取消仍保持原模式", async ({ page }) => {
+  test("从确认变更启用自动运维先确认，取消仍保持原模式", async ({ page }) => {
     await ready(page)
     await openServer(page, "hk-edge")
     const automatic = page.getByRole("button", { name: "自动运维", exact: true })
     await automatic.click()
-    const dialog = page.getByRole("alertdialog", { name: /为生产资源.*启用自动运维/ })
+    const dialog = page.getByRole("alertdialog", { name: /为 香港边缘节点 启用自动运维/ })
     await expect(dialog).toBeVisible()
-    expect((await snapshot(page)).assets.find((asset) => asset.id === "ast_hk_edge")).toMatchObject({ production: true, agent: { mode: "confirm-changes" } })
+    await expect(dialog).not.toContainText("生产")
+    expect((await snapshot(page)).assets.find((asset) => asset.id === "ast_hk_edge")).toMatchObject({ agent: { mode: "confirm-changes" } })
     await dialog.getByRole("button", { name: "取消", exact: true }).click()
     await expect(page.getByRole("button", { name: "确认变更", exact: true })).toHaveAttribute("aria-pressed", "true")
     await automatic.click()
     await dialog.getByRole("button", { name: "启用自动运维", exact: true }).click()
     await expect(automatic).toHaveAttribute("aria-pressed", "true")
+    await expect(automatic).not.toHaveClass(/text-warning/)
     await page.getByRole("button", { name: "确认变更", exact: true }).click()
     await expect(page.getByRole("alertdialog")).toHaveCount(0)
-    expect((await snapshot(page)).assets.find((asset) => asset.id === "ast_hk_edge")).toMatchObject({ production: true, agent: { mode: "confirm-changes" } })
+    expect((await snapshot(page)).assets.find((asset) => asset.id === "ast_hk_edge")).toMatchObject({ agent: { mode: "confirm-changes" } })
   })
 })
 
@@ -431,8 +426,8 @@ test.describe("P8 动态 Agent 与真实送达", () => {
     })
     await expect(agentRow(page, "通用目录")).toContainText("资源选择不一致")
     await page.keyboard.press("Control+1")
-    const common = page.getByRole("button", { name: "将 cloudflare 分发给 通用目录", exact: true })
-    const trae = page.getByRole("button", { name: "将 cloudflare 分发给 Trae", exact: true })
+    const common = page.getByRole("button", { name: "将 Cloudflare 分发给 通用目录", exact: true })
+    const trae = page.getByRole("button", { name: "将 Cloudflare 分发给 Trae", exact: true })
     // The fixture already selected universal; the new model must preserve that choice.
     await expect(common).toHaveAttribute("aria-pressed", "true")
     await expect(trae).toHaveAttribute("aria-pressed", "false")
@@ -466,8 +461,8 @@ test.describe("P8 动态 Agent 与真实送达", () => {
 
   test("停用一个共用成员不会撤回另一个成员仍在使用的目录", async ({ page }) => {
     await ready(page, "?mock=shared")
-    await page.getByRole("button", { name: "将 cloudflare 分发给 Trae", exact: true }).click()
-    await expect(page.getByRole("button", { name: "将 cloudflare 分发给 Trae", exact: true })).toHaveAttribute("aria-pressed", "true")
+    await page.getByRole("button", { name: "将 Cloudflare 分发给 Trae", exact: true }).click()
+    await expect(page.getByRole("button", { name: "将 Cloudflare 分发给 Trae", exact: true })).toHaveAttribute("aria-pressed", "true")
     await page.keyboard.press("Control+2")
     await agentRow(page, "Trae").getByRole("switch").click()
     const confirm = page.getByRole("alertdialog")
@@ -493,7 +488,7 @@ test.describe("P8 动态 Agent 与真实送达", () => {
 
   test("写入失败的 Promise resolve 不冒报已同步，Agent 行展示路径原因", async ({ page }) => {
     await ready(page, "?mock=delivery-failed")
-    const cursor = page.getByRole("button", { name: "将 hk-edge 分发给 Cursor", exact: true })
+    const cursor = page.getByRole("button", { name: "将 香港边缘节点 分发给 Cursor", exact: true })
     await cursor.click()
     await expect(cursor).toHaveAttribute("aria-pressed", "false")
     await cursor.click()

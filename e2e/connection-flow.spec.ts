@@ -192,7 +192,7 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
     await expect(row(page, "save-only-retry")).toHaveAccessibleName(/未验证/)
     await expect(
       page.getByRole("button", {
-        name: "将 save-only-retry 分发给 Claude Code",
+        name: "将 Save Only Retry 分发给 Claude Code",
       })
     ).toHaveAttribute("aria-pressed", "false")
     expect(errors).toEqual([])
@@ -225,7 +225,7 @@ test.describe("连接流水线的 IPC 中断与恢复", () => {
     await expect(sshForm(page)).toHaveCount(0)
     await expect(row(page, "save-recovery")).toHaveAccessibleName(/已连接/)
     await expect(
-      page.getByRole("button", { name: "将 save-recovery 分发给 Claude Code" })
+      page.getByRole("button", { name: "将 Save Recovery 分发给 Claude Code" })
     ).toHaveAttribute("aria-pressed", "true")
     expect(errors).toEqual([])
   })

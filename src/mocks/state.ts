@@ -188,11 +188,13 @@ export function inclusionFor(a: Asset, envId: EnvId, agentKey: string): Inclusio
 }
 
 
-/** 总览表的顺序：生产、预发、开发，组内按别名 */
+const collator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" })
+
+/** 总览表的顺序：按名称自然排序，重名按标识稳定排序 */
 export const includedIn = (envId: EnvId, agentKey: string) =>
   db.assets
     .filter((a) => inclusionFor(a, envId, agentKey).included)
-    .sort((a, b) => Number(b.production) - Number(a.production) || handleOf(a).localeCompare(handleOf(b)))
+    .sort((a, b) => collator.compare(a.name, b.name) || handleOf(a).localeCompare(handleOf(b)))
 
 export function emitDeliveries() {
   void emit("deliveries://changed", { deliveries: db.deliveries, inclusions: db.inclusions })

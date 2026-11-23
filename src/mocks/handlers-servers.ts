@@ -90,7 +90,6 @@ function saveCli(input: CliAssetInput) {
             revision: 1,
           }
       : undefined)
-  if (prev && input.production !== prev.production) cancelMockExecutions(prev.id)
   const initialScope = (input.scope ?? []).map((item) => ({
     ...item,
     selected: cloudScope
@@ -130,14 +129,14 @@ function saveServer(input: ServerAssetInput) {
   checkAlias(alias, saved?.id, input.connection)
   const rest = { ...input }
   delete rest.testId
-  if (saved && (saved.production !== input.production || connectionSignature(connInputOf(saved)) !== connectionSignature(input.connection) || JSON.stringify(saved.services.filter((s) => s.critical).map((s) => s.name).sort()) !== JSON.stringify(input.services.filter((s) => s.critical).map((s) => s.name).sort()))) cancelMockExecutions(saved.id)
+  if (saved && (connectionSignature(connInputOf(saved)) !== connectionSignature(input.connection) || JSON.stringify(saved.services.filter((s) => s.critical).map((s) => s.name).sort()) !== JSON.stringify(input.services.filter((s) => s.critical).map((s) => s.name).sort()))) cancelMockExecutions(saved.id)
   // Repository evidence belongs to the collector, never to an ordinary form request.
   rest.paths = input.paths.map((path) => ({ ...path, repoSource: saved?.paths.find((old) => old.key === path.key && old.path === path.path)?.repoSource }))
   const asset: ServerAsset = {
     ...rest,
     id: saved?.id ?? newId("ast"),
     connection: buildConnection(input.connection, saved),
-    // 新建时：生产为只读巡检，其他取设置中的默认档位（F-202 AC2）
+    // 新建时一律从确认变更开始（F-202 AC2）
     agent: saved?.agent ?? { agents: [], mode: "confirm-changes" },
     probe: saved?.probe ?? { lastRunId: null, lastSuccessAt: null, status: "never" },
     createdAt: saved?.createdAt ?? now(),
@@ -181,7 +180,6 @@ function importHosts(hosts: ImportHost[], probeAfter: boolean) {
       id: newId("ast"),
       type: "vps",
       name: h.alias,
-      production: true,
       tags: [],
       summary: "",
       connection: {
@@ -241,13 +239,13 @@ function setMode(id: string, mode: Mode) {
   return saveSnapshot(asset)
 }
 
-/** F-407 AC2：只动处于标准运维的生产资源 */
+/** F-407 AC2：将全部处于自动运维的资源改为确认变更 */
 function allReadOnly() {
-  const list = db.assets.filter((a) => a.production && a.agent.mode === "auto-ops")
+  const list = db.assets.filter((a) => a.agent.mode === "auto-ops")
   for (const a of list) {
     cancelMockExecutions(a.id)
     a.agent.mode = "confirm-changes"
-    logActivity({ kind: "mode", assetId: a.id, messageId: "mode-changed", params: { alias: handleOf(a), mode: "confirm-changes" }, ok: true })
+    logActivity({ kind: "mode", assetId: a.id, messageId: "mode-changed", params: { alias: a.name, mode: "confirm-changes" }, ok: true })
   }
   if (list.length > 0) recompile()
   return list.map((a) => a.name)

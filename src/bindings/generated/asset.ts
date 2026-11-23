@@ -28,17 +28,9 @@ export type AuthInput = { method: AuthMethod, identityFile: Partial<Record<EnvId
 
 export type AuthMethod = "key" | "agent" | "password";
 
-export type CliAsset = { type: "cli", id: string, name: string, 
-/**
- * F-109：生产环境开关（2026-11-08 取代 envTag 三档）
- */
-production: boolean, summary: string, agent: AssetAgent, guardrails: Guardrails, notes: string, createdAt: string, updatedAt: string, cliProvider: CliProvider, handle: string, account: string | null, cli: CliInfo, cloudScope?: CloudScopeConfig, github?: GithubConfig, };
+export type CliAsset = { type: "cli", id: string, name: string, summary: string, agent: AssetAgent, guardrails: Guardrails, notes: string, createdAt: string, updatedAt: string, cliProvider: CliProvider, handle: string, account: string | null, cli: CliInfo, cloudScope?: CloudScopeConfig, github?: GithubConfig, };
 
-export type CliAssetInput = { type: "cli", id?: string, name: string, 
-/**
- * F-109：生产环境开关（2026-11-08 取代 envTag 三档）
- */
-production: boolean, summary: string, guardrails: Guardrails, notes: string, cliProvider: CliProvider, account: string | null, scope?: Array<CliScopeItem>, cloudScope?: CloudScopeCreateInput, github?: GithubCreateInput, };
+export type CliAssetInput = { type: "cli", id?: string, name: string, summary: string, guardrails: Guardrails, notes: string, cliProvider: CliProvider, account: string | null, scope?: Array<CliScopeItem>, cloudScope?: CloudScopeCreateInput, github?: GithubCreateInput, };
 
 export type CliBinary = "cf" | "vercel" | "oci" | "gh";
 
@@ -135,17 +127,9 @@ export type RepoVisibility = "public" | "private" | "internal";
 
 export type ResolvedConnection = { hostname: string, user: string, port: number, proxyJump: string | null, resolvedAt: string, };
 
-export type ServerAsset = { type: "vps", id: string, name: string, 
-/**
- * F-109：生产环境开关（2026-11-08 取代 envTag 三档）
- */
-production: boolean, summary: string, agent: AssetAgent, guardrails: Guardrails, notes: string, createdAt: string, updatedAt: string, provider?: string, region?: string, tags: Array<string>, connection: AssetConnection, facts: AssetFacts, paths: Array<AssetPath>, services: Array<Service>, servedHostnames: Array<string>, listeningPorts: Array<ListeningPort>, export: ExportFlags, probe: AssetProbeInfo, };
+export type ServerAsset = { type: "vps", id: string, name: string, summary: string, agent: AssetAgent, guardrails: Guardrails, notes: string, createdAt: string, updatedAt: string, provider?: string, region?: string, tags: Array<string>, connection: AssetConnection, facts: AssetFacts, paths: Array<AssetPath>, services: Array<Service>, servedHostnames: Array<string>, listeningPorts: Array<ListeningPort>, export: ExportFlags, probe: AssetProbeInfo, };
 
-export type ServerAssetInput = { type: "vps", id?: string, name: string, 
-/**
- * F-109：生产环境开关（2026-11-08 取代 envTag 三档）
- */
-production: boolean, summary: string, guardrails: Guardrails, notes: string, provider?: string, region?: string, tags: Array<string>, connection: ConnectionInput, facts: AssetFacts, paths: Array<AssetPath>, services: Array<Service>, servedHostnames: Array<string>, listeningPorts: Array<ListeningPort>, export: ExportFlags, testId?: string, };
+export type ServerAssetInput = { type: "vps", id?: string, name: string, summary: string, guardrails: Guardrails, notes: string, provider?: string, region?: string, tags: Array<string>, connection: ConnectionInput, facts: AssetFacts, paths: Array<AssetPath>, services: Array<Service>, servedHostnames: Array<string>, listeningPorts: Array<ListeningPort>, export: ExportFlags, testId?: string, };
 
 export type Service = { kind: ServiceKind, name: string, image?: string, ports: Array<PortMapping>, role?: string, critical: boolean, source: FieldSource, lastSeenAt?: string, missing: boolean, sanitized?: boolean, };
 

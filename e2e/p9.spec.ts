@@ -40,10 +40,10 @@ test.describe("P9 验收截图", () => {
       await page.emulateMedia({ colorScheme: scheme })
       await page.setViewportSize({ width: 900, height: 640 })
       await ready(page)
-      await page.getByRole("button", { name: /^hk-edge 的档位：确认变更/ }).click()
+      await page.getByRole("button", { name: /^香港边缘节点 的档位：确认变更$/ }).click()
       const menu = page.getByRole("menu")
       await menu.getByRole("menuitemradio", { name: /^自动运维/ }).click()
-      await expect(menu.getByRole("alert")).toHaveText(/hk-edge 是生产环境/)
+      await expect(menu.getByRole("alert")).toHaveText(/为 香港边缘节点 启用自动运维/)
       await shot(page, `p9-mode-${scheme}`)
     })
   }

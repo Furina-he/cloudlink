@@ -69,7 +69,6 @@ export const assets: Asset[] = [
     id: "ast_hk_edge",
     type: "vps",
     name: "香港边缘节点",
-    production: true,
     provider: "Tencent Cloud",
     region: "HK",
     tags: ["edge", "1panel"],
@@ -142,7 +141,6 @@ export const assets: Asset[] = [
     id: "ast_sg_db",
     type: "vps",
     name: "新加坡数据库",
-    production: true,
     provider: "AWS Lightsail",
     region: "SG",
     tags: ["db"],
@@ -156,7 +154,7 @@ export const assets: Asset[] = [
       resolved: { hostname: "198.51.100.7", user: "deploy", port: 2222, proxyJump: "hk-edge", resolvedAt: ago(3 * DAY) },
       verified: { ok: true, at: ago(3 * DAY), envIds: [WSL] },
     },
-    // 生产环境开着标准运维：资源行的档位文字是琥珀色（DESIGN.md Breaker Row）
+    // 自动运维资源：保持中性档位样式
     agent: { agents: ["claude-code", "universal"], mode: "auto-ops" },
     facts: { os: "Debian 12", kernel: "6.1.0-26-amd64", arch: "x86_64", cpuCores: 2, memoryTotalMiB: 3900, diskTotalGiB: 80, panel: null },
     paths: [{ key: "pg-data", label: "PostgreSQL 数据目录", path: "/var/lib/postgresql/16/main", source: "manual" }],
@@ -179,7 +177,6 @@ export const assets: Asset[] = [
     id: "ast_dev_box",
     type: "vps",
     name: "开发机",
-    production: false,
     tags: [],
     summary: "Development machine",
     // managed，密码认证，未验证，分发关
@@ -217,7 +214,6 @@ export const assets: Asset[] = [
     handle: "cloudflare",
     account: "me@example.com",
     name: "Cloudflare",
-    production: true,
     summary: "DNS for example.com and the edge API gateway Worker",
     cli: {
       binary: "cf",
@@ -244,7 +240,6 @@ export const assets: Asset[] = [
     handle: "vercel",
     account: "my-team",
     name: "Vercel",
-    production: true,
     summary: "Frontend deployments for the marketing site and the dashboard",
     cli: {
       binary: "vercel",
@@ -261,7 +256,7 @@ export const assets: Asset[] = [
     createdAt: ago(2 * DAY),
     updatedAt: ago(2 * DAY),
   },
-  // F-110：gh 已登录，开放两个仓库；非生产，正常时行里只有一个绿点
+  // F-110：gh 已登录，开放两个仓库；正常时行里只有一个绿点
   {
     id: "ast_github",
     type: "cli",
@@ -269,7 +264,6 @@ export const assets: Asset[] = [
     handle: "github",
     account: "octo-dev",
     name: "GitHub",
-    production: false,
     summary: "Source for the shop front end and the API",
     cli: {
       binary: "gh",

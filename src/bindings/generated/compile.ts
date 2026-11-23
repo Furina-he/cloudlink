@@ -2,7 +2,7 @@
 import type { AssetInput } from "./asset";
 import type { EnvId } from "./env";
 
-export type CompileBudget = { descriptionChars: number, descriptionLimit: number, bodyLines: number, bodyLineLimit: number, };
+export type CompileBudget = { descriptionChars: number, descriptionLimit: number, descriptionTrimmed: boolean, bodyLines: number, bodyLineLimit: number, };
 
 export type CompilePreview = { envId: EnvId, agentKey: string, files: Array<CompiledFile>, budget: CompileBudget, lint: Array<LintItem>, blocked: boolean, };
 
@@ -12,7 +12,7 @@ export type CompiledFile = { path: string, content: string, };
 
 export type Convention = { id: string, text: string, };
 
-export type LintId = "description-too-long" | "secret-detected" | "export-disabled-field" | "missing-reference" | "body-too-long" | "prod-standard-no-guardrails" | "probe-stale" | "suspected-injection" | "publish-failed";
+export type LintId = "description-too-long" | "secret-detected" | "export-disabled-field" | "missing-reference" | "body-too-long" | "probe-stale" | "suspected-injection" | "publish-failed";
 
 export type LintItem = { id: LintId, level: LintLevel, assetId?: string, params?: Record<string, string | number>, file?: string, line?: number, };
 

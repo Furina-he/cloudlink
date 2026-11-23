@@ -16,7 +16,6 @@ pub enum LintId {
     ExportDisabledField,
     MissingReference,
     BodyTooLong,
-    ProdStandardNoGuardrails,
     ProbeStale,
     SuspectedInjection,
     PublishFailed,
@@ -57,6 +56,8 @@ pub struct LintItem {
 pub struct CompileBudget {
     pub description_chars: u32,
     pub description_limit: u32,
+    #[serde(default)]
+    pub description_trimmed: bool,
     pub body_lines: u32,
     pub body_line_limit: u32,
 }

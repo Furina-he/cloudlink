@@ -19,13 +19,12 @@ import { useTargetStore } from "@/stores/targets"
 import { useUIStore } from "@/stores/ui"
 import { missingIncludeEnvs } from "./includeState"
 import { connectionInputOf } from "./serverForm"
-import { renameInputOf } from "./profileForm"
 
-const CONFIRM_REQUIRED = Symbol("production-automation-confirmation")
+const CONFIRM_REQUIRED = Symbol("auto-ops-confirmation")
 
-export type PendingAction = { kind: "mode" | "production" | "delete"; assetId: string } | null
+export type PendingAction = { kind: "mode" | "delete"; assetId: string } | null
 
-/** 等用户确认的操作：生产资源切到标准运维、删除 */
+/** 等用户确认的操作：切到自动运维、删除 */
 export const usePendingAction = create<{ pending: PendingAction; set: (p: PendingAction) => void }>()((set) => ({
   pending: null,
   set: (pending) => set({ pending }),
@@ -55,7 +54,7 @@ export const serverActions = {
   /** 用已保存的连接参数测试；结果用 Toast 播报（详情里的「测试连接」用表单草稿，原地显示） */
   test(asset: ServerAsset) {
     announceTest(asset.id, (e) => {
-      if (e.status === "ok") toast.add({ title: copy.activity["test-ok"]({ alias: alias(asset), ms: e.ms ?? 0 }), type: "success" })
+      if (e.status === "ok") toast.add({ title: copy.activity["test-ok"]({ alias: asset.name, ms: e.ms ?? 0 }), type: "success" })
       else if (e.status === "failed" && e.error) toast.add({ title: copy.sshError[e.error.id].title(e.error.params), description: copy.sshError[e.error.id].hint(e.error.params), type: "error" })
     })
     void useConnectionStore.getState().test(asset.id, { assetId: asset.id, connection: connectionInputOf(asset) })
@@ -97,7 +96,7 @@ export const serverActions = {
           return
         }
         toast.add({
-          title: names.length > 1 ? copy.deliveryFeedback.shared(names, result.asset.name, on) : on ? copy.agentSection.distributed(alias(result.asset), agent.label) : copy.agentSection.undistributed(alias(result.asset), agent.label),
+          title: names.length > 1 ? copy.deliveryFeedback.shared(names, result.asset.name, on) : on ? copy.agentSection.distributed(result.asset.name, agent.label) : copy.agentSection.undistributed(result.asset.name, agent.label),
           description: on ? copy.agentSection.effectHint : undefined,
           type: on ? "success" : undefined,
           actionProps: { children: copy.common.undo, onClick: () => void useAssetStore.getState().setDistribute(asset.id, agent.key, !on).catch(toastError) },
@@ -132,18 +131,18 @@ export const serverActions = {
     }
   },
 
-  /** 档位闸刀（PRD 6.4）：生产资源切到标准运维前确认（F-202 AC2）；切回只读巡检一键完成 */
+  /** 执行模式切换（PRD 6.4）：任意资源切到自动运维前轻确认（F-202 AC2）；切回确认变更一键完成 */
   requestMode(asset: Asset, mode: Asset["agent"]["mode"]) {
     const latest = useAssetStore.getState().byId[asset.id]
     if (!latest || mode === latest.agent.mode) return
-    if (mode === "auto-ops" && latest.production) {
+    if (mode === "auto-ops") {
       usePendingAction.getState().set({ kind: "mode", assetId: asset.id })
       return
     }
     void serverActions.setMode(latest, mode)
   },
 
-  /** F-407 AC2「全部切回只读」：命令面板入口；托盘的入口由 Rust 处理并发系统通知 */
+  /** F-407 AC2「全部改为确认变更」：命令面板入口；托盘的入口由 Rust 处理并发系统通知 */
   async allReadOnly() {
     try {
       const names = await ipc.allReadOnly()
@@ -159,13 +158,14 @@ export const serverActions = {
     try {
       await useAssetStore.getState().setMode(asset.id, mode, (latest) => {
         prev = latest.agent.mode
-        if (mode === "auto-ops" && prev !== mode && latest.production && !confirmed) {
+        if (mode === "auto-ops" && prev !== mode && !confirmed) {
           usePendingAction.getState().set({ kind: "mode", assetId: latest.id })
           throw CONFIRM_REQUIRED
         }
       })
+      const name = useAssetStore.getState().byId[asset.id]?.name ?? asset.name
       const id: string = toast.add({
-        title: copy.agentSection.modeChanged(alias(asset), copy.mode[mode]),
+        title: copy.agentSection.modeChanged(name, copy.mode[mode]),
         actionProps: {
           children: copy.common.undo,
           onClick: () => {
@@ -175,25 +175,6 @@ export const serverActions = {
           },
         },
       })
-    } catch (e) {
-      if (e !== CONFIRM_REQUIRED) toastError(e)
-    }
-  },
-
-  requestProduction(asset: Asset, production: boolean) {
-    void serverActions.setProduction(asset, production)
-  },
-
-  async setProduction(asset: Asset, production: boolean, confirmed = false) {
-    try {
-      await useAssetStore.getState().update(asset.id, (latest) => {
-        if (production && !latest.production && latest.agent.mode === "auto-ops" && !confirmed) {
-          usePendingAction.getState().set({ kind: "production", assetId: latest.id })
-          throw CONFIRM_REQUIRED
-        }
-        return { ...renameInputOf(latest, latest.name), production }
-      })
-      toast.add({ title: copy.detail.rows.productionChanged(production) })
     } catch (e) {
       if (e !== CONFIRM_REQUIRED) toastError(e)
     }
@@ -231,7 +212,7 @@ export const serverActions = {
     try {
       const asset = await useConnectionStore.getState().convertToKey(assetId)
       const id: string = toast.add({
-        title: copy.convertKey.done(alias(asset)),
+        title: copy.convertKey.done(asset.name),
         type: "success",
         timeout: 8000,
         actionProps: {

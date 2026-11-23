@@ -13,7 +13,7 @@ import type {
 import { toast, type ToastData } from "@/components/ui/toast"
 import { copy, ipcErrorText } from "@/lib/copy"
 import { ipc, toIpcError } from "@/lib/ipc"
-import { handleOf, useAssetStore } from "./assets"
+import { useAssetStore } from "./assets"
 import { useSkillStore } from "./skills"
 import { useUIStore } from "./ui"
 
@@ -67,7 +67,7 @@ const newRun = (runId: string, assetId: string): ProbeRun => ({
 
 const aliasOf = (assetId: string) => {
   const a = useAssetStore.getState().byId[assetId]
-  return a ? handleOf(a) : assetId
+  return a ? a.name : assetId
 }
 
 const applyResult = (result: SaveResult) => {

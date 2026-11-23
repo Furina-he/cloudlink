@@ -58,7 +58,7 @@ launchAtLogin: boolean, };
 export type Theme = "system" | "light" | "dark";
 
 /**
- * `tray://confirm-mode`：生产资源要切到标准运维，主窗口打开确认（AC1）
+ * `tray://confirm-mode`：任意资源要切到自动运维，主窗口打开确认（AC1）
  */
 export type TrayConfirmMode = { assetId: string, };
 
@@ -67,11 +67,11 @@ export type TrayConfirmMode = { assetId: string, };
  */
 export type TrayCopy = { tooltip: string, guardOn: string, guardOff: string, modesHeader: string, readOnly: string, standard: string, allReadOnly: string, 
 /**
- * 「{n} 项在标准运维」，跟在「生产资源全部切回只读」右边
+ * 「{n} 项在自动运维」，跟在「全部改为确认变更」右边
  */
 prodInStandard: string, open: string, quit: string, 
 /**
- * 系统通知标题与正文「{n} 项生产资源已切回只读」
+ * 系统通知标题与正文「{n} 项资源已改为确认变更」
  */
 notifyTitle: string, notifyAllReadOnly: string, notifyExecution?: string, };
 

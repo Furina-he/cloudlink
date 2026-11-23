@@ -17,7 +17,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { copy, ipcErrorText } from "@/lib/copy"
-import { handleOf, selectCliAccount, useAssetStore } from "@/stores/assets"
+import { selectCliAccount, useAssetStore } from "@/stores/assets"
 import { useUIStore } from "@/stores/ui"
 import { cloudProvidedIds, cloudSetProvided, cloudSwitchMode, type CloudScopeDraft } from "./cloudScopeForm"
 
@@ -101,9 +101,9 @@ export function CloudScopeFields({
   const shown = scope.filter((item) => item.name.toLocaleLowerCase().includes(normalized))
   const provided = cloudProvidedIds(draft, scope)
   const newlyProvided = provided.filter((itemId) => !initiallyProvided.includes(itemId)).length
-  const aliasOf = (assetId?: string) => {
+  const nameOf = (assetId?: string) => {
     const a: Asset | undefined = assetId ? byId[assetId] : undefined
-    return a ? handleOf(a) : undefined
+    return a ? a.name : undefined
   }
   const setMode = (next: string[]) => {
     if (next[0] !== "auto" && next[0] !== "manual") return
@@ -206,7 +206,7 @@ export function CloudScopeFields({
             const selected = provided.includes(item.id)
             const excluded = draft.mode === "auto" && draft.excludedIds.includes(item.id)
             const addition = initialMode !== undefined && selected && !initiallyProvided.includes(item.id)
-            const linked = aliasOf(item.linkedAssetId)
+            const linked = nameOf(item.linkedAssetId)
             const fieldId = `${id}-item-${item.id}`
             return (
               <Item key={item.id} role="listitem" size="xs" className="px-3 py-2 text-xs">
@@ -308,9 +308,9 @@ export function CloudResourcesGroup({
   const mode: CloudScopeMode = asset.cloudScope?.mode ?? "manual"
   const items = useMemo(() => asset.cli.scope.filter((item) => item.selected), [asset.cli.scope])
   const shown = items.filter((item) => item.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
-  const aliasOf = (assetId?: string) => {
+  const nameOf = (assetId?: string) => {
     const a: Asset | undefined = assetId ? byId[assetId] : undefined
-    return a ? handleOf(a) : undefined
+    return a ? a.name : undefined
   }
   const addAsServer = (item: CliScopeItem) =>
     useUIStore.getState().startCreate("ssh", { prefill: { host: item.address ?? "", name: item.name } })
@@ -369,7 +369,7 @@ export function CloudResourcesGroup({
           </TableHeader>
           <TableBody>
             {shown.map((item) => {
-              const linked = aliasOf(item.linkedAssetId)
+              const linked = nameOf(item.linkedAssetId)
               return (
                 <TableRow key={item.id}>
                   <TableCell className="font-mono whitespace-normal wrap-anywhere first:pl-3.5">{item.name}</TableCell>

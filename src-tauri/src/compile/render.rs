@@ -12,7 +12,7 @@ use crate::model::compile::{CompiledFile, SkillConfig};
 use crate::model::env::EnvId;
 use crate::model::github::GithubScopeMode;
 
-pub const TEMPLATE_VERSION: u32 = 5;
+pub const TEMPLATE_VERSION: u32 = 6;
 pub const DESCRIPTION_LIMIT: usize = 1024;
 pub const HEALTH_CHECK: &str = include_str!("templates/health-check.md");
 /// 等待审批、超时和结果不明时怎么办；正文只留一句指向它
@@ -51,16 +51,62 @@ fn render(name: &str, ctx: serde_json::Value) -> String {
         .expect("built-in template renders")
 }
 
-/// F-109 AC3：只对生产资源写 production
-pub fn env_word(production: bool) -> &'static str {
-    if production { "production" } else { "-" }
+/// 系统自动生成的默认 SSH 别名（如 `cloudlink-1`）不承载语义，不写入面向 Agent 的名称标注。
+pub fn is_default_alias(alias: &str) -> bool {
+    alias
+        .to_ascii_lowercase()
+        .strip_prefix("cloudlink-")
+        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
 }
 
-fn title_case(s: &str) -> String {
-    let mut c = s.chars();
-    c.next()
-        .map(|f| f.to_uppercase().chain(c).collect())
-        .unwrap_or_default()
+/// 资源展示给 Agent 的主名称：优先用户显示的 `name`，留空时回退到公开标识。
+fn display_name(asset: &Asset) -> String {
+    let name = one_line(asset.name());
+    if name.is_empty() { public_handle(asset) } else { name }
+}
+
+/// 非系统默认（非 `cloudlink-N`）、未触发隐私脱敏、且与显示名称不同（忽略大小写）的语义 SSH Host。
+fn semantic_alias(server: &ServerAsset) -> Option<String> {
+    let raw = server.connection.ssh_alias.trim();
+    if raw.is_empty() || is_default_alias(raw) {
+        return None;
+    }
+    let public = server_handle(server);
+    if public != raw {
+        return None;
+    }
+    let name = one_line(&server.name);
+    if name.is_empty() || name.eq_ignore_ascii_case(&public) {
+        return None;
+    }
+    Some(public)
+}
+
+/// description 中的资源主语：始终以显示名称为主体；有不同语义 SSH 别名时附注 `名称 / alias`。
+fn description_subject(asset: &Asset) -> String {
+    let name = display_name(asset);
+    match asset.as_server().and_then(semantic_alias) {
+        Some(alias) => format!("{name} / {alias}"),
+        None => name,
+    }
+}
+
+/// SKILL.md 总览表第一列：主显显示名称；有不同语义 SSH 别名时同格附注 `名称 (\`alias\`)`。
+fn overview_label(asset: &Asset) -> String {
+    let name = cell(&display_name(asset));
+    match asset.as_server().and_then(semantic_alias) {
+        Some(alias) => format!("{name} ({})", code(&alias)),
+        None => name,
+    }
+}
+
+/// references/*.md 一级标题：主显显示名称；有不同语义 SSH 别名时 `# 名称 (alias)`。
+fn detail_heading(asset: &Asset) -> String {
+    let name = display_name(asset);
+    match asset.as_server().and_then(semantic_alias) {
+        Some(alias) => format!("{name} ({alias})"),
+        None => name,
+    }
 }
 
 /// 行内代码：去掉反引号和控制字符，限长 128（PRD 8.3 规则 2）
@@ -181,7 +227,35 @@ fn selected_scope(a: &CliAsset) -> Vec<&str> {
         .collect()
 }
 
-/// 用途：用户写的用途，加上用途里没提到的站点（服务器）或勾选的范围（云平台）
+/// 云平台／GitHub 写入 description 与总览表时的精简范围概括（P10d）：
+/// 超过 3 项时不再全量平铺，详细清单保留在各自的 `references/*.md` 中。
+fn compact_cli_scope(c: &CliAsset) -> String {
+    let items = selected_scope(c);
+    let n = items.len();
+    if c.cli_provider == CliProvider::Github {
+        let owner = c
+            .github
+            .as_ref()
+            .and_then(|g| g.owner.as_ref())
+            .map(|o| one_line(&o.login))
+            .filter(|s| !s.is_empty())
+            .or_else(|| c.account.as_deref().map(one_line).filter(|s| !s.is_empty()));
+        return match (owner, n) {
+            (Some(o), 0) => o,
+            (None, 0) => String::new(),
+            (_, 1..=3) => items.join(", "),
+            (Some(o), n) => format!("{o}, {n} repos"),
+            (None, n) => format!("{} +{} more", items[..3].join(", "), n - 3),
+        };
+    }
+    match n {
+        0 => String::new(),
+        1..=3 => items.join(", "),
+        _ => format!("{} +{} more", items[..3].join(", "), n - 3),
+    }
+}
+
+/// 用途：用户写的用途，加上用途里没提到的站点（服务器）或精简后的云平台范围
 pub fn role(a: &Asset) -> String {
     let summary = one_line(a.summary());
     let extra = match a {
@@ -198,7 +272,7 @@ pub fn role(a: &Asset) -> String {
                 format!("serves {}", sites.join(", "))
             }
         }
-        Asset::Cli(c) => selected_scope(c).join(", "),
+        Asset::Cli(c) => compact_cli_scope(c),
     };
     [summary, extra]
         .into_iter()
@@ -207,14 +281,9 @@ pub fn role(a: &Asset) -> String {
         .join("; ")
 }
 
-/// 用途留空、也没有站点或范围可写时的替代说明：显示名称（和别名不同时），服务器再加探测到的服务名。
+/// 用途留空、也没有站点或范围可写时的替代说明：服务器补充探测到的服务名。
 /// 只用在 description 和总览表，让没填用途的资源仍能对上任务；详情文件的 Role 只写用户填的。
 fn stand_in(a: &Asset, with_services: bool) -> String {
-    let name = one_line(a.name());
-    let mut parts = Vec::new();
-    if !name.is_empty() && !name.eq_ignore_ascii_case(&public_handle(a)) {
-        parts.push(name);
-    }
     if let (Asset::Vps(s), true) = (a, with_services) {
         let mut services: Vec<_> = s.services.iter().filter(|x| !x.missing).collect();
         services.sort_by_key(|x| !x.critical);
@@ -232,10 +301,10 @@ fn stand_in(a: &Asset, with_services: bool) -> String {
             .map(code)
             .collect();
         if !names.is_empty() {
-            parts.push(format!("runs {}", names.join(", ")));
+            return format!("runs {}", names.join(", "));
         }
     }
-    parts.join("; ")
+    String::new()
 }
 
 /// 总览表和 description 里的用途
@@ -324,16 +393,11 @@ pub fn description(assets: &[&Asset]) -> Description {
         } else {
             r
         };
-        let tail = if a.production() { "production" } else { "" };
-        let inner = [text.as_str(), tail]
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join("; ");
-        if inner.is_empty() {
-            public_handle(a)
+        let label = description_subject(a);
+        if text.is_empty() {
+            label
         } else {
-            format!("{} ({inner})", public_handle(a))
+            format!("{label} ({text})")
         }
     };
     let len = |s: &str| s.chars().count();
@@ -379,10 +443,9 @@ pub fn description(assets: &[&Asset]) -> Description {
 
 #[derive(Serialize)]
 struct Row {
-    handle: String,
+    label: String,
     binary: String,
     role: String,
-    env: &'static str,
     details: String,
 }
 
@@ -470,13 +533,12 @@ pub fn render_skill(input: &RenderInput) -> Rendered {
         };
     }
     let row = |a: &Asset| Row {
-        handle: public_handle(a),
+        label: overview_label(a),
         binary: a
             .as_cli()
             .map(|c| c.cli.binary.as_str().to_string())
             .unwrap_or_default(),
         role: cell(&role_or_stand_in(a)),
-        env: env_word(a.production()),
         details: detail_paths[a.id()].clone(),
     };
     let servers: Vec<Row> = input
@@ -688,9 +750,11 @@ fn render_server(a: &ServerAsset, snapshot_enabled: Option<&str>, entry: &Execut
     let snapshot = snapshot_enabled
         .and(a.probe.last_success_at.as_deref())
         .map(|t| t.chars().take(10).collect::<String>());
+    let asset = Asset::Vps(a.clone());
     render(
         "server",
         serde_json::json!({
+            "heading": detail_heading(&asset),
             "alias": alias,
             "execution": use_entry.then(|| entry.call("exec", Some(&a.id), "-- '<command>'", false)),
             "execution_ps": use_entry.then(|| entry.powershell("exec", Some(&a.id), "-- '<command>'")).flatten(),
@@ -698,12 +762,10 @@ fn render_server(a: &ServerAsset, snapshot_enabled: Option<&str>, entry: &Execut
             "get": use_entry.then(|| entry.call("get", Some(&a.id), "-- '<remoteFile>' '<localFile>'", false)),
             "put_ps": use_entry.then(|| entry.powershell("put", Some(&a.id), "-- '<localFile>' '<remoteFile>'")).flatten(),
             "get_ps": use_entry.then(|| entry.powershell("get", Some(&a.id), "-- '<remoteFile>' '<localFile>'")).flatten(),
-            "name": one_line(&a.name),
-            "env_title": if a.production { title_case("production") } else { String::new() },
             "mode": a.agent.mode.as_str(),
             "snapshot": snapshot,
             "system": system.join(" | "),
-            "role": role(&Asset::Vps(a.clone())),
+            "role": role(&asset),
             "resolved": resolved,
             "rules": rules,
             "paths": paths,
@@ -778,7 +840,7 @@ fn render_cli(a: &CliAsset, all: &[Asset], entry: &ExecutionEntry) -> String {
                 .linked_asset_id
                 .as_deref()
                 .and_then(|id| all.iter().find(|x| x.id() == id && x.as_server().is_some()))
-                .map(|x| code(&public_handle(x)))
+                .map(overview_label)
                 .unwrap_or_else(|| "-".into()),
         })
         .collect();
@@ -814,12 +876,11 @@ fn render_cli(a: &CliAsset, all: &[Asset], entry: &ExecutionEntry) -> String {
                 .collect()
         })
         .unwrap_or_default();
+    let heading = detail_heading(&Asset::Cli(a.clone()));
     render(
         "cli",
         serde_json::json!({
-            "handle": a.handle,
-            "name": one_line(&a.name),
-            "env_title": if a.production { title_case("production") } else { String::new() },
+            "heading": heading,
             "mode": a.agent.mode.as_str(),
             "binary": a.cli.binary.as_str(),
             "execution": Some(entry.call("exec", Some(&a.id), "-- <command arguments>", false)),

@@ -129,7 +129,6 @@ function StandardCliForm({ provider }: { provider: CliProvider }) {
           bound.length === 0 || !account
             ? copy.cli.name[provider]
             : `${copy.cli.name[provider]} · ${account}`,
-        production: true,
         summary: "",
         guardrails: { rules: [] },
         notes: "",
@@ -141,7 +140,7 @@ function StandardCliForm({ provider }: { provider: CliProvider }) {
         },
       })
       const saved = asset as CliAsset
-      // 云平台按生产对待，从确认变更开始（F-202 AC2）；一次批量同步给全部已启用的 Agent
+      // 新资源统一从确认变更开始（F-202 AC2）；一次批量同步给全部已启用的 Agent
       if (agents.length > 0) {
         await useAssetStore.getState().setDistributeMany(saved.id, agents.map((a) => a.key), true)
       }

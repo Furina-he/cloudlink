@@ -17,7 +17,7 @@ import { CLI_BINARY, installMethods, loginCommand, SCOPE_KINDS, type InstallMeth
 import { copy } from "@/lib/copy"
 import { sortEnvs } from "@/features/servers/serverForm"
 import { cn } from "@/lib/utils"
-import { cliEnvStatus, handleOf, useAssetStore } from "@/stores/assets"
+import { cliEnvStatus, useAssetStore } from "@/stores/assets"
 import type { CliSetupRun } from "@/stores/cli"
 
 const STATUS_ICON = {
@@ -271,9 +271,9 @@ export function CliScopeList({
   onAddAsServer?: (item: CliScopeItem) => void
 }) {
   const byId = useAssetStore((s) => s.byId)
-  const aliasOf = (id?: string) => {
+  const nameOf = (id?: string) => {
     const a: Asset | undefined = id ? byId[id] : undefined
-    return a ? handleOf(a) : undefined
+    return a ? a.name : undefined
   }
   if (loading && !items) {
     return (
@@ -309,7 +309,7 @@ export function CliScopeList({
             </div>
             <div className="flex flex-col divide-y rounded-lg border">
               {group.map((x) => {
-                const linked = aliasOf(x.linkedAssetId)
+                const linked = nameOf(x.linkedAssetId)
                 const id = `scope-${x.id}`
                 return (
                   <Field key={x.id} orientation="horizontal" className="min-h-9 items-center gap-2.5 px-2.5 py-1.5">

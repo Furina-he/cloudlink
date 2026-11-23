@@ -8,7 +8,7 @@ import { copy } from "@/lib/copy"
 import { sharingKeys } from "@/lib/deliveryFeedback"
 import { cn } from "@/lib/utils"
 import type { AgentOption } from "@/features/agents/agentKeys"
-import { handleOf, selectCanDistribute, useAssetStore } from "@/stores/assets"
+import { selectCanDistribute, useAssetStore } from "@/stores/assets"
 import { useDeliveryStore } from "@/stores/deliveries"
 import { serverActions } from "./actions"
 
@@ -28,7 +28,7 @@ export function AgentPicker({
   labelledBy?: string
   describedBy?: string
 }) {
-  const alias = handleOf(asset)
+  const name = asset.name
   const can = selectCanDistribute(asset)
   const pending = useAssetStore((s) => s.pendingAgents[asset.id])
   const sharedByKey = useDeliveryStore(
@@ -56,7 +56,7 @@ export function AgentPicker({
       spacing={1}
       value={selected}
       onValueChange={onChange}
-      aria-label={labelledBy ? undefined : copy.servers.agentsLabel(alias)}
+      aria-label={labelledBy ? undefined : copy.servers.agentsLabel(name)}
       aria-labelledby={labelledBy}
       aria-describedby={describedBy}
       className={cn("flex-wrap", className)}
@@ -76,7 +76,7 @@ export function AgentPicker({
         const tile = compact ? "size-7 border-transparent bg-transparent px-0 hover:bg-foreground/6" : "max-w-44"
         return (
           <Tooltip key={a.key}>
-            <TooltipTrigger render={<ToggleGroupItem value={a.key} disabled={!on && !can.ok} aria-busy={busy || undefined} aria-label={copy.servers.agentToggle(alias, a.label)} className={cn(tile, AGENT_TILE_ON[a.agent], busy && "animate-pulse", !compact && (on ? "text-foreground" : "text-muted-foreground"))} />}>
+            <TooltipTrigger render={<ToggleGroupItem value={a.key} disabled={!on && !can.ok} aria-busy={busy || undefined} aria-label={copy.servers.agentToggle(name, a.label)} className={cn(tile, AGENT_TILE_ON[a.agent], busy && "animate-pulse", !compact && (on ? "text-foreground" : "text-muted-foreground"))} />}>
               <AgentMark agent={a.agent} label={a.label} lit={on} />
               {!compact && <span className="truncate">{a.short}</span>}
             </TooltipTrigger>

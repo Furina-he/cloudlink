@@ -35,6 +35,9 @@ test.describe("设置视图", () => {
     await page.keyboard.press("Enter")
     await expect(advanced).toHaveAttribute("aria-expanded", "true")
     await expect(page.getByRole("button", { name: "查看探测脚本" })).toBeVisible()
+    // P10d：已移除「Skill 太长时提醒」
+    await expect(page.getByText("Skill 太长时提醒")).toHaveCount(0)
+    await expect(advanced).toContainText("探测、采集时间、数据目录")
     await shot(page, "p7d-settings-advanced")
     await page.keyboard.press("Enter")
     await expect(advanced).toHaveAttribute("aria-expanded", "false")
@@ -127,7 +130,7 @@ test.describe("动态视图", () => {
     await secret.getByRole("button", { name: "编辑" }).click()
     await secret.getByRole("textbox").fill("部署配置位于 /opt/apps/api，更新前先检查服务状态。")
     await secret.getByRole("button", { name: "并入资源" }).click()
-    await expect(toastText(page, /已并入 hk-edge/)).toBeVisible()
+    await expect(toastText(page, /已并入 香港边缘节点/)).toBeVisible()
 
     await injected.getByRole("button", { name: "忽略" }).click()
     await expect(toastText(page, "已忽略这条笔记")).toBeVisible()
@@ -148,6 +151,6 @@ test.describe("动态视图", () => {
     await openServer(page, "hk-edge")
     await page.getByRole("button", { name: "查看全部" }).click()
     await expect(page.getByRole("heading", { name: "操作记录" })).toBeVisible()
-    await expect(page.getByRole("combobox", { name: "按资源筛选" })).toContainText("hk-edge")
+    await expect(page.getByRole("combobox", { name: "按资源筛选" })).toContainText("香港边缘节点")
   })
 })

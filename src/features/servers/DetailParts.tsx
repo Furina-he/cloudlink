@@ -4,11 +4,9 @@ import { useEffect, type ReactNode, type RefObject } from "react"
 import { useShallow } from "zustand/react/shallow"
 import type { Asset, Operation } from "@/bindings"
 import { ListGroup, ListNote, PrefRow } from "@/components/app/SettingsList"
-import { ProdMark } from "@/components/app/ProdMark"
 import { Button } from "@/components/ui/button"
 import { Item } from "@/components/ui/item"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Switch } from "@/components/ui/switch"
 import { Trace } from "@/components/ui/trace"
 import { useAgentOptions } from "@/features/agents/agentKeys"
 import { copy } from "@/lib/copy"
@@ -19,7 +17,6 @@ import { useTargetStore } from "@/stores/targets"
 import { useSkillStore } from "@/stores/skills"
 import { useUIStore } from "@/stores/ui"
 import { AgentPicker } from "./AgentPicker"
-import { serverActions } from "./actions"
 import { ModeToggle } from "./ModeSwitch"
 import { OperationLine } from "./sections/OperationsSection"
 
@@ -37,8 +34,8 @@ export function BackLink() {
   return <Button variant="ghost" size="sm" className="-ml-2 w-fit text-muted-foreground" onClick={() => useUIStore.getState().closeInspector()}><ChevronLeftIcon data-icon="inline-start" />{copy.detail.back}</Button>
 }
 
-export function DetailTitle({ mark, name, nameControl, alias, handle, production, titleRef, actions, status }: {
-  mark: ReactNode; name: string; nameControl?: ReactNode; alias?: string; handle: string; production: boolean; titleRef: RefObject<HTMLHeadingElement | null>; actions: ReactNode; status: ReactNode
+export function DetailTitle({ mark, name, nameControl, handle, titleRef, actions, status }: {
+  mark: ReactNode; name: string; nameControl?: ReactNode; handle: string; titleRef: RefObject<HTMLHeadingElement | null>; actions: ReactNode; status: ReactNode
 }) {
   useEffect(() => titleRef.current?.focus({ preventScroll: true }), [titleRef])
   return (
@@ -48,8 +45,6 @@ export function DetailTitle({ mark, name, nameControl, alias, handle, production
         <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] border border-line bg-card text-fg-2">{mark}</div>
         <div className="flex min-w-0 flex-1 items-baseline gap-2">
           <h2 id="detail-title" ref={titleRef} tabIndex={-1} className="min-w-0 text-lg font-semibold outline-none">{nameControl ?? name}</h2>
-          {alias && <span className="shrink-0 font-mono text-xs text-muted-foreground">{alias}</span>}
-          <ProdMark production={production} className="shrink-0" />
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">{actions}</div>
       </div>
@@ -80,7 +75,6 @@ export function PermissionGroup({ asset, problems }: { asset: Asset; problems?: 
   const selected = agents.some((agent) => asset.agent.agents.includes(agent.key))
   return (
     <ListGroup id="detail-permission" title={copy.detail.groups.permission}>
-      <PrefRow label={copy.detail.rows.production} labelFor="asset-production" hint={copy.detail.rows.productionHint}><Switch id="asset-production" checked={asset.production} onCheckedChange={(on) => serverActions.requestProduction(asset, on)} /></PrefRow>
       <PrefRow label={copy.detail.rows.mode} labelId="detail-mode-label" hint={copy.row.modeShort[asset.agent.mode]}><ModeToggle asset={asset} labelledBy="detail-mode-label" /></PrefRow>
       <PrefRow label={copy.detail.rows.agents} labelId="detail-agents-label" hint={selected && synced === 0 ? copy.detail.rows.selectedNotSynced : copy.detail.rows.agentsSynced(synced)}>
         {agents.length > 0 ? <AgentPicker asset={asset} agents={agents} compact labelledBy="detail-agents-label" /> : known ? <Button variant="link" size="xs" className="h-auto p-0" onClick={() => useUIStore.getState().setView("agents")}>{copy.agentSection.goAgents}</Button> : null}

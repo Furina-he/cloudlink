@@ -123,9 +123,15 @@ const targetOf = (p: Params) => {
   const name = raw ? (AGENT_LABEL[raw as AgentId] ?? (raw.startsWith("custom:") ? raw.slice(7) : raw)) : ""
   return name ? `${name}（${envOf(p)}）` : `${envOf(p)} `
 }
-/** Lint 的主语：资源的问题写标识（「hk-edge 里」），全局内容的问题写「资源关系或运维约定里」。行号在下面的位置里，文案不重复 */
+/** Lint 的主语：资源的问题写名称（「新加坡数据库 里」），全局内容按分区写「资源关系里」或「运维约定里」 */
 const within = (p: Params) =>
-  p?.alias ? `${p.alias} 里` : "资源关系或运维约定里"
+  p?.alias
+    ? `${p.alias} 里`
+    : p?.section === "relations"
+      ? "资源关系里"
+      : p?.section === "conventions"
+        ? "运维约定里"
+        : "资源关系或运维约定里"
 
 /** ssh 错误分类（PRD 8.3）：标题 + 下一步。探测和测试连接共用 */
 const SSH_ERROR: Record<SshErrorId, { title: Msg; hint: Msg }> = {
@@ -315,8 +321,7 @@ export const copy = {
       stopTo: (agent: string, handle: string) => `停止把 ${handle} 分发给${/^[A-Za-z0-9]/.test(agent) ? " " : ""}${agent}`,
       setMode: (handle: string, mode: string) => `把 ${handle} 切换为「${mode}」`,
       preview: "预览 Skill",
-      // 只动生产资源（F-407 AC2），名字里写明
-      allReadOnly: "生产资源全部改为确认变更",
+      allReadOnly: "全部改为确认变更",
       theme: "切换主题",
     },
     back: "返回",
@@ -471,25 +476,28 @@ export const copy = {
     "needs-interaction": () => ["ssh-add -l"],
   } as Partial<Record<SshErrorId, (p: Params) => string[]>>,
 
-  /** Lint 规则（PRD 5.4）。带 alias 参数时主语是这台服务器 */
+  /** Lint 规则（PRD 5.4）。带 alias 参数时主语是这项资源 */
   lint: {
     "description-too-long": (p) =>
-      `description 有 ${v(p, "chars")} 个字符，已截断到 1024 以内。缩短用途可以让更多资源写进描述`,
+      `description 有 ${v(p, "chars")} 个字符，已自动精简到 1024 以内`,
     "secret-detected": (p) =>
       `${within(p)}疑似有密钥（${v(p, "rule")}），已阻断发布`,
     "export-disabled-field": (p) =>
       `已关闭导出的「${v(p, "field")}」出现在 ${v(p, "alias")} 的产物中，已阻断发布`,
-    "missing-reference": (p) => `引用的 ${v(p, "path")} 不存在`,
+    "missing-reference": (p) =>
+      `内部编译异常：引用的 ${p?.file ? String(p.file) : v(p, "path")} 不存在`,
     "body-too-long": (p) =>
-      `Skill 正文 ${v(p, "lines")} 行，超过提醒的长度 ${v(p, "limit")} 行`,
-    "prod-standard-no-guardrails": (p) =>
-      `${v(p, "alias")} 是生产资源，使用自动运维档，但没有自定义红线，建议补充`,
+      `Skill 正文 ${v(p, "lines")} 行`,
     "probe-stale": (p) =>
       `${v(p, "alias")} 的探测数据已有 ${v(p, "days")} 天，建议重新探测`,
     "suspected-injection": (p) =>
-      `${within(p)}有「${v(p, "value")}」，像是写给 Agent 的指令，请核实`,
+      p?.source === "probe"
+        ? `${p.alias ? `${p.alias} 的` : ""}服务器探测结果中出现「${v(p, "value")}」，像是写给 Agent 的指令，请核实`
+        : p?.source === "notes"
+          ? `${p.alias ? `${p.alias} 的` : ""}笔记中出现「${v(p, "value")}」，像是写给 Agent 的指令，请核实`
+          : `${within(p)}有「${v(p, "value")}」，像是写给 Agent 的指令，请核实`,
     "publish-failed": (p) =>
-      `${targetOf(p)}的编译产物无法写入。检查目录后重试。`,
+      `${targetOf(p)}的编译产物无法写入。检查目录权限或占用情况后重试。`,
   } satisfies Record<LintId, Msg>,
   lintLevel: { error: "错误", warning: "警告", info: "提示" } satisfies Record<
     LintLevel,
@@ -578,17 +586,16 @@ export const copy = {
   },
 
   /** 资源配电盘（PRD 6.4） */
-  /** 资源行（PRD 6.3，2026-11-08 重设计） */
+  /** 资源行（PRD 6.3，2026-11-23 P10 修订） */
   row: {
-    prod: "生产",
     loggedIn: (account: string | null) => (account ? `已登录 ${account}` : "已登录"),
     modeShort: {
       "confirm-changes": "查询直接执行，变更先问你",
       "auto-ops": "除删除数据、重启主机、防火墙和 SSH 配置外都直接执行",
     } satisfies Record<Mode, string>,
-    modeMenuLabel: (alias: string) => `${alias} 的档位`,
-    prodConfirm: (alias: string) =>
-      `${alias} 是生产环境。除删除数据、重启或关闭主机、修改防火墙、修改 SSH 配置或停止 sshd 外，变更都不再询问。`,
+    modeMenuLabel: (name: string) => `${name} 的档位`,
+    autoOpsConfirm: (name: string) =>
+      `为 ${name} 启用自动运维？除删除数据、关键服务、内容不可见的脚本、重启或关闭主机、修改防火墙、修改 SSH 配置或停止 sshd 外，变更不再逐次询问。`,
     switch: "切换",
   },
 
@@ -608,14 +615,12 @@ export const copy = {
     clearSearch: "清除搜索",
     loading: "正在加载资源",
     loadFailedTitle: "没能加载资源",
-    rowOpen: (handle: string, name: string, state: string) =>
-      `${handle}，${name}，${state}`,
-    modeToggle: (handle: string, mode: string, next: string) =>
-      `${handle} 当前是${mode}，点击切换为${next}`,
-    prodWritable: "生产环境已启用自动运维",
-    agentsLabel: (alias: string) => `将 ${alias} 分发给哪些 Agent`,
-    agentToggle: (alias: string, agent: string) =>
-      `将 ${alias} 分发给 ${agent}`,
+    rowOpen: (name: string, state: string) => `${name}，${state}`,
+    modeToggle: (name: string, mode: string, next: string) =>
+      `${name} 当前是${mode}，点击切换为${next}`,
+    agentsLabel: (name: string) => `将 ${name} 分发给哪些 Agent`,
+    agentToggle: (name: string, agent: string) =>
+      `将 ${name} 分发给 ${agent}`,
     noAgents: "没有启用的 Agent",
     edit: "编辑",
     editLabel: (handle: string) => `编辑 ${handle}`,
@@ -804,7 +809,7 @@ export const copy = {
     visibility: { public: "公开", private: "私有", internal: "内部" },
     evidence: (text: string) => `关联依据：${text}`,
     evidenceSource: { "vercel-binding": "Vercel 项目绑定", "cloudflare-pages": "Cloudflare Pages 代码来源", "server-git-remote": "服务器工作目录的 git remote" } as Record<string, string>,
-    relationNote: "部署关系只提供背景，不会改变 Agent 选择、档位或生产标记。",
+    relationNote: "部署关系只提供背景，不会改变 Agent 选择或执行模式。",
     reloading: "重新核对中…",
   },
 
@@ -890,7 +895,6 @@ export const copy = {
     aliasChangedHint: "修改别名后，已有命令和脚本也要相应调整。",
     defaultName: (n: number) => `服务器 ${n}`,
     nameFallback: (name: string) => `留空将使用“${name}”`,
-    prodHint: "切到自动运维前会再确认一次",
     advancedHint: "SSH 别名、跳板机、在哪些运行环境里可用",
     footHint: "添加后先是确认变更，并同步给全部 Agent",
     connectEnable: "连接并启用",
@@ -931,7 +935,7 @@ export const copy = {
     cancelProbe: "取消探测",
     preview: "预览 Skill",
     revealCompiled: "在文件夹中显示编译目录",
-    copyAlias: "复制别名",
+    copyAlias: "复制 SSH 别名",
     aliasCopied: (alias: string) => `已复制 ${alias}`,
     aliasCopyFailed: "复制未完成，请选中别名后手动复制。",
     delete: "删除服务器",
@@ -993,15 +997,13 @@ export const copy = {
       advanced: "高级",
     },
     rows: {
-      production: "生产环境",
-      productionHint: "只标记风险，不改变模式；生产自动运维需确认",
-      mode: "档位",
+      mode: "执行模式",
       agents: "给哪些 Agent",
       agentsSynced: (n: number) => (n ? `${n} 个目录已同步` : "还没有同步给任何 Agent"),
       selectedNotSynced: "已选择，尚未同步",
-      productionChanged: (on: boolean) => on ? "已标记为生产环境，执行模式未变" : "已取消生产标记，执行模式与检查未变",
       sharedUnavailable: "共用目录无法单独提供这项资源",
       sharedUnavailableHint: (names: string) => `${names} 共用同一目录；只有明确选择的交集会写入，其他选择没有改变。`,
+      sshHost: "SSH Host",
       address: "地址",
       auth: "登录方式",
       jump: "跳板机",
@@ -1111,14 +1113,10 @@ export const copy = {
     } as Record<string, string>,
   },
   modeConfirm: {
-    title: (alias: string) => `为生产资源 ${alias} 启用自动运维？`,
+    title: (name: string) => `为 ${name} 启用自动运维？`,
     description:
-      "删除数据、关键服务、内容不可见的脚本、重启或关闭主机、修改防火墙、修改 SSH 配置或停止 sshd 仍会先问；其余变更不再逐次询问。红线和目标不明仍拒绝。生产自动运维会持续以琥珀色提醒。",
+      "删除数据、关键服务、内容不可见的脚本、重启或关闭主机、修改防火墙、修改 SSH 配置或停止 sshd 仍会先问；其余变更不再逐次询问。红线和目标不明仍拒绝。",
     confirm: "启用自动运维",
-    productionTitle: (name: string) => `把 ${name} 标记为生产环境并保持自动运维？`,
-    productionDescription:
-      "这项资源正在自动运维。标记生产不会改变模式；删除数据、重启或关闭主机、修改防火墙和 SSH 配置仍会先问，其余变更不逐次询问。取消将保持原来的生产标记和模式。",
-    productionConfirm: "标记生产并保持",
   },
 
   /** 详情笔记分段（F-308） */
@@ -1398,8 +1396,6 @@ export const copy = {
 
   basic: {
     name: "名称",
-    production: "生产环境",
-    productionHint: "只标记风险，不改变模式；生产自动运维需确认",
     env: "环境",
     summary: "用途",
     summaryHint: "一句话说明它是做什么的。Agent 靠这句话判断一个任务该找哪项资源。",
@@ -1535,7 +1531,7 @@ export const copy = {
     ],
   },
 
-  /** 预览 Skill（PRD 6.4，F-204） */
+  /** 预览 Skill（PRD 6.4，F-204，P10c/P10d） */
   preview: {
     title: "预览 Skill",
     draftTitle: "草稿预览",
@@ -1548,16 +1544,39 @@ export const copy = {
     source: "源码",
     loading: "正在编译预览",
     failed: "预览编译失败",
-    budget: "上限占用",
-    description: "description",
-    body: "Skill 正文",
-    chars: (n: number, max: number) => `${n}/${max} 字符`,
-    lines: (n: number, max: number) => `${n}/${max} 行`,
-    near: "接近上限",
-    over: "已超过上限",
+    metaRef: (chars: number, lines: number) => `${chars} 字 · ${lines} 行`,
+    trimmedHint: "描述内容超过 1024 字上限，已自动精简概括以符合 Agent Skills 规范，完整清单保留在各详情文件中。",
     lint: "检查结果",
     lintNone: "没有发现问题",
+    lintSummary: (errors: number, warnings: number) =>
+      [errors ? `${errors} 错误` : "", warnings ? `${warnings} 警告` : ""].filter(Boolean).join(" · "),
     lintLocate: (file: string, line: number) => `定位到 ${file} 第 ${line} 行`,
+    locateSource: "查看位置",
+    fixActions: {
+      editProfile: "去编辑资料",
+      editConventions: "去编辑约定",
+      editRelations: "去编辑关系",
+      exportSettings: "导出设置",
+      viewResource: "查看资源",
+      openDir: "打开目录",
+      openLogs: "打开日志",
+      retry: "重试",
+    },
+    lintHelp: {
+      secretAsset: "请从资料或笔记中删除凭据内容后再保存发布。",
+      secretRelations: "请从资源关系中删除凭据内容后再保存发布。",
+      secretConventions: "请从运维约定中删除凭据内容后再保存发布。",
+      exportDisabled: "请从资料中删除该字段，或在导出设置里允许向 Agent 提供。",
+      injectionNotes: "来源于资源笔记，请编辑清理疑似写给 Agent 的指令文本。",
+      injectionProbe: "来源于服务器探测结果（如容器名或系统信息），请到资源详情核实。",
+      publishFailed: "检查目录权限或文件占用后重试。",
+      missingReference: "属于内部编译异常，可重试或打开日志目录查看详情。",
+    },
+    copyFile: "复制当前文件",
+    fileCopied: (file: string) => `已复制 ${file}`,
+    frontmatterSummary: (chars: number) => `YAML 元信息 · ${chars} 字符`,
+    frontmatterToggle: "展开或收起 YAML 元信息",
+    referencesGroup: "references",
     compiledDir: "编译目录",
     copyPath: "复制路径",
     pathCopied: "已复制编译目录",
@@ -1855,7 +1874,7 @@ export const copy = {
     removeConfirm: "移除护栏",
     removed: (env: string) => `已移除 ${env} 的护栏`,
     /** 护栏规则页（PRD 6.6）：先讲拦什么，再讲确认变更时放行什么 */
-    intro: "生产与非生产统一从 CloudLink 入口执行，运行中（含托盘）按模式检查。Claude Code 护栏引导可识别直连；其他工具、别名或凭据不保证纳管。",
+    intro: "所有资源统一从 CloudLink 入口执行，运行中（含托盘）按模式检查。Claude Code 护栏引导可识别直连；其他工具、别名或凭据不保证纳管。",
     standardTitle: "两档都先问你",
     confirmTitle: "只在确认变更时先问你",
     confirmRow: "其他变更，以及识别不了的命令",
@@ -1957,27 +1976,24 @@ export const copy = {
     resetDone: "已重置 CloudLink",
     typeToConfirm: (text: string) => `输入「${text}」确认`,
     advanced: "高级",
-    advancedHint: "探测、Skill 篇幅、数据目录",
+    advancedHint: "探测、采集时间、数据目录",
     probeTimeout: "探测最长等多久",
     probeTimeoutHint: "超过这个时间还没结果，就算探测失败",
     probeScript: "探测脚本",
     probeScriptHint: "探测只读取信息，不会改动服务器",
-    bodyLineLimit: "Skill 太长时提醒",
-    bodyLineLimitHint: "写给 Agent 的内容超过这个长度，会提醒你精简",
     snapshot: "告诉 Agent 信息的采集时间",
     snapshotHint: "Agent 能判断服务器信息是不是过时了",
     dataDir: "数据目录",
     dataDirOpen: "打开数据目录",
     unitSeconds: "秒",
-    unitLines: "行",
     saved: "设置已保存",
     loading: "正在加载设置",
   },
 
-  /** 自动同步的备份与撤销（F-309） */
+  /** 全部收紧（F-407 AC2） */
   allReadOnly: {
-    done: (n: number) => `${n} 项生产资源已改为确认变更`,
-    none: "没有处于自动运维的生产资源",
+    done: (n: number) => `${n} 项资源已改为确认变更`,
+    none: "没有处于自动运维的资源",
   },
 
   backups: {
@@ -1994,12 +2010,12 @@ export const copy = {
     modesHeader: "档位",
     readOnly: "确认变更",
     standard: "自动运维",
-    allReadOnly: "生产资源全部改为确认变更",
+    allReadOnly: "全部改为确认变更",
     prodInStandard: "{n} 项在自动运维",
     open: "打开 CloudLink",
     quit: "退出",
     notifyTitle: "CloudLink",
-    notifyAllReadOnly: "{n} 项生产资源已改为确认变更",
+    notifyAllReadOnly: "{n} 项资源已改为确认变更",
     notifyExecution: "有一条命令需要你确认。打开动态查看。",
   } satisfies TrayCopy,
 

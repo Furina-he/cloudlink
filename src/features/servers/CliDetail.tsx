@@ -14,7 +14,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
 import { Spinner } from "@/components/ui/spinner"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { copy } from "@/lib/copy"
-import { detailFileOf, isBundledReference } from "@/lib/paths"
+import { detailFileOf } from "@/lib/paths"
 import { cliFormSchema, type CliFormValues } from "@/lib/schemas"
 import { cliEnvStatus, selectCanDistribute, selectCliAccount, selectCliProblem } from "@/stores/assets"
 import { useCliStore } from "@/stores/cli"
@@ -34,7 +34,7 @@ import { ResourceName } from "./ResourceName"
 import { cliInputOf, cliValuesOf } from "./profileForm"
 import { CompileSummary, useInclusionProblems } from "./InspectorParts"
 
-/** 这项云平台的预览（F-204）：当前草稿的编译结果，默认定位到它的详情文件 */
+/** 这项云平台的预览（F-204）：展示整份总 Skill 目录树，默认定位到它的详情文件 */
 function CliPreview({ asset, control, dirty }: { asset: CliAsset; control: Control<CliFormValues>; dirty: boolean }) {
   const values = useWatch({ control }) as CliFormValues
   const inclusions = useDeliveryStore(useShallow((s) => selectInclusionsByAsset(s.inclusions, asset.id)))
@@ -44,20 +44,19 @@ function CliPreview({ asset, control, dirty }: { asset: CliAsset; control: Contr
       scope={asset.id}
       draft={{ asset: cliInputOf(values, asset) }}
       dirty={dirty}
-      fileFilter={(path) => path === "SKILL.md" || isBundledReference(path) || path === own}
       defaultFile={own}
       note={(target) => {
         const inc = inclusions.find((i) => i.envId === target.envId && i.agentKey === target.agentKey)
         if (inc?.included) return null
         const reason = inc?.reason ? copy.inclusionReason[inc.reason.id](inc.reason.params) : copy.inclusionReason["agent-off"](undefined)
-        return copy.preview.notIncluded(asset.cliProvider, target.label, reason)
+        return copy.preview.notIncluded(asset.name, target.label, reason)
       }}
     />
   )
 }
 
 /** 标题行 + 状态行：右边「重新检测」和「⋯」（刷新范围、预览 Skill、在文件夹中显示、删除） */
-function CliHeader({ asset, name, production, titleRef, onEditProfile, onRefresh, onRefreshScope }: { asset: CliAsset; name: string; production: boolean; titleRef: React.RefObject<HTMLHeadingElement | null>; onEditProfile: () => void; onRefresh: () => void; onRefreshScope: () => void }) {
+function CliHeader({ asset, name, titleRef, onEditProfile, onRefresh, onRefreshScope }: { asset: CliAsset; name: string; titleRef: React.RefObject<HTMLHeadingElement | null>; onEditProfile: () => void; onRefresh: () => void; onRefreshScope: () => void }) {
   const cliDetecting = useCliStore((s) => !!s.byProvider[asset.cliProvider]?.detecting)
   const githubDetecting = useGithubStore((s) => !!s.byKey[asset.id]?.loading)
   const detecting = asset.cliProvider === "github" ? githubDetecting : cliDetecting
@@ -116,9 +115,7 @@ function CliHeader({ asset, name, production, titleRef, onEditProfile, onRefresh
       mark={<ProviderMark provider={asset.cliProvider} className="size-5" />}
       name={name}
       nameControl={<ResourceName asset={asset} />}
-      alias={asset.cli.binary}
       handle={asset.handle}
-      production={production}
       titleRef={titleRef}
       actions={actions}
       status={
@@ -166,6 +163,11 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
   const titleRef = useRef<HTMLHeadingElement>(null)
   const [scopeOpen, setScopeOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
+  const pendingProfile = useUIStore((s) => s.pendingEdit?.assetId === asset.id && s.pendingEdit.kind === "profile")
+  const closeProfile = () => {
+    setProfileOpen(false)
+    useUIStore.getState().consumePendingEdit(asset.id)
+  }
   const detection = useCliStore((s) => s.byProvider[asset.cliProvider])
   const github = useGithubStore((s) => s.byKey[asset.id]) ?? emptyGithubScope
   const setup = useCliStore((s) => s.setups[asset.cliProvider])
@@ -190,7 +192,7 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
   return (
     <FormProvider {...form}>
       <DetailPage>
-        <CliHeader asset={asset} name={asset.name} production={asset.production} titleRef={titleRef} onEditProfile={() => setProfileOpen(true)} onRefresh={refresh} onRefreshScope={refreshScopeOnly} />
+        <CliHeader asset={asset} name={asset.name} titleRef={titleRef} onEditProfile={() => setProfileOpen(true)} onRefresh={refresh} onRefreshScope={refreshScopeOnly} />
         <div className="empty:hidden">
           <CompileSummary asset={asset} dirty={form.formState.isDirty} />
         </div>
@@ -236,7 +238,7 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
         <RecentActivityGroup assetId={asset.id} />
       </DetailPage>
       {asset.cliProvider === "github" ? scopeOpen && <GithubScopeDialog asset={asset} onClose={() => setScopeOpen(false)} /> : scopeOpen && <CloudScopeDialog asset={asset} onClose={() => setScopeOpen(false)} />}
-      {profileOpen && <ProfileDialog asset={asset} onClose={() => setProfileOpen(false)} />}
+      {(profileOpen || pendingProfile) && <ProfileDialog asset={asset} onClose={closeProfile} />}
       <CliPreview asset={asset} control={form.control} dirty={form.formState.isDirty} />
     </FormProvider>
   )

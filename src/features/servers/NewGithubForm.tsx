@@ -112,7 +112,7 @@ export function NewGithubForm() {
       try {
         const savedResult = await useAssetStore.getState().save({
           type: "cli", cliProvider: "github", name: copy.cli.name.github,
-          account: draft.ownerLogin, production: true, summary: "", guardrails: { rules: [] }, notes: "",
+          account: draft.ownerLogin, summary: "", guardrails: { rules: [] }, notes: "",
           scope: result?.scope ?? [],
           github: { host: result?.config.host ?? "github.com", ownerLogin: draft.ownerLogin, mode: draft.mode, selectedRepoIds: draft.selectedRepoIds, excludedRepoIds: draft.excludedRepoIds },
         })

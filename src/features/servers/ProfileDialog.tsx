@@ -48,7 +48,7 @@ function ServerProfileDialog({ asset, onClose }: { asset: ServerAsset; onClose: 
   }
   return (
     <FormProvider {...form}>
-      <DraftDialog title={copy.detail.editProfile} name={asset.name} handle={asset.connection.sshAlias} hint={copy.detail.profileHint} dirty={form.formState.isDirty} busy={form.formState.isSubmitting} saveLabel={copy.detail.saveProfile} onClose={onClose} onSave={save}>
+      <DraftDialog title={copy.detail.editProfile} name={asset.name} hint={copy.detail.profileHint} dirty={form.formState.isDirty} busy={form.formState.isSubmitting} saveLabel={copy.detail.saveProfile} onClose={onClose} onSave={save}>
         {error && <SaveErrorAlert error={error} onRetry={save} />}
         <BasicProfileFields />
         <SitesField />
@@ -92,7 +92,7 @@ function CliProfileDialog({ asset, onClose }: { asset: CliAsset; onClose: () => 
   }
   return (
     <FormProvider {...form}>
-      <DraftDialog title={copy.detail.editProfile} name={asset.name} handle={asset.handle} hint={copy.detail.profileHint} dirty={form.formState.isDirty} busy={form.formState.isSubmitting} saveLabel={copy.detail.saveProfile} onClose={onClose} onSave={save}>
+      <DraftDialog title={copy.detail.editProfile} name={asset.name} hint={copy.detail.profileHint} dirty={form.formState.isDirty} busy={form.formState.isSubmitting} saveLabel={copy.detail.saveProfile} onClose={onClose} onSave={save}>
         {error && <SaveErrorAlert error={error} onRetry={save} />}
         <BasicProfileFields />
         <RulesAndNotesFields />

@@ -114,7 +114,6 @@ export function serverFormSchema(ctx: AliasContext, opts: { nameOptional?: boole
       // 新建名称可空，使用这份草稿稳定的中性名称，不从连接地址生成（P8 D7）。
       name: opts.nameOptional ? z.string().trim() : z.string().trim().min(1, "name-required"),
       fallbackName: z.string(),
-      production: z.boolean(),
       summary: z.string(),
       tags: z.array(z.string()),
       provider: z.string().trim(),
@@ -171,7 +170,6 @@ export type ServerFormValues = z.infer<ReturnType<typeof serverFormSchema>>
 /** 云平台资源的表单（PRD 6.4）：范围勾选立即生效，不在表单里 */
 export const cliFormSchema = z.object({
   name: z.string().trim().min(1, "name-required"),
-  production: z.boolean(),
   summary: z.string(),
   rules: z.array(guardrailRuleSchema),
   notes: z.string(),

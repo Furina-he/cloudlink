@@ -1,4 +1,4 @@
-# dev-box — Development machine
+# Development machine (dev-box)
 
 > Mode: auto-ops
 

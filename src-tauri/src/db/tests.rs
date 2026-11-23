@@ -278,7 +278,7 @@ fn migration_v4_turns_update_checks_on_for_older_settings() {
 }
 
 #[test]
-fn migration_v5_turns_env_tag_into_the_production_switch() {
+fn migration_v5_and_v9_clean_legacy_env_tag_and_production_fields() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("data.db");
     let db = Db::open(&path).unwrap();
@@ -299,14 +299,84 @@ fn migration_v5_turns_env_tag_into_the_production_switch() {
     drop(db);
 
     let db = Db::open(&path).unwrap();
-    let raw: String = db
+    assert_eq!(db.schema_version().unwrap(), SCHEMA_VERSION);
+    for id in [hk.id(), dev.id()] {
+        let raw: String = db
+            .conn
+            .query_row("SELECT json FROM assets WHERE id = ?1", [id], |r| r.get(0))
+            .unwrap();
+        assert!(!raw.contains("envTag"), "{raw}");
+        assert!(!raw.contains("\"production\""), "{raw}");
+        assert!(db.get_asset(id).unwrap().is_some());
+    }
+}
+
+#[test]
+fn migration_v9_removes_legacy_production_from_assets_and_probe_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("data.db");
+    let db = Db::open(&path).unwrap();
+    let hk = Asset::Vps(testkit::hk_edge());
+    let cf = Asset::Cli(testkit::cloudflare());
+    db.upsert_asset(&hk).unwrap();
+    db.upsert_asset(&cf).unwrap();
+    // 模拟 v8 历史数据：assets、probe_snapshots、probe_results 均带有 production 字段
+    for id in [hk.id(), cf.id()] {
+        db.conn
+            .execute(
+                "UPDATE assets SET json = json_set(json, '$.production', json('true')) WHERE id = ?1",
+                [id],
+            )
+            .unwrap();
+    }
+    let legacy_hk: String = db
         .conn
         .query_row("SELECT json FROM assets WHERE id = ?1", [hk.id()], |r| r.get(0))
         .unwrap();
-    assert!(!raw.contains("envTag"));
-    let by_id = |id: &str| db.get_asset(id).unwrap().unwrap();
-    assert!(by_id(hk.id()).production());
-    assert!(!by_id(dev.id()).production());
+    assert!(legacy_hk.contains("\"production\":true"));
+    let merged_legacy = format!(r#"{{"asset":{legacy_hk},"applied":[]}}"#);
+    db.conn
+        .execute(
+            "INSERT INTO probe_snapshots (run_id, asset_id, at, json) VALUES ('prb_v8', ?1, '2026-11-20T00:00:00Z', ?2)",
+            rusqlite::params![hk.id(), legacy_hk],
+        )
+        .unwrap();
+    db.conn
+        .execute(
+            "INSERT INTO probe_results (run_id, after_json, merged_json) VALUES ('prb_v8', ?1, ?2)",
+            rusqlite::params![legacy_hk, merged_legacy],
+        )
+        .unwrap();
+    db.conn.execute("UPDATE schema_version SET version = 8", []).unwrap();
+    drop(db);
+
+    let db = Db::open(&path).unwrap();
+    assert_eq!(db.schema_version().unwrap(), SCHEMA_VERSION);
+    for id in [hk.id(), cf.id()] {
+        let raw: String = db
+            .conn
+            .query_row("SELECT json FROM assets WHERE id = ?1", [id], |r| r.get(0))
+            .unwrap();
+        assert!(!raw.contains("\"production\""), "{raw}");
+        assert!(db.get_asset(id).unwrap().is_some());
+    }
+    let snap: String = db
+        .conn
+        .query_row("SELECT json FROM probe_snapshots WHERE run_id = 'prb_v8'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    let (after_json, merged_json): (String, String) = db
+        .conn
+        .query_row(
+            "SELECT after_json, merged_json FROM probe_results WHERE run_id = 'prb_v8'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert!(!snap.contains("\"production\""), "{snap}");
+    assert!(!after_json.contains("\"production\""), "{after_json}");
+    assert!(!merged_json.contains("\"production\""), "{merged_json}");
 }
 
 #[test]

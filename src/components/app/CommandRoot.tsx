@@ -56,36 +56,37 @@ function openServer(id: string) {
 function CurrentActions({ asset, probing, close }: { asset: Asset; probing: boolean; close: () => void }) {
   const { agents } = useAgentOptions()
   const handle = handleOf(asset)
+  const name = asset.name
   const nextMode = asset.agent.mode === "auto-ops" ? "confirm-changes" : "auto-ops"
   const run = (fn: () => void) => () => {
     fn()
     close()
   }
-  const test = asset.type === "cli" ? copy.command.actions.recheckCli(handle) : copy.command.actions.testCurrent(handle)
-  const mode = copy.command.actions.setMode(handle, copy.mode[nextMode])
+  const test = asset.type === "cli" ? copy.command.actions.recheckCli(name) : copy.command.actions.testCurrent(name)
+  const mode = copy.command.actions.setMode(name, copy.mode[nextMode])
   return (
     <>
-      <CommandItem value={`${test} ${asset.name}`} onSelect={run(() => (asset.type === "cli" ? serverActions.recheckCli(asset) : serverActions.test(asset)))}>
+      <CommandItem value={`${test} ${handle}`} onSelect={run(() => (asset.type === "cli" ? serverActions.recheckCli(asset) : serverActions.test(asset)))}>
         {asset.type === "cli" ? <RefreshCwIcon /> : <PlugIcon />}
         {test}
       </CommandItem>
       {asset.type === "vps" && (
-        <CommandItem value={`${copy.command.actions.probeCurrent(handle)} ${asset.name}`} disabled={probing} onSelect={run(() => serverActions.probe(asset))}>
+        <CommandItem value={`${copy.command.actions.probeCurrent(name)} ${handle}`} disabled={probing} onSelect={run(() => serverActions.probe(asset))}>
           <RadarIcon />
-          {copy.command.actions.probeCurrent(handle)}
+          {copy.command.actions.probeCurrent(name)}
         </CommandItem>
       )}
       {agents.map((a) => {
         const on = asset.agent.agents.includes(a.key)
-        const label = on ? copy.command.actions.stopTo(a.label, handle) : copy.command.actions.distributeTo(a.label, handle)
+        const label = on ? copy.command.actions.stopTo(a.label, name) : copy.command.actions.distributeTo(a.label, name)
         return (
-          <CommandItem key={a.key} value={`${label} ${asset.name}`} onSelect={run(() => serverActions.toggleAgent(asset, a, !on))}>
+          <CommandItem key={a.key} value={`${label} ${handle}`} onSelect={run(() => serverActions.toggleAgent(asset, a, !on))}>
             {on ? <FolderMinusIcon /> : <FolderSyncIcon />}
             {label}
           </CommandItem>
         )
       })}
-      <CommandItem value={`${mode} ${asset.name}`} onSelect={run(() => serverActions.requestMode(asset, nextMode))}>
+      <CommandItem value={`${mode} ${handle}`} onSelect={run(() => serverActions.requestMode(asset, nextMode))}>
         {nextMode === "auto-ops" ? <WrenchIcon /> : <EyeIcon />}
         {mode}
       </CommandItem>
@@ -129,7 +130,6 @@ export function RootPage({ close, goPage }: { close: () => void; goPage: (p: Com
           <CommandItem key={a.id} value={`${a.name} ${handleOf(a)} ${a.id}`} onSelect={run(() => openServer(a.id))}>
             {a.type === "cli" ? <ProviderMark provider={a.cliProvider} /> : <ServerIcon />}
             <span className="truncate">{a.name}</span>
-            <span className="truncate font-mono text-xs text-muted-foreground">{handleOf(a)}</span>
           </CommandItem>
         ))}
       </CommandGroup>

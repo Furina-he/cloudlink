@@ -164,7 +164,7 @@ fn waiting_protocol_lives_in_its_own_reference_and_the_exit_boundary_is_not_told
     }
     assert!(p.lint.is_empty(), "{:#?}", p.lint);
     assert!(p.budget.body_lines <= 60, "{}", p.budget.body_lines);
-    assert_eq!(render::TEMPLATE_VERSION, 5);
+    assert_eq!(render::TEMPLATE_VERSION, 6);
     assert!(render::HEALTH_CHECK.contains("Do not replace that entry with direct SSH"));
     let wsl = EnvId::parse("wsl:Ubuntu-24.04").unwrap();
     let p = preview(
@@ -264,8 +264,7 @@ fn owned_github() -> crate::model::asset::CliAsset {
 
 #[test]
 fn github_auto_owner_and_effective_login_are_separate_and_discovery_is_explicit() {
-    let mut cli = owned_github();
-    cli.production = true;
+    let cli = owned_github();
     let p = preview(
         &[Asset::Cli(cli)],
         &EnvId::windows(),

@@ -84,26 +84,26 @@ describe("同资源保存串行与 latest-builder（P8a／b）", () => {
   it("现有 save(input) 也按持久化 id 串行，不能提前发送第二份完整输入", async () => {
     const pending = deferred<SaveResult>()
     fake.save.mockReturnValueOnce(pending.promise)
-    const first = state().save({ ...renameInputOf(server, server.name), production: false })
+    const first = state().save({ ...renameInputOf(server, server.name), summary: "更新后的用途" })
     await vi.waitFor(() => expect(fake.save).toHaveBeenCalledTimes(1))
     const second = state().save(renameInputOf(server, "新名称"))
     await Promise.resolve()
     expect(fake.save).toHaveBeenCalledTimes(1)
 
-    pending.resolve(snapshot({ ...server, production: false }))
+    pending.resolve(snapshot({ ...server, summary: "更新后的用途" }))
     await Promise.all([first, second])
     expect(fake.save).toHaveBeenCalledTimes(2)
     expect(fake.save.mock.calls[1][0].name).toBe("新名称")
   })
 
-  it("生产保存 A 延迟时改名 B 排队；B 的 builder 在完整发布快照写回后执行", async () => {
+  it("用途保存 A 延迟时改名 B 排队；B 的 builder 在完整发布快照写回后执行", async () => {
     const pending = deferred<SaveResult>()
-    const resultA = snapshot({ ...server, production: false }, "production-a")
+    const resultA = snapshot({ ...server, summary: "已保存的新用途" }, "summary-a")
     fake.save.mockReturnValueOnce(pending.promise)
-    const first = state().save({ ...renameInputOf(server, server.name), production: false })
+    const first = state().save({ ...renameInputOf(server, server.name), summary: "已保存的新用途" })
     await vi.waitFor(() => expect(fake.save).toHaveBeenCalledTimes(1))
     const build = vi.fn((latest: Asset) => {
-      expect(latest.production).toBe(false)
+      expect(latest.summary).toBe("已保存的新用途")
       expect(useSkillStore.getState().statusByKey).toEqual(Object.fromEntries(resultA.statuses.map((s) => [compileKey(s), s])))
       expect(useDeliveryStore.getState().inclusions).toEqual(resultA.inclusions)
       expect(Object.values(useDeliveryStore.getState().byId)).toEqual(resultA.deliveries)
@@ -115,11 +115,11 @@ describe("同资源保存串行与 latest-builder（P8a／b）", () => {
     pending.resolve(resultA)
     await Promise.all([first, second])
     expect(build).toHaveBeenCalledTimes(1)
-    expect(fake.save.mock.calls[1][0]).toMatchObject({ id: server.id, name: "新名称", production: false })
-    expect(state().byId[server.id]).toMatchObject({ name: "新名称", production: false, connection: { sshAlias: server.connection.sshAlias, verified: server.connection.verified } })
+    expect(fake.save.mock.calls[1][0]).toMatchObject({ id: server.id, name: "新名称", summary: "已保存的新用途" })
+    expect(state().byId[server.id]).toMatchObject({ name: "新名称", summary: "已保存的新用途", connection: { sshAlias: server.connection.sshAlias, verified: server.connection.verified } })
   })
 
-  it.each([server, cli])("$type 资料／名称保存 A 延迟时生产 B 只覆盖 production，保留 A 的新资料", async (initial) => {
+  it.each([server, cli])("$type 资料／名称保存 A 延迟时后续改名 B 只覆盖 name，保留 A 的新资料", async (initial) => {
     const pending = deferred<SaveResult>()
     const changed: Asset = { ...initial, name: "已保存的新名称", summary: "已保存的新用途", notes: "已保存的新笔记", guardrails: { rules: [{ id: "r-new", text: "新红线" }] } }
     if (changed.type === "vps") {
@@ -133,14 +133,14 @@ describe("同资源保存串行与 latest-builder（P8a／b）", () => {
       ? state().update(initial.id, (latest) => serverProfileInput(formValuesOf(changed as ServerAsset), initial, latest as ServerAsset))
       : state().update(initial.id, (latest) => cliProfileInput(cliValuesOf(changed as CliAsset), initial, latest as CliAsset))
     await vi.waitFor(() => expect(fake.save).toHaveBeenCalledTimes(1))
-    const second = state().update(initial.id, (latest) => ({ ...renameInputOf(latest, latest.name), production: false }))
+    const second = state().update(initial.id, (latest) => renameInputOf(latest, "二次改名"))
     expect(fake.save).toHaveBeenCalledTimes(1)
 
     pending.resolve(snapshot(changed, "profile-a"))
     await Promise.all([first, second])
-    expect(fake.save.mock.calls[1][0]).toMatchObject({ name: changed.name, summary: changed.summary, notes: changed.notes, guardrails: changed.guardrails, production: false })
+    expect(fake.save.mock.calls[1][0]).toMatchObject({ name: "二次改名", summary: changed.summary, notes: changed.notes, guardrails: changed.guardrails })
     if (changed.type === "vps") expect(fake.save.mock.calls[1][0]).toMatchObject({ tags: changed.tags, servedHostnames: changed.servedHostnames, provider: changed.provider, region: changed.region })
-    expect(state().byId[initial.id]).toMatchObject({ ...changed, production: false })
+    expect(state().byId[initial.id]).toMatchObject({ ...changed, name: "二次改名" })
   })
 
   it("保存失败会释放队列；后续 builder 沿用最后成功的资源并能继续保存", async () => {

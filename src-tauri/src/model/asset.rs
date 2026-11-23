@@ -483,8 +483,6 @@ pub struct ServerAsset {
     pub tag: VpsTag,
     pub id: String,
     pub name: String,
-    /// F-109：生产环境开关（2026-11-08 取代 envTag 三档）
-    pub production: bool,
     pub summary: String,
     pub agent: AssetAgent,
     pub guardrails: Guardrails,
@@ -795,8 +793,6 @@ pub struct CliAsset {
     pub tag: CliTag,
     pub id: String,
     pub name: String,
-    /// F-109：生产环境开关（2026-11-08 取代 envTag 三档）
-    pub production: bool,
     pub summary: String,
     pub agent: AssetAgent,
     pub guardrails: Guardrails,
@@ -876,12 +872,6 @@ impl Asset {
         match self {
             Asset::Vps(a) => &a.name,
             Asset::Cli(a) => &a.name,
-        }
-    }
-    pub fn production(&self) -> bool {
-        match self {
-            Asset::Vps(a) => a.production,
-            Asset::Cli(a) => a.production,
         }
     }
     pub fn summary(&self) -> &str {
@@ -982,8 +972,6 @@ pub struct ServerAssetInput {
     #[ts(optional)]
     pub id: Option<String>,
     pub name: String,
-    /// F-109：生产环境开关（2026-11-08 取代 envTag 三档）
-    pub production: bool,
     pub summary: String,
     pub guardrails: Guardrails,
     pub notes: String,
@@ -1017,8 +1005,6 @@ pub struct CliAssetInput {
     #[ts(optional)]
     pub id: Option<String>,
     pub name: String,
-    /// F-109：生产环境开关（2026-11-08 取代 envTag 三档）
-    pub production: bool,
     pub summary: String,
     pub guardrails: Guardrails,
     pub notes: String,
@@ -1059,7 +1045,7 @@ mod tests {
     #[test]
     fn untagged_asset_respects_type_literal() {
         let cli = serde_json::json!({
-            "type": "cli", "id": "ast_1", "name": "Cloudflare", "production": true, "summary": "",
+            "type": "cli", "id": "ast_1", "name": "Cloudflare", "summary": "",
             "agent": { "agents": [], "mode": "confirm-changes" }, "guardrails": { "rules": [] }, "notes": "",
             "createdAt": "2026-11-01T00:00:00Z", "updatedAt": "2026-11-01T00:00:00Z",
             "cliProvider": "cloudflare", "handle": "cloudflare", "account": null,
@@ -1068,6 +1054,11 @@ mod tests {
         let a: Asset = serde_json::from_value(cli.clone()).unwrap();
         assert_eq!(a.kind(), AssetType::Cli);
         assert_eq!(serde_json::to_value(&a).unwrap(), cli);
+        // Legacy snapshots containing the removed `production` field deserialize cleanly and drop it on write.
+        let mut legacy = cli.clone();
+        legacy["production"] = serde_json::Value::Bool(true);
+        let parsed: Asset = serde_json::from_value(legacy).unwrap();
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), cli);
         let mut wrong = cli;
         wrong["type"] = "vps".into();
         assert!(serde_json::from_value::<Asset>(wrong).is_err());

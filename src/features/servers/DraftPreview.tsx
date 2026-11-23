@@ -7,40 +7,33 @@ import { PreviewSheet } from "@/components/app/PreviewSheet"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { copy, ipcErrorText } from "@/lib/copy"
-import { detailFileOf, isBundledReference } from "@/lib/paths"
+import { detailFileOf } from "@/lib/paths"
 import type { ServerFormValues } from "@/lib/schemas"
 import { selectInclusionsByAsset, useDeliveryStore } from "@/stores/deliveries"
 import { serverActions } from "./actions"
 import { toAssetInput } from "./serverForm"
 
-/** 这台服务器的详情文件；编译时重名会加 -2 后缀（5.3），按前缀匹配 */
-const ownDetailFile = (alias: string) => {
-  const base = detailFileOf(alias).replace(/\.md$/, "")
-  return (path: string) => path === `${base}.md` || new RegExp(`^${base}-\\d+\\.md$`).test(path)
-}
-
 /**
- * 这台服务器的预览（F-204）：内容就是当前草稿的编译结果，默认定位到详情文件。
+ * 这台服务器的预览（F-204）：展示整份总 Skill 目录树，默认高亮并定位到当前服务器的详情文件。
  * 未列入所选的那一份（运行环境 × Agent）时按「已列入」计算，顶部注明原因（2026-10-31 用户确认）
  */
 export function DraftPreview({ control, asset, dirty }: { control: Control<ServerFormValues>; asset: ServerAsset | undefined; dirty: boolean }) {
   const values = useWatch({ control }) as ServerFormValues
   const inclusions = useDeliveryStore(useShallow((s) => (asset ? selectInclusionsByAsset(s.inclusions, asset.id) : [])))
   const alias = (values.alias ?? "").trim()
-  const isOwn = ownDetailFile(alias)
+  const displayName = (values.name ?? "").trim() || asset?.name || alias || copy.create.titleSsh
 
   return (
     <PreviewSheet
       scope={asset?.id ?? "new"}
       draft={{ asset: toAssetInput(values, asset) }}
       dirty={dirty}
-      fileFilter={(path) => path === "SKILL.md" || isBundledReference(path) || isOwn(path)}
       defaultFile={detailFileOf(alias)}
       note={(target) => {
         const inc = inclusions.find((i) => i.envId === target.envId && i.agentKey === target.agentKey)
         if (inc?.included) return null
         const reason = inc?.reason ? copy.inclusionReason[inc.reason.id](inc.reason.params) : copy.inclusionReason["agent-off"](undefined)
-        return copy.preview.notIncluded(alias || copy.create.titleSsh, target.label, reason)
+        return copy.preview.notIncluded(displayName, target.label, reason)
       }}
     />
   )

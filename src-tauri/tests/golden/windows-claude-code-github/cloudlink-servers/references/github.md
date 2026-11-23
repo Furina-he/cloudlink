@@ -1,4 +1,4 @@
-# github — GitHub
+# GitHub
 
 > Mode: confirm-changes
 

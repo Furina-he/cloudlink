@@ -48,9 +48,10 @@ function CompileLine() {
   const statusByKey = useSkillStore((s) => s.statusByKey)
   const { compileTargets } = useAgentOptions()
   const compile = useMemo(() => selectCompileSummary(Object.values(statusByKey)), [statusByKey])
-  const show = (s: { envId: EnvId; agentKey: string }) => {
+  const show = (s: { envId: EnvId; agentKey: string; lint: { level: string; file?: string }[] }) => {
     useUIStore.getState().setPreviewKey(compileKey(s))
-    useUIStore.getState().openPreview({ file: "SKILL.md", lint: true })
+    const firstIssue = s.lint.find((l) => l.level === "error") ?? s.lint.find((l) => l.level === "warning")
+    useUIStore.getState().openPreview({ file: firstIssue?.file ?? "SKILL.md", lint: true })
   }
   if (compile.blocked.length === 0 && !compile.firstWarning) return null
   const blocked = compile.blocked.length > 0

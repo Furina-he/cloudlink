@@ -148,9 +148,9 @@ fn stopped_hooks_do_not_check_but_a_damaged_record_never_means_exit() {
 }
 
 #[test]
-fn production_direct_calls_use_the_channel_and_an_owned_runner_is_not_rechecked() {
+fn direct_calls_use_the_channel_and_an_owned_runner_is_not_rechecked() {
     let fixture = Fixture::new();
-    fixture.policy(json!({"version":1,"resources":[{"id":"ast-test","kind":"vps","handle":"test-vps","production":true,"mode":"auto-ops","envIds":["windows"],"hosts":[],"criticalServices":[]}]}));
+    fixture.policy(json!({"version":1,"resources":[{"id":"ast-test","kind":"vps","handle":"test-vps","mode":"auto-ops","envIds":["windows"],"hosts":[],"criticalServices":[]}]}));
     let output = fixture.bash("ssh test-vps uptime");
     let deny: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(

@@ -128,6 +128,17 @@ const MIGRATIONS: &[&str] = &[
     WHERE type = 'cli' AND json_extract(json, '$.cliProvider') IN ('cloudflare', 'vercel', 'oracle')
         AND json_type(json, '$.cloudScope') IS NULL;
     "#,
+    // v9: P10a removes the production flag from assets, probe snapshots and probe results.
+    r#"
+    UPDATE assets SET json = json_remove(json, '$.production')
+    WHERE json_type(json, '$.production') IS NOT NULL;
+    UPDATE probe_snapshots SET json = json_remove(json, '$.production')
+    WHERE json_type(json, '$.production') IS NOT NULL;
+    UPDATE probe_results SET after_json = json_remove(after_json, '$.production')
+    WHERE json_type(after_json, '$.production') IS NOT NULL;
+    UPDATE probe_results SET merged_json = json_remove(merged_json, '$.asset.production')
+    WHERE json_type(merged_json, '$.asset.production') IS NOT NULL;
+    "#,
 ];
 
 pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;

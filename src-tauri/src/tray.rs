@@ -1,9 +1,10 @@
 //! 系统托盘（F-407，PRD 6.10）。菜单文字由前端经 `set_tray_copy` 传入（文案只在 copy.ts），
 //! 收到之前不创建托盘。资源、档位或护栏变化时重建菜单。
 //!
-//! 原生菜单不能排版也不能给文字上色（2026-11-10）：档位、数量放进 `\t` 后面的右侧列对齐；
-//! 生产 + 标准运维的资源前面放一个琥珀圆点图标（F-109 AC1）。
+//! 原生菜单不能排版也不能给文字上色：档位、数量放进 `\t` 后面的右侧列对齐；
+//! P10 取消生产环境标记与琥珀圆点图标，优先显示资源名称并按名称自然排序。
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -18,37 +19,82 @@ use crate::model::asset::{Asset, Mode};
 
 const TRAY_ID: &str = "cloudlink";
 
-/// 琥珀圆点的颜色：托盘菜单跟随系统深浅色，取 DESIGN.md amber 与 amber-dark 之间的
-/// oklch(0.62 0.15 60)，在浅色（#F9F9F9）和深色（#2B2B2B）菜单底上对比度都在 3.5 以上
-const AMBER: [u8; 3] = [198, 108, 0];
-/// muda 在 Windows 上把菜单图标画成 16×16 的位图，直接给这个尺寸免得缩放发糊
-const DOT_SIZE: u32 = 16;
-/// 圆点半径（像素），和界面里 6–7px 的状态点差不多大
-const DOT_RADIUS: f32 = 3.5;
-
 /// Windows 菜单里 `\t` 后面的文字右对齐成一列（快捷键那一列）
 fn columns(left: &str, right: &str) -> String {
     format!("{left}\t{right}")
 }
 
-/// 菜单里资源的排序键：服务器在前，云平台和代码托管在后；组内生产在前，再按标识（菜单上显示的就是标识）
-fn order_key(cli: bool, production: bool, handle: &str) -> (bool, bool, String) {
-    (cli, !production, handle.to_ascii_lowercase())
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum NatPart {
+    Text(String),
+    Num(u128),
 }
 
-/// 16×16 的抗锯齿圆点，RGBA
-fn amber_dot_rgba() -> Vec<u8> {
-    let center = DOT_SIZE as f32 / 2.0;
-    let mut rgba = Vec::with_capacity((DOT_SIZE * DOT_SIZE * 4) as usize);
-    for y in 0..DOT_SIZE {
-        for x in 0..DOT_SIZE {
-            let dx = x as f32 + 0.5 - center;
-            let dy = y as f32 + 0.5 - center;
-            let alpha = (DOT_RADIUS + 0.5 - (dx * dx + dy * dy).sqrt()).clamp(0.0, 1.0);
-            rgba.extend_from_slice(&[AMBER[0], AMBER[1], AMBER[2], (alpha * 255.0).round() as u8]);
+fn natural_key(s: &str) -> Vec<NatPart> {
+    let mut parts = Vec::new();
+    let mut chars = s.chars().peekable();
+    while let Some(&ch) = chars.peek() {
+        if ch.is_ascii_digit() {
+            let mut n: u128 = 0;
+            while let Some(&d) = chars.peek() {
+                if let Some(v) = d.to_digit(10) {
+                    n = n.saturating_mul(10).saturating_add(u128::from(v));
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            parts.push(NatPart::Num(n));
+        } else {
+            let mut text = String::new();
+            while let Some(&c) = chars.peek() {
+                if c.is_ascii_digit() {
+                    break;
+                }
+                for lc in c.to_lowercase() {
+                    text.push(lc);
+                }
+                chars.next();
+            }
+            parts.push(NatPart::Text(text));
         }
     }
-    rgba
+    parts
+}
+
+fn display_name(asset: &Asset) -> &str {
+    let trimmed = asset.name().trim();
+    if trimmed.is_empty() { asset.handle() } else { trimmed }
+}
+
+/// 菜单里资源的排序键：服务器在前，云平台和代码托管在后；组内按名称自然排序，再按标识兜底
+fn order_key(cli: bool, name: &str, handle: &str) -> (bool, Vec<NatPart>, String) {
+    (cli, natural_key(name), handle.to_ascii_lowercase())
+}
+
+/// 优先显示资源名称；同组内出现重名时再附括号区分，不裸露 `cloudlink-N` 等技术别名
+fn menu_labels(assets: &[Asset]) -> Vec<String> {
+    let mut counts = HashMap::<(bool, String), usize>::new();
+    for a in assets {
+        let key = (matches!(a, Asset::Cli(_)), display_name(a).to_lowercase());
+        *counts.entry(key).or_insert(0) += 1;
+    }
+    assets
+        .iter()
+        .map(|a| {
+            let name = display_name(a);
+            let key = (matches!(a, Asset::Cli(_)), name.to_lowercase());
+            if counts.get(&key).copied().unwrap_or(0) > 1 {
+                let extra = match a {
+                    Asset::Vps(s) => s.connection.ssh_alias.as_str(),
+                    Asset::Cli(c) => c.account.as_deref().unwrap_or(c.handle.as_str()),
+                };
+                format!("{name} ({extra})")
+            } else {
+                name.to_string()
+            }
+        })
+        .collect()
 }
 
 /// 托盘菜单的全部文字。`{n}` 由 Rust 换成数量
@@ -63,11 +109,11 @@ pub struct TrayCopy {
     pub read_only: String,
     pub standard: String,
     pub all_read_only: String,
-    /// 「{n} 项在标准运维」，跟在「生产资源全部切回只读」右边
+    /// 「{n} 项在自动运维」，跟在「全部改为确认变更」右边
     pub prod_in_standard: String,
     pub open: String,
     pub quit: String,
-    /// 系统通知标题与正文「{n} 项生产资源已切回只读」
+    /// 系统通知标题与正文「{n} 项资源已改为确认变更」
     pub notify_title: String,
     pub notify_all_read_only: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -84,7 +130,7 @@ pub struct TrayState {
     notified_requests: Mutex<std::collections::BTreeSet<String>>,
 }
 
-/// `tray://confirm-mode`：生产资源要切到标准运维，主窗口打开确认（AC1）
+/// `tray://confirm-mode`：任意资源要切到自动运维，主窗口打开确认（AC1）
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "misc.ts")]
@@ -241,11 +287,9 @@ fn refresh(app: &AppHandle, state: &TrayState) -> tauri::Result<()> {
         return Ok(());
     };
     let mut assets = backend.list_assets().unwrap_or_default();
-    assets.sort_by_cached_key(|a| order_key(matches!(a, Asset::Cli(_)), a.production(), a.handle()));
-    let prod_standard = assets
-        .iter()
-        .filter(|a| a.production() && a.agent().mode == Mode::AutoOps)
-        .count();
+    assets.sort_by_cached_key(|a| order_key(matches!(a, Asset::Cli(_)), display_name(a), a.handle()));
+    let labels = menu_labels(&assets);
+    let auto_ops_count = assets.iter().filter(|a| a.agent().mode == Mode::AutoOps).count();
 
     let guard = if state.guard_on.load(Ordering::SeqCst) {
         &copy.guard_on
@@ -269,10 +313,10 @@ fn refresh(app: &AppHandle, state: &TrayState) -> tauri::Result<()> {
             false,
             None::<&str>,
         )?)?;
-        for asset in &assets {
+        for (asset, name) in assets.iter().zip(labels.iter()) {
             let mode = asset.agent().mode;
             let label = columns(
-                asset.handle(),
+                name,
                 if mode == Mode::AutoOps {
                     &copy.standard
                 } else {
@@ -287,7 +331,7 @@ fn refresh(app: &AppHandle, state: &TrayState) -> tauri::Result<()> {
                 &[
                     &CheckMenuItem::with_id(
                         app,
-                        format!("mode:read-only:{id}"),
+                        format!("mode:confirm-changes:{id}"),
                         &copy.read_only,
                         true,
                         mode == Mode::ConfirmChanges,
@@ -295,7 +339,7 @@ fn refresh(app: &AppHandle, state: &TrayState) -> tauri::Result<()> {
                     )?,
                     &CheckMenuItem::with_id(
                         app,
-                        format!("mode:standard:{id}"),
+                        format!("mode:auto-ops:{id}"),
                         &copy.standard,
                         true,
                         mode == Mode::AutoOps,
@@ -303,20 +347,13 @@ fn refresh(app: &AppHandle, state: &TrayState) -> tauri::Result<()> {
                     )?,
                 ],
             )?;
-            if asset.production() && mode == Mode::AutoOps {
-                sub.set_icon(Some(tauri::image::Image::new_owned(
-                    amber_dot_rgba(),
-                    DOT_SIZE,
-                    DOT_SIZE,
-                )))?;
-            }
             menu.append(&sub)?;
         }
         menu.append(&PredefinedMenuItem::separator(app)?)?;
-        let all_label = if prod_standard > 0 {
+        let all_label = if auto_ops_count > 0 {
             columns(
                 &copy.all_read_only,
-                &copy.prod_in_standard.replace("{n}", &prod_standard.to_string()),
+                &copy.prod_in_standard.replace("{n}", &auto_ops_count.to_string()),
             )
         } else {
             copy.all_read_only.clone()
@@ -325,7 +362,7 @@ fn refresh(app: &AppHandle, state: &TrayState) -> tauri::Result<()> {
             app,
             "all-read-only",
             all_label,
-            prod_standard > 0,
+            auto_ops_count > 0,
             None::<&str>,
         )?)?;
         menu.append(&PredefinedMenuItem::separator(app)?)?;
@@ -393,15 +430,16 @@ fn set_mode(app: &AppHandle, asset_id: &str, mode: Mode) {
     let Some(backend) = app.try_state::<Arc<Backend>>() else {
         return;
     };
-    let production = backend
+    let current = backend
         .list_assets()
         .ok()
         .and_then(|assets| assets.into_iter().find(|a| a.id() == asset_id))
-        .map(|a| a.production());
-    match production {
+        .map(|a| a.agent().mode);
+    match current {
         None => {}
-        // AC1：托盘里不做确认，打开主窗口让用户确认
-        Some(true) if mode == Mode::AutoOps => {
+        Some(prev) if prev == mode => {}
+        // AC1：任意资源切到自动运维，托盘里不做确认，打开主窗口让用户确认
+        Some(_) if mode == Mode::AutoOps => {
             show_main(app);
             let _ = app.emit(
                 "tray://confirm-mode",
@@ -464,38 +502,60 @@ mod tests {
     }
 
     #[test]
-    fn servers_come_first_then_production_then_handle() {
+    fn servers_come_first_then_natural_name_order() {
         let mut items = [
-            (true, true, "vercel"),
-            (false, false, "dev-box"),
-            (true, false, "github"),
-            (false, true, "sg-db"),
-            (false, true, "hk-edge"),
-            (true, true, "Cloudflare"),
+            (true, "Vercel", "vercel"),
+            (false, "节点 10", "cloudlink-10"),
+            (true, "GitHub", "github"),
+            (false, "节点 2", "cloudlink-2"),
+            (false, "Alpha", "hk-edge"),
+            (true, "Cloudflare", "cloudflare"),
         ];
-        items.sort_by_cached_key(|(cli, production, handle)| order_key(*cli, *production, handle));
-        let handles: Vec<_> = items.iter().map(|item| item.2).collect();
+        items.sort_by_cached_key(|(cli, name, handle)| order_key(*cli, name, handle));
+        let names: Vec<_> = items.iter().map(|item| item.1).collect();
+        assert_eq!(names, ["Alpha", "节点 2", "节点 10", "Cloudflare", "GitHub", "Vercel"]);
+    }
+
+    #[test]
+    fn menu_labels_prefer_display_name_and_disambiguate_duplicates() {
+        let mut a = crate::testkit::hk_edge();
+        a.name = "腾讯云".into();
+        a.connection.ssh_alias = "cloudlink-1".into();
+        let mut b = crate::testkit::sg_db();
+        b.name = "测试机".into();
+        b.connection.ssh_alias = "cloudlink-2".into();
+        let mut c = crate::testkit::dev_box();
+        c.name = "测试机".into();
+        c.connection.ssh_alias = "cloudlink-3".into();
+        let mut cf1 = crate::testkit::cloudflare();
+        cf1.name = "Cloudflare".into();
+        cf1.account = Some("me@example.com".into());
+        let mut cf2 = crate::testkit::cloudflare();
+        cf2.id = "ast_cf2".into();
+        cf2.handle = "cloudflare-2".into();
+        cf2.name = "Cloudflare".into();
+        cf2.account = Some("acme-corp".into());
+        let assets = vec![
+            Asset::Vps(a),
+            Asset::Vps(b),
+            Asset::Vps(c),
+            Asset::Cli(cf1),
+            Asset::Cli(cf2),
+        ];
         assert_eq!(
-            handles,
-            ["hk-edge", "sg-db", "dev-box", "Cloudflare", "vercel", "github"]
+            menu_labels(&assets),
+            vec![
+                "腾讯云",
+                "测试机 (cloudlink-2)",
+                "测试机 (cloudlink-3)",
+                "Cloudflare (me@example.com)",
+                "Cloudflare (acme-corp)",
+            ]
         );
     }
 
     #[test]
     fn right_column_follows_a_tab() {
-        assert_eq!(columns("hk-edge", "只读巡检"), "hk-edge\t只读巡检");
-    }
-
-    #[test]
-    fn amber_dot_is_round_and_soft_edged() {
-        let rgba = amber_dot_rgba();
-        assert_eq!(rgba.len(), (DOT_SIZE * DOT_SIZE * 4) as usize);
-        let alpha = |x: u32, y: u32| rgba[((y * DOT_SIZE + x) * 4 + 3) as usize];
-        assert_eq!(alpha(8, 8), 255);
-        assert_eq!(alpha(0, 0), 0);
-        assert_eq!(alpha(15, 8), 0);
-        let edge = alpha(4, 8);
-        assert!(edge > 0 && edge < 255, "edge alpha {edge}");
-        assert_eq!(&rgba[..3], &AMBER);
+        assert_eq!(columns("香港边缘节点", "确认变更"), "香港边缘节点\t确认变更");
     }
 }

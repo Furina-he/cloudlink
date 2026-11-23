@@ -299,7 +299,7 @@ pub fn deny_output(decisions: &[Decision]) -> Option<Value> {
             "Changing CloudLink's running checks or stopping its process is forbidden while CloudLink is running."
         }
         "execution-channel" => {
-            "This resource uses CloudLink's execution channel while CloudLink is running, regardless of production or mode. Use the quoted runner and stable asset ID from the resource's Skill details."
+            "This resource uses CloudLink's execution channel while CloudLink is running, in both modes. Use the quoted runner and stable asset ID from the resource's Skill details."
         }
         "runtime-invalid" | "runtime-not-ready" => {
             "CloudLink's running checks are unavailable or could not be verified. Do not treat an unavailable coordinator or policy as an exit; retry after checking CloudLink's status."

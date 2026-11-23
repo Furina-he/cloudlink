@@ -1,16 +1,15 @@
 import { CopyIcon } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import { Controller, FormProvider, useWatch } from "react-hook-form"
+import { FormProvider, useWatch } from "react-hook-form"
 import { useHotkeys } from "react-hotkeys-hook"
 
 import type { EnvId, ServerAsset } from "@/bindings"
 import { Keys } from "@/components/app/Keys"
-import { FoldRow, PrefRow } from "@/components/app/SettingsList"
+import { FoldRow } from "@/components/app/SettingsList"
 import { Button } from "@/components/ui/button"
 import { FieldGroup } from "@/components/ui/field"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
-import { Switch } from "@/components/ui/switch"
 import { toast } from "@/components/ui/toast"
 import { useAgentOptions } from "@/features/agents/agentKeys"
 import { copy } from "@/lib/copy"
@@ -122,7 +121,7 @@ export function NewServerForm() {
           await ipc.setPassword(saved.id, null)
           await useAssetStore.getState().refresh()
         } catch {
-          toast.add({ title: copy.create.keepPassword(saved.connection.sshAlias), type: "warning" })
+          toast.add({ title: copy.create.keepPassword(saved.name), type: "warning" })
         }
       }
       setStage("enabling")
@@ -264,15 +263,6 @@ export function NewServerForm() {
               </div>
               <AuthMethodFields compact />
               <div className="divide-y divide-line-2 overflow-hidden rounded-list border border-line bg-card">
-                <Controller
-                  name="production"
-                  control={form.control}
-                  render={({ field }) => (
-                    <PrefRow label={copy.basic.production} labelFor="asset-production" hint={copy.create.prodHint}>
-                      <Switch id="asset-production" checked={field.value} onCheckedChange={(v) => field.onChange(v)} />
-                    </PrefRow>
-                  )}
-                />
                 <FoldRow label={copy.connection.advanced} hint={copy.create.advancedHint} open={advancedOpen} onOpenChange={setAdvancedOpen} plain>
                   <AdvancedExtras ctx={ctx} />
                 </FoldRow>

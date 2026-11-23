@@ -99,7 +99,6 @@ export function ServerProblems({ asset, onTest, onConvert, onEdit }: { asset: Se
 export function DetailHeader({
   asset,
   name,
-  production,
   titleRef,
   conn,
   onTest,
@@ -108,7 +107,6 @@ export function DetailHeader({
 }: {
   asset: ServerAsset
   name: string
-  production: boolean
   titleRef: RefObject<HTMLHeadingElement | null>
   conn: ConnTest
   onTest: () => void
@@ -178,9 +176,7 @@ export function DetailHeader({
       mark={<ServerIcon className="size-5" aria-hidden />}
       name={name}
       nameControl={<ResourceName asset={asset} />}
-      alias={alias !== name ? alias : undefined}
       handle={alias}
-      production={production}
       titleRef={titleRef}
       actions={actions}
       status={

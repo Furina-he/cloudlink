@@ -178,7 +178,7 @@ test.describe("检测更新", () => {
     await openDialog(page)
     await expect(button(page, "重启以更新")).toBeDisabled()
     await expect(button(page, "稍后")).toBeFocused()
-    await expect(dialog(page).locator("[aria-live=polite]")).toHaveText("正在探测 hk-edge，结束后再安装")
+    await expect(dialog(page).locator("[aria-live=polite]")).toHaveText("正在探测 香港边缘节点，结束后再安装")
     await shot(page, "update-waiting-900")
     await expect(button(page, "重启以更新")).toBeEnabled({ timeout: 10_000 })
     await expect(dialog(page).locator("[aria-live=polite]")).toHaveText("")

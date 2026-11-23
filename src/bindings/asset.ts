@@ -132,8 +132,6 @@ export interface AssetProbeInfo {
 interface AssetBase {
   id: string
   name: string
-  /** F-109：生产环境开关 */
-  production: boolean
   summary: string
   agent: AssetAgent
   guardrails: { rules: GuardrailRule[] }

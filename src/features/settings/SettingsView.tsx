@@ -252,7 +252,7 @@ function DataGroup({ settings }: { settings: Settings }) {
   )
 }
 
-/** 底部折叠的「高级」（PRD 6.8）：探测、Skill 篇幅、数据目录，默认收起 */
+/** 底部折叠的「高级」（PRD 6.8）：探测、采集时间、数据目录，默认收起 */
 function AdvancedGroup({ settings }: { settings: Settings }) {
   const [script, setScript] = useState({ open: false, mounted: false })
   return (
@@ -265,9 +265,6 @@ function AdvancedGroup({ settings }: { settings: Settings }) {
           <Button variant="outline" size="sm" aria-label={copy.probeSheet.viewScript} onClick={() => setScript({ open: true, mounted: true })}>
             {copy.settings.activityLogOpen}
           </Button>
-        </PrefRow>
-        <PrefRow label={copy.settings.bodyLineLimit} labelFor="body-line-limit" hint={copy.settings.bodyLineLimitHint}>
-          <NumberSetting id="body-line-limit" value={settings.bodyLineLimit} min={20} max={500} unit={copy.settings.unitLines} onSave={(v) => update({ bodyLineLimit: v })} />
         </PrefRow>
         <PrefRow label={copy.settings.snapshot} labelFor="write-snapshot" hint={copy.settings.snapshotHint}>
           <Switch id="write-snapshot" checked={settings.writeSnapshotTime} onCheckedChange={(on) => update({ writeSnapshotTime: on })} />

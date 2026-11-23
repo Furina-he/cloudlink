@@ -4,7 +4,7 @@ import { create } from "zustand"
 import type { Asset, CliProvider, IpcError, UpdateStatus } from "@/bindings"
 import { CLI_PROVIDERS } from "@/lib/cliProviders"
 import { ipc, toIpcError } from "@/lib/ipc"
-import { handleOf, useAssetStore } from "./assets"
+import { useAssetStore } from "./assets"
 import { useCliStore, type CliDetection } from "./cli"
 import { NEW_KEY, useConnectionStore, type ConnectionTest } from "./connection"
 import { useProbeStore, type ProbeRun } from "./probe"
@@ -96,14 +96,14 @@ interface BlockerSources {
  * 停在指纹确认的测试不算进行中（后端已经有了结果）；发布只有后端知道，由 installUpdate 返回的 update-busy 说明
  */
 export function findUpdateBlocker({ tests, runs, starting, cli, assets }: BlockerSources): UpdateBlocker | null {
-  const handle = (id: string) => (assets[id] ? handleOf(assets[id]) : undefined)
+  const nameOf = (id: string) => assets[id]?.name
   const test = Object.entries(tests).find(([, t]) => t.status === "running")
   if (test) {
     const [key, { alias }] = test
-    return { task: "connection", name: (key !== NEW_KEY ? handle(key) : undefined) ?? (alias || undefined) }
+    return { task: "connection", name: (key !== NEW_KEY ? nameOf(key) : undefined) ?? (alias || undefined) }
   }
   const probing = Object.values(runs).find((r) => r.status === "running")?.assetId ?? starting[0]
-  if (probing) return { task: "probe", name: handle(probing) }
+  if (probing) return { task: "probe", name: nameOf(probing) }
   const provider = CLI_PROVIDERS.find((p) => cli[p]?.detecting || cli[p]?.scopeLoading)
   if (provider) return { task: "cli", name: provider }
   return null

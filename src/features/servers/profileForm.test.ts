@@ -68,15 +68,13 @@ describe("P8 资料保存的字段边界", () => {
     expect(merged[0]).toMatchObject({ ...probed, role: "对外 API", critical: true })
   })
 
-  it("云平台只改资料，保留最新账号与生产标记", () => {
+  it("云平台只改资料，保留最新账号", () => {
     const initial = structuredClone(assets.find((a) => a.type === "cli") as CliAsset)
     const draft = cliValuesOf(initial), latest = structuredClone(initial)
     draft.name = "新的显示名称"
     latest.account = "changed-account"
-    latest.production = !initial.production
     const input = cliProfileInput(draft, initial, latest)
     expect(input.name).toBe(draft.name)
     expect(input.account).toBe(latest.account)
-    expect(input.production).toBe(latest.production)
   })
 })

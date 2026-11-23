@@ -9,7 +9,6 @@ export type LintId =
   | "export-disabled-field"
   | "missing-reference"
   | "body-too-long"
-  | "prod-standard-no-guardrails"
   | "probe-stale"
   | "suspected-injection"
   | "publish-failed"
@@ -29,6 +28,7 @@ export interface LintItem {
 export interface CompileBudget {
   descriptionChars: number
   descriptionLimit: number
+  descriptionTrimmed: boolean
   bodyLines: number
   bodyLineLimit: number
 }

@@ -21,7 +21,7 @@ import { copy, ipcErrorText } from "@/lib/copy"
 import { dayKey, formatDay, formatRelative } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { toastError } from "@/features/servers/actions"
-import { handleOf, useAssetStore } from "@/stores/assets"
+import { useAssetStore } from "@/stores/assets"
 import { useNotesStore } from "@/stores/notes"
 import { useOperationStore } from "@/stores/operations"
 import { useExecutionStore } from "@/stores/execution"
@@ -32,9 +32,9 @@ type Filter = "all" | "denied" | "allowed"
 
 /** 一条待确认的 Agent 笔记（DESIGN.md Ask Card）。命中密钥的要编辑后才能并入；疑似注入的只能忽略 */
 function AskCard({ note }: { note: AgentNote }) {
-  const alias = useAssetStore((s) => {
+  const name = useAssetStore((s) => {
     const a = s.byId[note.assetId]
-    return a ? handleOf(a) : copy.feed.deletedAsset
+    return a ? a.name : copy.feed.deletedAsset
   })
   const [editing, setEditing] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -46,7 +46,7 @@ function AskCard({ note }: { note: AgentNote }) {
     setBusy(true)
     try {
       await useNotesStore.getState().merge([{ id: note.id, text }])
-      toast.add({ title: copy.feed.merged(alias), type: "success" })
+      toast.add({ title: copy.feed.merged(name), type: "success" })
     } catch (e) {
       toastError(e)
     } finally {
@@ -64,7 +64,7 @@ function AskCard({ note }: { note: AgentNote }) {
     <div role="listitem" className="flex flex-col gap-2 px-3.5 py-3">
       <div className="flex items-center gap-2.5">
         <InvocationAvatar />
-        <span className="flex-1 text-[13px] font-medium">{copy.feed.noteAsk(alias)}</span>
+        <span className="flex-1 text-[13px] font-medium">{copy.feed.noteAsk(name)}</span>
         <time dateTime={note.writtenAt} className="text-xs text-muted-foreground">
           {formatDay(note.writtenAt)}
         </time>
@@ -172,9 +172,9 @@ function Asks() {
 
 /** 一条操作记录（DESIGN.md Feed Row）：头像 → 命令 → 资源 → 结果 → 时间，列宽固定 */
 function FeedRow({ op }: { op: Operation }) {
-  const alias = useAssetStore((s) => {
+  const name = useAssetStore((s) => {
     const a = s.byId[op.assetId]
-    return a ? handleOf(a) : copy.feed.deletedAsset
+    return a ? a.name : copy.feed.deletedAsset
   })
   const denied = op.decision === "denied"
   const status = operationStatus(op)
@@ -189,7 +189,7 @@ function FeedRow({ op }: { op: Operation }) {
         </div>
         <span className="truncate text-[11px] text-muted-foreground">{copy.execution.callerAndChannel(invocationName(op.caller), invocationChannel(op.source))}</span>
       </div>
-      <span className="w-24 shrink-0 truncate text-xs text-muted-foreground">{alias}</span>
+      <span className="w-24 shrink-0 truncate text-xs text-muted-foreground">{name}</span>
       <span className="flex w-36 shrink-0 items-center text-xs">
         {denied ? (
           <Tooltip>
@@ -237,7 +237,7 @@ function OperationLog() {
   const ids = useAssetStore((s) => s.ids)
   const byId = useAssetStore((s) => s.byId)
   const assets = useMemo(() => ids.map((id) => byId[id]).filter(Boolean), [ids, byId])
-  const nameOf = (id: string) => (byId[id] ? handleOf(byId[id]) : copy.feed.deletedAsset)
+  const nameOf = (id: string) => (byId[id] ? byId[id].name : copy.feed.deletedAsset)
   const [filter, setFilter] = useState<Filter>("all")
   const firstLoad = (status === "idle" || status === "loading") && feed.length === 0
   const showSkeleton = useDelayedFlag(firstLoad)
@@ -268,7 +268,7 @@ function OperationLog() {
           <SelectItem value={ALL}>{copy.feed.allAssets}</SelectItem>
           {assets.map((a) => (
             <SelectItem key={a.id} value={a.id}>
-              {handleOf(a)}
+              {a.name}
             </SelectItem>
           ))}
         </SelectContent>

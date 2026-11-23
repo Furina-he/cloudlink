@@ -223,7 +223,6 @@ impl Backend {
                 if !policy.is_object() {
                     continue;
                 }
-                policy["production"] = asset.production().into();
                 policy["envId"] = env.id.as_str().into();
                 policy["protectedPaths"] = json!([
                     env.windows_path_to_native(&self.paths.data_dir.join("runtime.json")),
@@ -233,7 +232,7 @@ impl Backend {
                 policy["runtimePid"] = std::process::id().into();
                 let mut route = json!({
                     "assetId":asset.id(),"envId":env.id,"kind":policy["kind"],"handle":asset.handle(),
-                    "production":asset.production(),"enabled":target_selected && included && env.available && env.interop,
+                    "enabled":target_selected && included && env.available && env.interop,
                     "mode":asset.agent().mode,"policy":policy,
                 });
                 if let Some(distro) = env.distro() {

@@ -41,7 +41,6 @@ pub fn compile(input: &CompileInput) -> CompilePreview {
     let lint = lint::lint(&lint::LintInput {
         assets: input.assets,
         rendered: &rendered,
-        body_line_limit: input.body_line_limit,
         now_secs: input.now_secs,
     });
     CompilePreview {
@@ -50,6 +49,7 @@ pub fn compile(input: &CompileInput) -> CompilePreview {
         budget: CompileBudget {
             description_chars: rendered.description.text.chars().count() as u32,
             description_limit: render::DESCRIPTION_LIMIT as u32,
+            description_trimmed: rendered.description.raw_chars > render::DESCRIPTION_LIMIT,
             body_lines: rendered.body_lines as u32,
             body_line_limit: input.body_line_limit,
         },

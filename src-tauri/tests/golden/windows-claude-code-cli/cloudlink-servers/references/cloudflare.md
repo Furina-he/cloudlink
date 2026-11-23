@@ -1,6 +1,6 @@
-# cloudflare — Cloudflare
+# Cloudflare
 
-> Production | Mode: confirm-changes
+> Mode: confirm-changes
 
 ## Connect
 Use separate CLI arguments after `--`, without the provider binary or a shell wrapper. Never print or export credentials:
@@ -20,6 +20,6 @@ Only operate on these resources; ask the user before touching anything else in t
 
 | Kind | Name | Linked server |
 | --- | --- | --- |
-| DNS zone | `example.com` | `hk-edge` |
+| DNS zone | `example.com` | Hong Kong edge proxy node (`hk-edge`) |
 | DNS zone | `example.org` | - |
 | Worker | `api-gateway` | - |

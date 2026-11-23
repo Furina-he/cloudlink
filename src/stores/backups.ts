@@ -43,7 +43,7 @@ export function onBackedUp(e: BackupEvent) {
   })
 }
 
-/** 托盘里把生产资源切到标准运维：主窗口已经显示，这里弹出同一个确认（AC1） */
+/** 托盘里把任意资源切到自动运维：主窗口已经显示，这里弹出同一个确认（AC1） */
 export function onTrayConfirmMode(assetId: string) {
   const asset = useAssetStore.getState().byId[assetId]
   if (!asset) return

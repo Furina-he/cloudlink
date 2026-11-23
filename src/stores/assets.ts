@@ -280,9 +280,6 @@ export const useAssetStore = create<AssetState>()((set, get) => {
 
 // ---------- selectors（派生数据不进 store） ----------
 
-/** 组内顺序（PRD 6.3）：生产在前，再按名称 */
-const prodFirst = (a: Asset, b: Asset) => Number(b.production) - Number(a.production)
-
 const collator = new Intl.Collator("zh-CN", { numeric: true })
 
 export const isServer = (a: Asset): a is ServerAsset => a.type === "vps"
@@ -309,12 +306,12 @@ export function matchesQuery(asset: Asset, query: string): boolean {
   return fields.some((s) => s.toLowerCase().includes(q))
 }
 
-/** 配电盘的两组回路（PRD 6.4）：组内按生产、预发、开发，再按名称排序；空组由界面决定是否显示 */
+/** 首页资源列表（PRD 6.3）：分成服务器与云平台两组，组内按名称自然排序 */
 export function selectResourceGroups(state: Pick<AssetState, "byId" | "ids">, query: string): { servers: ServerAsset[]; clis: CliAsset[] } {
   const list = state.ids
     .map((id) => state.byId[id])
     .filter((a) => a && matchesQuery(a, query))
-    .sort((a, b) => prodFirst(a, b) || collator.compare(a.name, b.name))
+    .sort((a, b) => collator.compare(a.name, b.name))
   return { servers: list.filter(isServer), clis: list.filter(isCli) }
 }
 
@@ -368,9 +365,6 @@ export function selectCanDistribute(asset: Asset): { ok: true } | { ok: false; r
   if (!connection.verified.ok) return { ok: false, reason: "failed" }
   return { ok: true }
 }
-
-/** 档位闸刀的琥珀色提醒（DESIGN.md Breaker Row）：生产资源处于标准运维 */
-export const isProdWritable = (a: Pick<Asset, "production" | "agent">) => a.production && a.agent.mode === "auto-ops"
 
 /** 资源行和详情的连接状态。分发时一定验证过，所以「分发给了 Agent 却没有验证结果」就是连接改过（F-106 AC4） */
 export type ConnState = "connected" | "unverified" | "failed" | "changed"

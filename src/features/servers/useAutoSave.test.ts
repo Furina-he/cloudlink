@@ -21,7 +21,7 @@ vi.mock("@/components/ui/toast", () => ({ toast: { add: fake.toast } }))
 
 import { DEBOUNCE_MS, useAutoSave } from "./useAutoSave"
 
-type Values = { production: boolean }
+type Values = { enabled: boolean }
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -31,17 +31,17 @@ function deferred<T>() {
 }
 
 function AutoSaveHarness(save: (values: Values) => Promise<void>) {
-  let values: Values = { production: true }
+  let values: Values = { enabled: true }
   const watchers: (() => void)[] = []
   const trigger = vi.fn(async () => true)
-  const control = { _defaultValues: { production: true } }
+  const control = { _defaultValues: { enabled: true } }
   const form = {
     control,
     getValues: () => ({ ...values }),
     trigger,
     watch: (watcher: () => void) => { watchers.push(watcher); return { unsubscribe: vi.fn() } },
   } as unknown as UseFormReturn<Values>
-  const auto = useAutoSave({ form, fields: ["production"], save })
+  const auto = useAutoSave({ form, fields: ["enabled"], save })
   for (const effect of fake.effects) {
     const cleanup = effect()
     if (cleanup) fake.cleanups.push(cleanup)
@@ -49,11 +49,11 @@ function AutoSaveHarness(save: (values: Values) => Promise<void>) {
   return {
     auto,
     trigger,
-    change: (production: boolean, notify = false) => {
-      values = { production }
+    change: (enabled: boolean, notify = false) => {
+      values = { enabled }
       if (notify) watchers.forEach((watcher) => watcher())
     },
-    saved: (production: boolean) => { control._defaultValues = { production } },
+    saved: (enabled: boolean) => { control._defaultValues = { enabled } },
   }
 }
 
@@ -103,7 +103,7 @@ describe("自动保存 flush 等待（P8a／b）", () => {
     page.saved(false)
     a.resolve()
     await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2))
-    expect(save.mock.calls.map(([values]) => values.production)).toEqual([false, true])
+    expect(save.mock.calls.map(([values]) => values.enabled)).toEqual([false, true])
     expect(completed).toBe(false)
 
     page.saved(true)
@@ -142,14 +142,14 @@ describe("自动保存 flush 等待（P8a／b）", () => {
     expect(fake.toast).not.toHaveBeenCalled()
 
     await page.auto.flush()
-    expect(save.mock.calls.map(([values]) => values.production)).toEqual([false, false])
+    expect(save.mock.calls.map(([values]) => values.enabled)).toEqual([false, false])
     expect(fake.error).toBeNull()
     expect(fake.toast).toHaveBeenCalledTimes(1)
   })
 
   it("600ms 防抖不变；输入失焦立即保存并取消原计时", async () => {
     vi.useFakeTimers()
-    const save = vi.fn(async ({ production }: Values) => page.saved(production))
+    const save = vi.fn(async ({ enabled }: Values) => page.saved(enabled))
     const page = AutoSaveHarness(save)
     page.change(false, true)
     await vi.advanceTimersByTimeAsync(DEBOUNCE_MS - 1)

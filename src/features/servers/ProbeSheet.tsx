@@ -46,7 +46,7 @@ function Steps({ run }: { run: ProbeRun }) {
 
 /** 失败：分类文案和建议（8.3）；要在终端执行的命令用 CodeBlock 配复制按钮；可以直接测试连接 */
 function Failure({ asset, error }: { asset: ServerAsset; error: ProbeError | undefined }) {
-  const e = error ?? { id: "unknown" as const, params: { alias: asset.connection.sshAlias } }
+  const e = error ?? { id: "unknown" as const, params: { alias: asset.name } }
   const commands = copy.sshCommands[e.id]?.(e.params)
   return (
     <div className="flex flex-col gap-3">
@@ -86,7 +86,7 @@ function IdleNote({ asset }: { asset: ServerAsset }) {
   const { lastSuccessAt, status } = asset.probe
   return (
     <p className="text-sm text-muted-foreground">
-      {lastSuccessAt ? copy.probeSheet.lastProbed(formatRelative(lastSuccessAt, now), copy.probeState[status]) : copy.probeSheet.idle(asset.connection.sshAlias)}
+      {lastSuccessAt ? copy.probeSheet.lastProbed(formatRelative(lastSuccessAt, now), copy.probeState[status]) : copy.probeSheet.idle(asset.name)}
     </p>
   )
 }
@@ -118,7 +118,7 @@ function Result({ run, selected, onSelect }: { run: ProbeRun; selected: Set<stri
 function ProbeBody({ asset, run, starting, onViewScript }: { asset: ServerAsset; run: ProbeRun | undefined; starting: boolean; onViewScript: () => void }) {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState<"undo" | "merge" | null>(null)
-  const alias = asset.connection.sshAlias
+  const name = asset.name
   // 刚点了「重新探测」、新的 runId 还没回来：按运行中显示，不再显示上一次的结果
   const state = starting && run?.status !== "running" ? "running" : (run?.status ?? "idle")
   const shown = state === "running" && run?.status !== "running" ? undefined : run
@@ -131,7 +131,7 @@ function ProbeBody({ asset, run, starting, onViewScript }: { asset: ServerAsset;
     try {
       if (kind === "undo") {
         await useProbeStore.getState().undo(shown.runId)
-        toast.add({ title: copy.probeToast.undone(alias) })
+        toast.add({ title: copy.probeToast.undone(name) })
       } else {
         const ids = [...selected]
         await useProbeStore.getState().confirmItems(shown.runId, ids)
@@ -157,7 +157,7 @@ function ProbeBody({ asset, run, starting, onViewScript }: { asset: ServerAsset;
       <SheetHeader className="pr-12">
         <SheetTitle className="flex min-w-0 items-center gap-2">
           {copy.probeSheet.stateTitle[state]}
-          <span className="truncate font-mono">{alias}</span>
+          <span className="truncate">{name}</span>
         </SheetTitle>
         <SheetDescription className="tabular-nums">
           {shown?.finishedAt && state !== "running"

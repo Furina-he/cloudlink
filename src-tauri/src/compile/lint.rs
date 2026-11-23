@@ -4,9 +4,9 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use super::render::{DESCRIPTION_LIMIT, Rendered};
+use super::render::Rendered;
 use super::secrets::Scanner;
-use crate::model::asset::{Asset, FieldSource, Mode};
+use crate::model::asset::{Asset, FieldSource};
 use crate::model::compile::{LintId, LintItem, LintLevel};
 use crate::params;
 use crate::time;
@@ -49,17 +49,40 @@ fn line_of(content: &str, needle: &str) -> Option<u32> {
     content.lines().position(|l| l.contains(needle)).map(|i| i as u32 + 1)
 }
 
-/// 总览表里属于某项资源的那一行（`| \`hk-edge\` |` 或 `| cloudflare |`）
-fn overview_owner<'a>(line: &str, assets: &[&'a Asset]) -> Option<&'a Asset> {
+/// 总览表里属于某项资源的那一行（末尾引用 `references/<name>.md`）
+fn overview_owner<'a>(
+    line: &str,
+    assets: &[&'a Asset],
+    detail_paths: &std::collections::BTreeMap<String, String>,
+) -> Option<&'a Asset> {
+    if !line.starts_with("| ") {
+        return None;
+    }
     assets.iter().copied().find(|a| {
-        line.starts_with(&format!("| `{}` |", a.handle())) || line.starts_with(&format!("| {} |", a.handle()))
+        detail_paths
+            .get(a.id())
+            .is_some_and(|path| line.contains(&format!("`{path}`")))
     })
+}
+
+/// 全局内容（SKILL.md）某一行所属编辑分组，便于预览一键直达「资源关系」或「运维约定」。
+fn skill_section_at(content: &str, line_idx: usize) -> &'static str {
+    let mut section = "conventions";
+    for line in content.lines().take(line_idx + 1) {
+        if let Some(heading) = line.strip_prefix("## ") {
+            if heading.starts_with("How they fit together") {
+                section = "relations";
+            } else {
+                section = "conventions";
+            }
+        }
+    }
+    section
 }
 
 pub struct LintInput<'a> {
     pub assets: &'a [&'a Asset],
     pub rendered: &'a Rendered,
-    pub body_line_limit: u32,
     pub now_secs: i64,
 }
 
@@ -84,13 +107,15 @@ pub fn lint(input: &LintInput) -> Vec<LintItem> {
                 continue;
             };
             let owner = if f.path == "SKILL.md" {
-                overview_owner(line, input.assets)
+                overview_owner(line, input.assets, &r.detail_paths)
             } else {
                 owner_of_file(&f.path).copied()
             };
             let mut p = params! {"line" => n + 1, "rule" => rule};
             if let Some(a) = owner {
                 p.insert("alias".into(), a.handle().into());
+            } else if f.path == "SKILL.md" {
+                p.insert("section".into(), skill_section_at(&f.content, n).into());
             }
             out.push(at(
                 item(LintId::SecretDetected, LintLevel::Error, owner.map(|a| a.id()), p),
@@ -110,18 +135,6 @@ pub fn lint(input: &LintInput) -> Vec<LintItem> {
             .unwrap_or("");
         let alias = a.handle();
 
-        if a.production() && a.agent().mode == Mode::AutoOps && a.guardrails().rules.is_empty() {
-            out.push(at(
-                item(
-                    LintId::ProdStandardNoGuardrails,
-                    LintLevel::Warning,
-                    Some(a.id()),
-                    params! {"alias" => alias},
-                ),
-                path,
-                None,
-            ));
-        }
         if looks_like_injection(a.notes()) {
             let line = a.notes().lines().find(|l| looks_like_injection(l)).unwrap_or("");
             out.push(at(
@@ -129,7 +142,7 @@ pub fn lint(input: &LintInput) -> Vec<LintItem> {
                     LintId::SuspectedInjection,
                     LintLevel::Warning,
                     Some(a.id()),
-                    params! {"alias" => alias, "value" => line.chars().take(128).collect::<String>()},
+                    params! {"alias" => alias, "source" => "notes", "value" => line.chars().take(128).collect::<String>()},
                 ),
                 path,
                 line_of(content, line.trim()),
@@ -201,7 +214,7 @@ pub fn lint(input: &LintInput) -> Vec<LintItem> {
                     LintId::SuspectedInjection,
                     LintLevel::Warning,
                     Some(a.id()),
-                    params! {"alias" => alias, "value" => v.chars().take(128).collect::<String>()},
+                    params! {"alias" => alias, "source" => "probe", "value" => v.chars().take(128).collect::<String>()},
                 ),
                 path,
                 line_of(content, v),
@@ -239,30 +252,6 @@ pub fn lint(input: &LintInput) -> Vec<LintItem> {
                 line_of(skill, m.as_str()),
             ));
         }
-    }
-    if r.description.raw_chars > DESCRIPTION_LIMIT {
-        out.push(at(
-            item(
-                LintId::DescriptionTooLong,
-                LintLevel::Warning,
-                None,
-                params! {"chars" => r.description.raw_chars},
-            ),
-            "SKILL.md",
-            Some(3),
-        ));
-    }
-    if r.body_lines > input.body_line_limit as usize {
-        out.push(at(
-            item(
-                LintId::BodyTooLong,
-                LintLevel::Warning,
-                None,
-                params! {"lines" => r.body_lines, "limit" => input.body_line_limit},
-            ),
-            "SKILL.md",
-            None,
-        ));
     }
     out
 }

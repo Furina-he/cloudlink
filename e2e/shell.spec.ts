@@ -90,37 +90,36 @@ test.describe("应用外壳", () => {
     await expect(dialog.getByRole("option", { name: /^测试 .+ 的连接$/ })).toHaveCount(0)
     await expect(dialog.getByRole("option", { name: "添加 GitHub" })).toHaveCount(1)
     await expect(dialog.getByRole("option", { name: /云平台 CLI/ })).toHaveCount(0)
-    await expect(dialog.getByRole("option", { name: "生产资源全部改为确认变更" })).toHaveCount(1)
+    await expect(dialog.getByRole("option", { name: "全部改为确认变更" })).toHaveCount(1)
     await page.keyboard.press("Escape")
     await expect(dialog).toBeHidden()
 
     await openServer(page, "hk-edge")
     await page.keyboard.press("Control+k")
     await page.keyboard.type("hk-edge")
-    await expect(dialog.getByRole("option", { name: "测试 hk-edge 的连接" })).toBeVisible()
-    await expect(dialog.getByRole("option", { name: "探测 hk-edge" })).toBeVisible()
-    await expect(dialog.getByRole("option", { name: /^把 hk-edge 切换为/ })).toBeVisible()
+    await expect(dialog.getByRole("option", { name: "测试 香港边缘节点 的连接" })).toBeVisible()
+    await expect(dialog.getByRole("option", { name: "探测 香港边缘节点" })).toBeVisible()
+    await expect(dialog.getByRole("option", { name: /^把 香港边缘节点 切换为/ })).toBeVisible()
   })
 
   test("Ctrl+\\ 打开和关闭预览；设置页会先切到 Agent 页", async ({ page }) => {
     await ready(page)
     await page.keyboard.press("Control+Backslash")
-    const sheet = page.getByRole("dialog", { name: "预览 Skill" })
-    await expect(sheet).toBeVisible()
-    // 文件用下拉切换，不再是一排标签
-    const files = sheet.getByRole("combobox", { name: "文件" })
-    await expect(files).toContainText("SKILL.md")
-    await expect(sheet.getByRole("tab")).toHaveCount(0)
-    await files.click()
-    await page.getByRole("option", { name: "health-check.md" }).click()
-    await expect(files).toContainText("health-check.md")
+    const dialog = page.getByRole("dialog", { name: "预览 Skill" })
+    await expect(dialog).toBeVisible()
+    // 宽窗口下左侧文件树切换文件，不再是一排标签
+    const tree = dialog.getByRole("navigation", { name: "文件" })
+    await expect(tree.getByRole("button", { name: /^SKILL\.md/ })).toHaveAttribute("aria-current", "page")
+    await expect(dialog.getByRole("tab")).toHaveCount(0)
+    await tree.getByRole("button", { name: /^health-check\.md/ }).click()
+    await expect(tree.getByRole("button", { name: /^health-check\.md/ })).toHaveAttribute("aria-current", "page")
     await page.keyboard.press("Control+Backslash")
-    await expect(sheet).toBeHidden()
+    await expect(dialog).toBeHidden()
 
     await page.keyboard.press("Control+4")
     await page.keyboard.press("Control+Backslash")
-    await expect(sheet).toBeVisible()
-    // Sheet 是模态的，背后的页面不在无障碍树里，用 DOM 确认已切到 Agent 页
+    await expect(dialog).toBeVisible()
+    // Dialog 是模态的，背后的页面不在无障碍树里，用 DOM 确认已切到 Agent 页
     await expect(page.locator("h1#view-title")).toHaveText("Agent")
   })
 
@@ -159,7 +158,8 @@ test.describe("应用外壳", () => {
       const dialogScale = await dialog.evaluate((el) => getComputedStyle(el).getPropertyValue("--tw-enter-scale").trim())
       await page.keyboard.press("Escape")
       await expect(dialog).toHaveCount(0)
-      await page.keyboard.press("Control+Backslash")
+      await page.keyboard.press("Control+4")
+      await page.getByRole("button", { name: "查看活动日志" }).click()
       const sheet = page.locator("[data-slot=sheet-content]")
       await expect(sheet).toBeVisible()
       // 开着的 Sheet 本来就没有位移，要看的是进场时的样式：关掉过渡、加上进场标记再读，读到的就是目标值
@@ -218,7 +218,7 @@ test.describe("键盘焦点（P6 无障碍复查）", () => {
     await page.keyboard.press("Tab")
     await page.keyboard.press("Tab")
     await page.keyboard.press("Tab")
-    await expect(page.getByRole("switch", { name: "生产环境" })).toBeFocused()
+    await expect(page.getByRole("button", { name: "确认变更", exact: true })).toBeFocused()
   })
 
   test("护栏规则二级页：标题接收焦点，Esc 返回 Agent 页", async ({ page }) => {

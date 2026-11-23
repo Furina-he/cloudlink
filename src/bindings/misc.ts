@@ -120,7 +120,7 @@ export interface TrayCopy {
   notifyExecution?: string
 }
 
-/** tray://confirm-mode：托盘里把生产资源切到标准运维，主窗口弹出确认（F-407 AC1） */
+/** tray://confirm-mode：托盘里把资源切到自动运维，主窗口弹出确认（F-407 AC1） */
 export interface TrayConfirmMode {
   assetId: string
 }

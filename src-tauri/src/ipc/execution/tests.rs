@@ -4,11 +4,7 @@ use crate::model::asset::Mode;
 
 fn ready() -> Fixture {
     let fixture = Fixture::new();
-    let mut asset = fixture.seed_ready_server();
-    if let crate::model::asset::Asset::Vps(server) = &mut asset {
-        server.production = true;
-    }
-    fixture.backend.database().unwrap().upsert_asset(&asset).unwrap();
+    let asset = fixture.seed_ready_server();
     fixture.backend.set_mode(asset.id(), Mode::AutoOps).unwrap();
     fixture
 }

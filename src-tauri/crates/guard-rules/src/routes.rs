@@ -101,7 +101,6 @@ pub fn load(root: &Path) -> io::Result<Value> {
         let env = text(route, "envId", 256)?;
         if !identities.insert((id, env))
             || route["enabled"].as_bool().is_none()
-            || route["production"].as_bool().is_none()
             || !matches!(route["kind"].as_str(), Some("vps" | "cli"))
             || !matches!(route["mode"].as_str(), Some("confirm-changes" | "auto-ops"))
         {

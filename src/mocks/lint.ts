@@ -19,6 +19,17 @@ const lineOf = (content: string, test: (line: string) => boolean) => {
   return i < 0 ? undefined : i + 1
 }
 
+function skillSectionAt(content: string, lineIdx: number): "relations" | "conventions" {
+  let section: "relations" | "conventions" = "conventions"
+  const lines = content.split("\n")
+  for (let i = 0; i <= lineIdx && i < lines.length; i++) {
+    if (lines[i].startsWith("## ")) {
+      section = lines[i].startsWith("## How they fit together") ? "relations" : "conventions"
+    }
+  }
+  return section
+}
+
 /** 编译一份总 Skill：某个运行环境里某个 Agent 的那一份，assets 是分发给它的服务器 */
 export function compileSkill(envId: EnvId, agentKey: string, assets: Asset[], config: SkillConfig, settings: Settings): CompilePreview {
   const r = renderSkill(envId, assets, config, settings)
@@ -32,8 +43,16 @@ export function compileSkill(envId: EnvId, agentKey: string, assets: Asset[], co
       const rule = secretRule(line)
       if (rule) lint.push({ id: "secret-detected", level: "error", assetId: a.id, params: { alias, line: i + 1, rule }, file: path, line: i + 1 })
     })
-    if (a.production && a.agent.mode === "auto-ops" && a.guardrails.rules.length === 0) {
-      lint.push({ id: "prod-standard-no-guardrails", level: "warning", assetId: a.id, params: { alias }, file: path })
+    if (INJECTION.test(a.notes)) {
+      const noteLine = a.notes.split(/\r?\n/).find((l) => INJECTION.test(l)) ?? ""
+      lint.push({
+        id: "suspected-injection",
+        level: "warning",
+        assetId: a.id,
+        params: { alias, source: "notes", value: noteLine.slice(0, 128) },
+        file: path,
+        line: lineOf(content, (l) => l.includes(noteLine.trim())),
+      })
     }
     if (a.type === "cli") continue
     const host = a.connection.host ?? a.connection.resolved?.hostname
@@ -42,7 +61,7 @@ export function compileSkill(envId: EnvId, agentKey: string, assets: Asset[], co
       if (line) lint.push({ id: "export-disabled-field", level: "error", assetId: a.id, params: { alias, field: "HostName" }, file: path, line })
     }
     for (const s of a.services.filter((x) => x.source === "probe" && INJECTION.test(x.name))) {
-      lint.push({ id: "suspected-injection", level: "warning", assetId: a.id, params: { alias, value: s.name }, file: path, line: lineOf(content, (l) => l.includes(s.name)) })
+      lint.push({ id: "suspected-injection", level: "warning", assetId: a.id, params: { alias, source: "probe", value: s.name }, file: path, line: lineOf(content, (l) => l.includes(s.name)) })
     }
     if (a.probe.lastSuccessAt) {
       const days = Math.floor((Date.now() - new Date(a.probe.lastSuccessAt).getTime()) / (24 * 3600 * 1000))
@@ -52,14 +71,16 @@ export function compileSkill(envId: EnvId, agentKey: string, assets: Asset[], co
   // 全局内容（关系、约定）里的密钥：没有服务器 id
   skill.split("\n").forEach((line, i) => {
     const rule = secretRule(line)
-    if (rule) lint.push({ id: "secret-detected", level: "error", params: { line: i + 1, rule }, file: "SKILL.md", line: i + 1 })
+    if (rule) {
+      lint.push({
+        id: "secret-detected",
+        level: "error",
+        params: { line: i + 1, rule, section: skillSectionAt(skill, i) },
+        file: "SKILL.md",
+        line: i + 1,
+      })
+    }
   })
-  if (r.rawDescriptionChars > 1024) {
-    lint.push({ id: "description-too-long", level: "warning", params: { chars: r.rawDescriptionChars }, file: "SKILL.md", line: 3 })
-  }
-  if (r.bodyLines > settings.bodyLineLimit) {
-    lint.push({ id: "body-too-long", level: "warning", params: { lines: r.bodyLines, limit: settings.bodyLineLimit }, file: "SKILL.md" })
-  }
   return {
     envId,
     agentKey,
@@ -67,6 +88,7 @@ export function compileSkill(envId: EnvId, agentKey: string, assets: Asset[], co
     budget: {
       descriptionChars: r.descriptionChars,
       descriptionLimit: 1024,
+      descriptionTrimmed: r.rawDescriptionChars > 1024,
       bodyLines: r.bodyLines,
       bodyLineLimit: settings.bodyLineLimit,
     },

@@ -17,7 +17,7 @@ import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 import { copy } from "@/lib/copy"
-import { handleOf, useAssetStore } from "@/stores/assets"
+import { useAssetStore } from "@/stores/assets"
 import { useUIStore } from "@/stores/ui"
 import { serverActions, toastError, usePendingAction } from "./actions"
 
@@ -30,7 +30,7 @@ function DeleteBody({ assetId, close }: { assetId: string; close: () => void }) 
   const [removeKey, setRemoveKey] = useState(true)
   const [busy, setBusy] = useState(false)
   if (!asset) return null
-  const alias = handleOf(asset)
+  const name = asset.name
   const server = asset.type === "vps" ? asset : undefined
   const generated = server?.connection.auth?.generatedByCloudLink
   const keyPaths = Object.values(server?.connection.auth?.identityFile ?? {}).join("、")
@@ -40,7 +40,7 @@ function DeleteBody({ assetId, close }: { assetId: string; close: () => void }) 
     try {
       await useAssetStore.getState().remove(asset.id, !!generated && removeKey)
       if (useUIStore.getState().selectedAssetId === asset.id) useUIStore.getState().selectAsset(null, { force: true })
-      toast.add({ title: server ? copy.deleteDialog.deleted(alias) : copy.cli.removed(asset.name) })
+      toast.add({ title: server ? copy.deleteDialog.deleted(name) : copy.cli.removed(name) })
       close()
     } catch (e) {
       toastError(e)
@@ -55,7 +55,7 @@ function DeleteBody({ assetId, close }: { assetId: string; close: () => void }) 
         <AlertDialogMedia>
           <Trash2Icon className="text-destructive" />
         </AlertDialogMedia>
-        <AlertDialogTitle>{server ? copy.deleteDialog.title(alias) : copy.cli.deleteTitle(asset.name)}</AlertDialogTitle>
+        <AlertDialogTitle>{server ? copy.deleteDialog.title(name) : copy.cli.deleteTitle(name)}</AlertDialogTitle>
         <AlertDialogDescription>
           {server ? copy.deleteDialog.description : copy.cli.deleteDescription}
           {server && (server.connection.source === "managed" ? copy.deleteDialog.managed : copy.deleteDialog.imported)}
@@ -92,8 +92,7 @@ export function ServerActionDialogs() {
   if (pending && pending !== last) setLast(pending)
   const shown = pending ?? last
   const close = () => usePendingAction.getState().set(null)
-  const alias = asset ? handleOf(asset) : ""
-  const markingProduction = shown?.kind === "production"
+  const name = asset?.name ?? ""
 
   return (
     <AlertDialog open={!!pending && !!asset} onOpenChange={(open) => !open && close()}>
@@ -104,23 +103,20 @@ export function ServerActionDialogs() {
           <>
             <AlertDialogHeader>
               <AlertDialogMedia>
-                <WrenchIcon className="text-warning" />
+                <WrenchIcon className="text-foreground" />
               </AlertDialogMedia>
-              <AlertDialogTitle className="text-balance">{markingProduction ? copy.modeConfirm.productionTitle(asset?.name ?? alias) : copy.modeConfirm.title(alias)}</AlertDialogTitle>
-              <AlertDialogDescription>{markingProduction ? copy.modeConfirm.productionDescription : copy.modeConfirm.description}</AlertDialogDescription>
+              <AlertDialogTitle className="text-balance">{copy.modeConfirm.title(name)}</AlertDialogTitle>
+              <AlertDialogDescription>{copy.modeConfirm.description}</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>{copy.common.cancel}</AlertDialogCancel>
               <AlertDialogAction
                 onClick={() => {
                   close()
-                  if (asset) {
-                    if (markingProduction) void serverActions.setProduction(asset, true, true)
-                    else void serverActions.setMode(asset, "auto-ops", true)
-                  }
+                  if (asset) void serverActions.setMode(asset, "auto-ops", true)
                 }}
               >
-                {markingProduction ? copy.modeConfirm.productionConfirm : copy.modeConfirm.confirm}
+                {copy.modeConfirm.confirm}
               </AlertDialogAction>
             </AlertDialogFooter>
           </>

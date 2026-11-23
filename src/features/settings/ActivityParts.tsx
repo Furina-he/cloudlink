@@ -24,7 +24,9 @@ import { copy } from "@/lib/copy"
 import { formatDuration, formatTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { OWN_ACTIVITY_KINDS, useActivityStore } from "@/stores/activity"
-import { handleOf, useAssetStore } from "@/stores/assets"
+import { useAssetStore } from "@/stores/assets"
+
+const collator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" })
 
 /** 图标按类型区分（PRD 6.8） */
 const KIND_ICON: Record<ActivityKind, LucideIcon> = {
@@ -51,7 +53,9 @@ const ROW = "flex min-h-10 w-full items-center gap-2.5 px-3.5 py-2 text-left tex
  */
 export function ActivityLine({ item }: { item: ActivityItem }) {
   const Icon = KIND_ICON[item.kind]
-  const text = copy.activity[item.messageId](item.params)
+  const assetName = useAssetStore((s) => (item.assetId ? s.byId[item.assetId]?.name : undefined))
+  const params = assetName && item.params?.alias ? { ...item.params, alias: assetName } : item.params
+  const text = copy.activity[item.messageId](params)
   const time = formatTime(item.at)
   const body = (
     <>
@@ -91,7 +95,7 @@ const ALL = "__all__"
 export function ActivityFilters() {
   const query = useActivityStore((s) => s.query)
   const byId = useAssetStore((s) => s.byId)
-  const assets = useMemo(() => Object.values(byId).sort((a, b) => handleOf(a).localeCompare(handleOf(b))), [byId])
+  const assets = useMemo(() => Object.values(byId).sort((a, b) => collator.compare(a.name, b.name)), [byId])
   const load = useActivityStore.getState().load
   const kind = query.kinds?.length === 1 ? query.kinds[0] : ALL
   const assetId = query.assetId ?? ALL
@@ -113,13 +117,13 @@ export function ActivityFilters() {
       </Select>
       <Select value={assetId} onValueChange={(v) => void load({ ...query, assetId: v === ALL ? undefined : (v as string) })}>
         <SelectTrigger size="sm" aria-label={copy.activityView.assetFilter} className="h-6.5 w-32">
-          <SelectValue>{(v: string) => (v === ALL ? copy.activityView.allAssets : byId[v] ? handleOf(byId[v]) : copy.feed.deletedAsset)}</SelectValue>
+          <SelectValue>{(v: string) => (v === ALL ? copy.activityView.allAssets : byId[v] ? byId[v].name : copy.feed.deletedAsset)}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value={ALL}>{copy.activityView.allAssets}</SelectItem>
           {assets.map((a) => (
             <SelectItem key={a.id} value={a.id}>
-              {handleOf(a)}
+              {a.name}
             </SelectItem>
           ))}
         </SelectContent>

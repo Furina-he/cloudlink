@@ -58,11 +58,17 @@ function guarded(opts: NavOptions | undefined, action: () => void) {
   run()
 }
 
-/** 预览 Sheet 的定位请求：每次 seq 加一，跳到指定文件，lint 为 true 时聚焦检查结果 */
+/** 预览 Dialog 的定位请求：每次 seq 加一，跳到指定文件，lint 为 true 时聚焦检查结果 */
 export interface PreviewFocus {
   seq: number
   file?: string
   lint?: boolean
+}
+
+/** 从 Skill 预览告警一键直达资源编辑弹窗的一次性意图（P10d） */
+export interface PendingEdit {
+  assetId: string
+  kind: "profile" | "connection"
 }
 
 interface UIState {
@@ -80,6 +86,8 @@ interface UIState {
   /** 预览哪一份总 Skill（运行环境 × Agent，compileKey）；null 或已不存在时取第一份 */
   previewKey: string | null
   previewFocus: PreviewFocus
+  /** 一次性自动打开资源编辑弹窗的意图，由详情页消费后立即清空 */
+  pendingEdit: PendingEdit | null
   /** 探测 Sheet 打开时显示哪台服务器 */
   probeSheetAssetId: string | null
   commandOpen: boolean
@@ -105,6 +113,14 @@ interface UIState {
   openPreview: (focus?: Omit<PreviewFocus, "seq">) => void
   setPreviewOpen: (open: boolean) => void
   setPreviewKey: (key: string) => void
+  /** 关闭预览并直达某资源的编辑资料／连接弹窗（P10d） */
+  openAssetEditor: (assetId: string, kind: PendingEdit["kind"]) => void
+  /** 关闭预览并查看某资源详情（P10d） */
+  openAssetDetail: (assetId: string) => void
+  /** 关闭预览并直达 Agent 页对应的全局二级页（P10d） */
+  openAgentsSubpage: (page: AgentsPage) => void
+  /** 详情页消费一次性编辑意图 */
+  consumePendingEdit: (assetId: string) => PendingEdit["kind"] | null
   /** 打开某台服务器的探测 Sheet（「探测」按钮、Toast 的「查看」） */
   openProbeSheet: (assetId: string) => void
   closeProbeSheet: () => void
@@ -129,6 +145,7 @@ export const useUIStore = create<UIState>()((set, get) => ({
       previewOpen: false,
       previewKey: null,
       previewFocus: { seq: 0 },
+      pendingEdit: null,
       probeSheetAssetId: null,
       commandOpen: false,
       navPosition: readNav(),
@@ -143,7 +160,7 @@ export const useUIStore = create<UIState>()((set, get) => ({
           opts?.then?.()
           return
         }
-        guarded(opts, () => set((s) => ({ view, viewSwitches: s.viewSwitches + 1, previewOpen: false, agentsPage: "main" })))
+        guarded(opts, () => set((s) => ({ view, viewSwitches: s.viewSwitches + 1, previewOpen: false, pendingEdit: null, agentsPage: "main" })))
       },
       goToView: (view) => {
         if (get().view === view && view === "servers") get().closeInspector()
@@ -154,12 +171,12 @@ export const useUIStore = create<UIState>()((set, get) => ({
         const s = get()
         if (s.selectedAssetId === selectedAssetId && !s.creating) return
         // 切到另一项资源时回到默认 Tab；云平台和服务器的 Tab 内容不同，停在「动态」没有意义
-        guarded(opts, () => set({ selectedAssetId, creating: null, createPrefill: null }))
+        guarded(opts, () => set({ selectedAssetId, creating: null, createPrefill: null, pendingEdit: null }))
       },
       closeInspector: (opts) => {
         const s = get()
         if (!s.selectedAssetId && !s.creating) return
-        guarded(opts, () => set({ selectedAssetId: null, creating: null, createPrefill: null, returnFocusId: s.selectedAssetId }))
+        guarded(opts, () => set({ selectedAssetId: null, creating: null, createPrefill: null, pendingEdit: null, returnFocusId: s.selectedAssetId }))
       },
       clearReturnFocus: () => set({ returnFocusId: null }),
       startCreate: (kind = "pick", opts) =>
@@ -177,6 +194,57 @@ export const useUIStore = create<UIState>()((set, get) => ({
         set((s) => ({ previewOpen: true, probeSheetAssetId: null, previewFocus: { ...focus, seq: s.previewFocus.seq + 1 } })),
       setPreviewOpen: (previewOpen) => set(previewOpen ? { previewOpen, probeSheetAssetId: null } : { previewOpen }),
       setPreviewKey: (previewKey) => set({ previewKey }),
+      openAssetEditor: (assetId, kind) => {
+        const s = get()
+        const stay = s.view === "servers" && s.selectedAssetId === assetId && !s.creating
+        guarded({ force: stay }, () =>
+          set((st) => ({
+            view: "servers",
+            viewSwitches: st.view === "servers" ? st.viewSwitches : st.viewSwitches + 1,
+            selectedAssetId: assetId,
+            creating: null,
+            createPrefill: null,
+            previewOpen: false,
+            probeSheetAssetId: null,
+            pendingEdit: { assetId, kind },
+          }))
+        )
+      },
+      openAssetDetail: (assetId) => {
+        const s = get()
+        const stay = s.view === "servers" && s.selectedAssetId === assetId && !s.creating
+        guarded({ force: stay }, () =>
+          set((st) => ({
+            view: "servers",
+            viewSwitches: st.view === "servers" ? st.viewSwitches : st.viewSwitches + 1,
+            selectedAssetId: assetId,
+            creating: null,
+            createPrefill: null,
+            previewOpen: false,
+            probeSheetAssetId: null,
+            pendingEdit: null,
+          }))
+        )
+      },
+      openAgentsSubpage: (page) => {
+        const s = get()
+        const stay = s.view === "agents"
+        guarded({ force: stay }, () =>
+          set((st) => ({
+            view: "agents",
+            viewSwitches: st.view === "agents" ? st.viewSwitches : st.viewSwitches + 1,
+            agentsPage: page,
+            previewOpen: false,
+            probeSheetAssetId: null,
+          }))
+        )
+      },
+      consumePendingEdit: (assetId) => {
+        const p = get().pendingEdit
+        if (!p || p.assetId !== assetId) return null
+        set({ pendingEdit: null })
+        return p.kind
+      },
       openProbeSheet: (assetId) => {
         const s = get()
         // 就在这台服务器的详情里时不离开，不用确认；预览和探测共用右侧，同时只开一个

@@ -109,7 +109,7 @@ describe("更新状态缓存（F-406）", () => {
 })
 
 describe("安装要等的任务（F-406 AC4）", () => {
-  const hk = { id: "ast_hk", type: "vps", connection: { sshAlias: "hk-edge" } } as unknown as Asset
+  const hk = { id: "ast_hk", type: "vps", name: "香港边缘节点", connection: { sshAlias: "hk-edge" } } as unknown as Asset
   const none = { tests: {}, runs: {}, starting: [], cli: {}, assets: { [hk.id]: hk } }
   const test = (status: ConnectionTest["status"], alias = "203.0.113.10"): ConnectionTest => ({ testId: "t", status, signature: "", alias })
   const run = (status: ProbeRun["status"]): ProbeRun => ({
@@ -129,8 +129,8 @@ describe("安装要等的任务（F-406 AC4）", () => {
     expect(findUpdateBlocker({ ...none, tests: { [hk.id]: test("ok") }, runs: { r: run("ok") } })).toBeNull()
   })
 
-  it("测试连接用资源标识，新建表单用别名；停在指纹确认时不算进行中", () => {
-    expect(findUpdateBlocker({ ...none, tests: { [hk.id]: test("running") } })).toEqual({ task: "connection", name: "hk-edge" })
+  it("测试连接用资源名称，新建表单用别名；停在指纹确认时不算进行中", () => {
+    expect(findUpdateBlocker({ ...none, tests: { [hk.id]: test("running") } })).toEqual({ task: "connection", name: "香港边缘节点" })
     expect(findUpdateBlocker({ ...none, tests: { new: test("running", "new-box") } })).toEqual({ task: "connection", name: "new-box" })
     expect(findUpdateBlocker({ ...none, tests: { new: test("running", "") } })).toEqual({ task: "connection", name: undefined })
     expect(findUpdateBlocker({ ...none, tests: { [hk.id]: test("host-key") } })).toBeNull()
@@ -138,9 +138,9 @@ describe("安装要等的任务（F-406 AC4）", () => {
 
   it("按测试连接、探测、CLI 检测的顺序取第一项，与后端一致", () => {
     const probing = { ...none, runs: { r: run("running") }, cli: { vercel: { detecting: true } as never } }
-    expect(findUpdateBlocker(probing)).toEqual({ task: "probe", name: "hk-edge" })
+    expect(findUpdateBlocker(probing)).toEqual({ task: "probe", name: "香港边缘节点" })
     expect(findUpdateBlocker({ ...probing, tests: { [hk.id]: test("running") } })?.task).toBe("connection")
-    expect(findUpdateBlocker({ ...none, starting: [hk.id] })).toEqual({ task: "probe", name: "hk-edge" })
+    expect(findUpdateBlocker({ ...none, starting: [hk.id] })).toEqual({ task: "probe", name: "香港边缘节点" })
     expect(findUpdateBlocker({ ...none, cli: { oracle: { scopeLoading: true } as never } })).toEqual({ task: "cli", name: "oracle" })
   })
 

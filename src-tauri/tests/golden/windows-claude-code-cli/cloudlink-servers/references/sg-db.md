@@ -1,6 +1,6 @@
-# sg-db — Singapore database
+# Singapore database (sg-db)
 
-> Production | Mode: auto-ops | Snapshot: 2026-10-28
+> Mode: auto-ops | Snapshot: 2026-10-28
 
 ## Connect
 Pass exactly one quoted remote command after `--`; the stable ID maps to the private SSH configuration. Do not replace this entry with a direct alias:

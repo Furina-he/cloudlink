@@ -35,7 +35,6 @@ pub fn hk_edge() -> ServerAsset {
         tag: VpsTag::Tag,
         id: "ast_01JB3Q8Z6W".into(),
         name: "Hong Kong edge proxy node".into(),
-        production: true,
         summary:
             "Public reverse proxy for api.example.com and blog.example.com, and host for the backend API containers"
                 .into(),
@@ -148,13 +147,12 @@ pub fn hk_edge() -> ServerAsset {
     }
 }
 
-/// PRD 7.8：生产，imported，已验证，标准运维
+/// PRD 7.8：imported，已验证，自动运维
 pub fn sg_db() -> ServerAsset {
     ServerAsset {
         tag: VpsTag::Tag,
         id: "ast_01JB3QSGDB".into(),
         name: "Singapore database".into(),
-        production: true,
         summary: "PostgreSQL and Redis for the API".into(),
         agent: AssetAgent {
             agents: vec!["claude-code".into(), "universal".into()],
@@ -254,7 +252,6 @@ pub fn dev_box() -> ServerAsset {
         tag: VpsTag::Tag,
         id: "ast_01JB3QDEVB".into(),
         name: "Development machine".into(),
-        production: false,
         summary: "Development machine".into(),
         agent: AssetAgent {
             agents: vec!["claude-code".into()],
@@ -314,7 +311,6 @@ pub fn cloudflare() -> CliAsset {
         tag: CliTag::Tag,
         id: "ast_01JB9CLI01".into(),
         name: "Cloudflare".into(),
-        production: true,
         summary: "DNS for the main domains and the edge API gateway Worker".into(),
         agent: AssetAgent {
             agents: vec!["claude-code".into()],
@@ -409,7 +405,6 @@ pub fn github() -> CliAsset {
         tag: CliTag::Tag,
         id: "ast_01JB9CLI09".into(),
         name: "GitHub".into(),
-        production: false,
         summary: "Source for the shop front end and the API".into(),
         agent: AssetAgent {
             agents: vec!["claude-code".into()],

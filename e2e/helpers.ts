@@ -1,9 +1,9 @@
 import { expect, type Locator, type Page } from "@playwright/test"
 import { fileURLToPath } from "node:url"
 
-// 验收证据与 Playwright 的可清理输出分开，默认为当前阶段的 test-results/p9。
+// 验收证据与 Playwright 的可清理输出分开，默认为当前阶段的 test-results/p10。
 // 既有 e2e/__screenshots__ 门禁 PNG 保持不动；P7d 专属可选截图由 p7d.spec.ts 保存。
-export const SHOTS = process.env.CLOUDLINK_E2E_SHOTS ?? fileURLToPath(new URL("../test-results/p9", import.meta.url))
+export const SHOTS = process.env.CLOUDLINK_E2E_SHOTS ?? fileURLToPath(new URL("../test-results/p10", import.meta.url))
 
 export function collectConsoleErrors(page: Page) {
   const errors: string[] = []
@@ -22,8 +22,8 @@ export async function ready(page: Page, query = "") {
   await expect(row(page, "hk-edge")).toBeVisible()
 }
 
-/** 资源行上进入详情的按钮，名称是「标识，名称，状态」 */
-export const row = (page: Page, handle: string) => page.getByRole("button", { name: new RegExp(`^${handle}，`) })
+/** 资源行上进入详情的按钮（通过内部 data-handle 定位，无障碍名称仅包含显示名称与状态） */
+export const row = (page: Page, handle: string) => page.locator(`[data-grid-cell][data-handle="${handle}"]`)
 
 /** 详情视图的标题：资源的显示名称，不是 SSH 别名 */
 export const detailTitle = (page: Page) => page.locator("h2#detail-title")

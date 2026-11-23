@@ -3,9 +3,6 @@ import type { Asset, CliAsset, EnvId, ServerAsset, Settings, SkillConfig } from 
 import { relationLines } from "./relations"
 import { handleOf, isCli, isServer } from "@/stores/assets"
 
-/** F-109 AC3：只对生产资源写 production */
-export const envWord = (a: { production: boolean }) => (a.production ? "production" : "-")
-
 const BUILTIN_RULES = [
   "Never read or print credential files (`.env`, `*.pem`, `*.key`, `id_*`, `/etc/shadow`, `~/.ssh/`) and never use `docker inspect` to view environment variables.",
   "Never ask for or record passwords, private keys or IP addresses; use the Connect entry in the resource's details file.",
@@ -17,7 +14,7 @@ const HEALTH_CHECK = `# Health check
 
 Check the servers the user asked about; if none were named, check every server in the overview table. Read each server's details first and use its Connect entry for one remote command, then report one table: server, status (OK / attention / unreachable), findings. Do not fix anything; list suggested actions separately and wait for the user.
 
-For every server, pass each quoted remote command below after \`--\` in its absolute CloudLink runner Connect entry. Do not replace that entry with direct SSH, regardless of production or mode. Keep the stable resource ID and use the PowerShell variant when applicable. A waiting ticket is continued with \`wait\`, never by retrying the check through direct SSH.
+For every server, pass each quoted remote command below after \`--\` in its absolute CloudLink runner Connect entry. Do not replace that entry with direct SSH, in either mode. Keep the stable resource ID and use the PowerShell variant when applicable. A waiting ticket is continued with \`wait\`, never by retrying the check through direct SSH.
 
     ssh <alias> 'uptime; nproc; free -m; df -hP -x tmpfs -x devtmpfs -x overlay -x squashfs; docker ps -a --format "{{.Names}}\\t{{.Status}}"; systemctl --failed --no-legend --plain; journalctl -p err --since "24 hours ago" --no-pager | tail -n 30'
 
@@ -39,8 +36,20 @@ If a command is missing on a server (no docker, no systemd), skip it and say so.
 `
 
 const code = (s: string) => `\`${s.slice(0, 128)}\``
+const oneLine = (s: string) =>
+  s
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .join(" ")
+const cell = (s: string) => {
+  const one = oneLine(s)
+  return one ? one.replaceAll("|", "\\|") : "-"
+}
 const portText = (p: ServerAsset["services"][number]["ports"][number]) =>
   `${p.hostIp}:${p.hostPort}->${p.containerPort}${p.proto === "udp" ? "/udp" : ""}`
+
+export const isDefaultAlias = (alias: string) => /^cloudlink-\d+$/i.test(alias.trim())
 
 export function skillHandle(a: Asset): string {
   if (!isServer(a) || a.export.resolvedConnection) return handleOf(a)
@@ -50,6 +59,36 @@ export function skillHandle(a: Asset): string {
     [host.toLowerCase(), host.replace(/[.:]/g, "-"), host.replace(/[.:]/g, "_")].some((value) => alias.includes(value.toLowerCase()))
   )
   return privateAlias ? `server-${a.id.toLowerCase().replaceAll("_", "-")}` : handleOf(a)
+}
+
+const displayName = (a: Asset) => oneLine(a.name) || skillHandle(a)
+
+function semanticAlias(a: ServerAsset): string | undefined {
+  const raw = a.connection.sshAlias.trim()
+  if (!raw || isDefaultAlias(raw)) return undefined
+  const pub = skillHandle(a)
+  if (pub !== raw) return undefined
+  const name = oneLine(a.name)
+  if (!name || name.toLowerCase() === pub.toLowerCase()) return undefined
+  return pub
+}
+
+function descriptionSubject(a: Asset): string {
+  const name = displayName(a)
+  const alias = isServer(a) ? semanticAlias(a) : undefined
+  return alias ? `${name} / ${alias}` : name
+}
+
+function overviewLabel(a: Asset): string {
+  const name = cell(displayName(a))
+  const alias = isServer(a) ? semanticAlias(a) : undefined
+  return alias ? `${name} (${code(alias)})` : name
+}
+
+function detailHeading(a: Asset): string {
+  const name = displayName(a)
+  const alias = isServer(a) ? semanticAlias(a) : undefined
+  return alias ? `${name} (${alias})` : name
 }
 
 function runnerCommand(settings: Settings, envId: EnvId, op: string, assetId?: string, tail = "", powershell = false): string {
@@ -89,17 +128,29 @@ export function inboxPath(dataDir: string, envId: EnvId): string {
 /** 云平台勾选的范围（未勾选的不进入产物，F-104 AC3） */
 const scopeNames = (a: CliAsset) => a.cli.scope.filter((x) => x.selected).map((x) => x.name)
 
+/** 云平台／GitHub 写入 description 与总览表时的精简范围概括（P10d）：超过 3 项不再全量平铺 */
+function compactCliScope(a: CliAsset): string {
+  const items = scopeNames(a)
+  const n = items.length
+  if (a.cliProvider === "github") {
+    const owner = oneLine(a.github?.owner?.login ?? "") || oneLine(a.account ?? "")
+    if (n === 0) return owner
+    if (n <= 3) return items.join(", ")
+    return owner ? `${owner}, ${n} repos` : `${items.slice(0, 3).join(", ")} +${n - 3} more`
+  }
+  if (n === 0) return ""
+  if (n <= 3) return items.join(", ")
+  return `${items.slice(0, 3).join(", ")} +${n - 3} more`
+}
+
 function role(a: Asset): string {
-  if (a.type === "cli") return [a.summary.trim(), scopeNames(a).join(", ")].filter(Boolean).join("; ")
+  if (a.type === "cli") return [a.summary.trim(), compactCliScope(a)].filter(Boolean).join("; ")
   const sites = a.servedHostnames.filter((h) => !a.summary.includes(h))
   return [a.summary.trim(), sites.length ? `serves ${sites.join(", ")}` : ""].filter(Boolean).join("; ")
 }
 
-/** 用途留空、也没有站点或范围可写时的替代说明：显示名称（和别名不同时），服务器再加探测到的服务名 */
+/** 用途留空、也没有站点或范围可写时的替代说明：服务器兜底列出探测到的服务名 */
 function standIn(a: Asset, withServices: boolean): string {
-  const parts: string[] = []
-  const name = a.name.trim()
-  if (name && name.toLowerCase() !== skillHandle(a).toLowerCase()) parts.push(name)
   if (a.type === "vps" && withServices) {
     const names = [...a.services]
       .filter((s) => !s.missing)
@@ -107,9 +158,9 @@ function standIn(a: Asset, withServices: boolean): string {
       .map((s) => s.name)
       .filter((n) => /^[A-Za-z0-9._@-]{1,64}$/.test(n) && !/ignore[\s_-]*(all[\s_-]*)?previous|system[\s_-]*prompt/i.test(n))
       .slice(0, 5)
-    if (names.length) parts.push(`runs ${names.map(code).join(", ")}`)
+    if (names.length) return `runs ${names.map(code).join(", ")}`
   }
-  return parts.join("; ")
+  return ""
 }
 
 const roleOrStandIn = (a: Asset) => role(a) || standIn(a, true)
@@ -125,8 +176,8 @@ export function description(assets: Asset[]): { text: string; rawChars: number }
   const item = (a: Asset, withRole: boolean, short: boolean) => {
     const r = (withRole ? role(a) : a.summary.trim()) || standIn(a, withRole)
     const text = short && r.length > 40 ? `${r.slice(0, 39)}…` : r
-    const inner = [text, a.production ? "production" : ""].filter(Boolean).join("; ")
-    return inner ? `${skillHandle(a)} (${inner})` : skillHandle(a)
+    const subj = descriptionSubject(a)
+    return text ? `${subj} (${text})` : subj
   }
   const hasServer = assets.some((a) => a.type === "vps")
   const hasCli = assets.some((a) => a.type === "cli")
@@ -170,9 +221,9 @@ function renderCliDetails(a: CliAsset, aliasById: (id: string) => string | undef
   const github = a.github
   const snapshot = github?.envStates[envId]
   return [
-    `# ${a.handle} — ${a.name}`,
+    `# ${detailHeading(a)}`,
     "",
-    `> ${a.production ? "Production | " : ""}Mode: ${a.agent.mode}`,
+    `> Mode: ${a.agent.mode}`,
     "",
     "## Connect",
     "Use separate CLI arguments after `--`, without the provider binary or a shell wrapper. Never print or export credentials:",
@@ -240,7 +291,6 @@ function renderCliDetails(a: CliAsset, aliasById: (id: string) => string | undef
 /** 每台服务器的详情文件（5.2 的 references/hk-edge.md） */
 export function renderDetails(a: ServerAsset, settings: Settings, envId: EnvId): string {
   const f = a.facts
-  const alias = skillHandle(a)
   const critical = a.services.filter((s) => s.critical)
   const rules = [
     ...a.guardrails.rules.map((r) => r.text),
@@ -254,9 +304,9 @@ export function renderDetails(a: ServerAsset, settings: Settings, envId: EnvId):
   const snapshot = settings.writeSnapshotTime && a.probe.lastSuccessAt ? ` | Snapshot: ${a.probe.lastSuccessAt.slice(0, 10)}` : ""
   const resolved = a.connection.resolved
   return [
-    `# ${alias} — ${a.name}`,
+    `# ${detailHeading(a)}`,
     "",
-    `> ${a.production ? "Production | " : ""}Mode: ${a.agent.mode}${snapshot}`,
+    `> Mode: ${a.agent.mode}${snapshot}`,
     "",
     "## Connect",
     "Pass exactly one quoted remote command after `--`; the stable ID maps to the private SSH configuration. Do not replace this entry with a direct alias:",
@@ -345,13 +395,13 @@ export function renderSkill(envId: EnvId, assets: Asset[], config: SkillConfig, 
     "",
     `> Generated by CloudLink — do not edit${snapshot}`,
     "",
-    "Before operating on any resource, read its details file and use its exact CloudLink runner Connect entry, in both modes and regardless of the production marker. Authentication stays in the local SSH/CLI configuration; never ask for or record passwords, IPs or private keys.",
+    "Before operating on any resource, read its details file and use its exact CloudLink runner Connect entry, in both modes. Authentication stays in the local SSH/CLI configuration; never ask for or record passwords, IPs or private keys.",
     ...(servers.length
       ? [
           "",
-          "| Alias | Role | Env | Details |",
-          "| --- | --- | --- | --- |",
-          ...servers.map((a) => `| \`${skillHandle(a)}\` | ${roleOrStandIn(a) || "-"} | ${envWord(a)} | \`${detailPath.get(a.id)}\` |`),
+          "| Name | Role | Details |",
+          "| --- | --- | --- |",
+          ...servers.map((a) => `| ${overviewLabel(a)} | ${roleOrStandIn(a) || "-"} | \`${detailPath.get(a.id)}\` |`),
         ]
       : []),
     ...(clis.length
@@ -360,9 +410,9 @@ export function renderSkill(envId: EnvId, assets: Asset[], config: SkillConfig, 
           "## Cloud platforms",
           "Only touch the owner/account and scope in each details file. Always use its runner entry, not a bare local CLI. CLI arguments remain separate arguments; do not wrap them in a shell string.",
           "",
-          "| Platform | CLI | Role | Env | Details |",
-          "| --- | --- | --- | --- | --- |",
-          ...clis.map((a) => `| ${a.handle} | \`${a.cli.binary}\` | ${roleOrStandIn(a) || "-"} | ${envWord(a)} | \`${detailPath.get(a.id)}\` |`),
+          "| Platform | CLI | Role | Details |",
+          "| --- | --- | --- | --- |",
+          ...clis.map((a) => `| ${overviewLabel(a)} | \`${a.cli.binary}\` | ${roleOrStandIn(a) || "-"} | \`${detailPath.get(a.id)}\` |`),
         ]
       : []),
     ...(relationships.length ? ["", "## How they fit together", ...relationships.map((r) => `- ${r}`)] : []),
@@ -372,7 +422,6 @@ export function renderSkill(envId: EnvId, assets: Asset[], config: SkillConfig, 
     "- **confirm-changes**: recognized, non-sensitive queries run directly. Routine changes require the user's one-time approval in CloudLink.",
     "- **auto-ops**: queries and changes within the provided scope run directly, except data deletion, explicitly named critical services, opaque scripts, host reboot or shutdown, firewall changes, and SSH configuration or stopping sshd.",
     "- In both modes, data deletion, critical services, opaque scripts, host reboot or shutdown, firewall and SSH configuration changes require one-time approval. Credentials, repository deletion and default/unspecified-branch force-pushes cannot be approved. Uncertain identities, targets or scope are denied.",
-    "- Production is an independent risk marker, not a different mode or a switch for checks. The runner checks all provided resources, and Claude Code's hook redirects recognized direct connections to it.",
     "",
     "## Running commands",
     "- Use the absolute runner path and stable resource ID in the details, never a name as a route. Git Bash/WSL and PowerShell examples use their own quoting; do not alter the executable path.",
@@ -397,7 +446,7 @@ export function renderSkill(envId: EnvId, assets: Asset[], config: SkillConfig, 
       { path: "SKILL.md", content: skill },
       ...assets.map((a) => ({
         path: detailPath.get(a.id)!,
-        content: a.type === "vps" ? renderDetails(a, settings, envId) : renderCliDetails(a, (id) => { const linked = assets.find((x) => x.id === id && x.type === "vps"); return linked && skillHandle(linked) }, settings, envId),
+        content: a.type === "vps" ? renderDetails(a, settings, envId) : renderCliDetails(a, (id) => { const linked = assets.find((x) => x.id === id && x.type === "vps"); return linked && overviewLabel(linked) }, settings, envId),
       })),
       { path: "references/execution.md", content: renderExecution(settings, envId) },
       { path: "references/health-check.md", content: HEALTH_CHECK },

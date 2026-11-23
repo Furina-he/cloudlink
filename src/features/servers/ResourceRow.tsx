@@ -11,7 +11,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useAgentOptions } from "@/features/agents/agentKeys"
 import { copy } from "@/lib/copy"
 import { cn } from "@/lib/utils"
-import { connState, handleOf, isProdWritable, selectCanDistribute, selectCliAccount, selectCliProblem, useAssetStore, type ConnState } from "@/stores/assets"
+import { connState, handleOf, selectCanDistribute, selectCliAccount, selectCliProblem, useAssetStore, type ConnState } from "@/stores/assets"
 import { useCliStore } from "@/stores/cli"
 import { useGithubStore } from "@/stores/github"
 import { useConnectionStore } from "@/stores/connection"
@@ -57,18 +57,16 @@ function FixButton({ busy, onClick, children }: { busy?: boolean; onClick: () =>
 }
 
 /**
- * 档位弹出菜单（PRD 6.3）：两个选项各带一句后果说明；生产资源切到标准运维时菜单底部展开确认。
- * 生产资源处于标准运维时文字琥珀色、加粗
+ * 档位弹出菜单（PRD 6.3）：两个选项各带一句后果说明；任意资源切到自动运维时菜单底部展开轻确认，保持中性样式。
  */
 export function ModeMenu({ asset }: { asset: Asset }) {
   const [open, setOpen] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const mode = asset.agent.mode
-  const warn = isProdWritable(asset)
-  const alias = handleOf(asset)
+  const name = asset.name
   const choose = (next: Mode) => {
     if (next === mode) return setOpen(false)
-    if (next === "auto-ops" && asset.production) return setConfirming(true)
+    if (next === "auto-ops") return setConfirming(true)
     setOpen(false)
     void serverActions.setMode(asset, next)
   }
@@ -84,11 +82,8 @@ export function ModeMenu({ asset }: { asset: Asset }) {
         render={
           <button
             type="button"
-            aria-label={`${copy.row.modeMenuLabel(alias)}：${copy.mode[mode]}${warn ? `。${copy.servers.prodWritable}` : ""}`}
-            className={cn(
-              "pointer-events-auto relative z-10 -mx-1 inline-flex h-5 items-center gap-0.5 rounded-sm px-1 text-xs text-muted-foreground outline-none hover:bg-pill-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
-              warn && "font-semibold text-warning hover:text-warning"
-            )}
+            aria-label={`${copy.row.modeMenuLabel(name)}：${copy.mode[mode]}`}
+            className="pointer-events-auto relative z-10 -mx-1 inline-flex h-5 items-center gap-0.5 rounded-sm px-1 text-xs text-muted-foreground outline-none hover:bg-pill-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           />
         }
       >
@@ -96,7 +91,7 @@ export function ModeMenu({ asset }: { asset: Asset }) {
         <ChevronDownIcon className="size-3" aria-hidden />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-72 p-1">
-        <div role="group" aria-label={copy.row.modeMenuLabel(alias)} className="flex flex-col">
+        <div role="group" aria-label={copy.row.modeMenuLabel(name)} className="flex flex-col">
           {(["confirm-changes", "auto-ops"] as const).map((m) => (
             <button
               key={m}
@@ -116,7 +111,7 @@ export function ModeMenu({ asset }: { asset: Asset }) {
         </div>
         {confirming && (
           <div role="alert" className="mt-1 flex flex-col gap-2 border-t border-line-2 px-2.5 pt-2.5 pb-1.5">
-            <p className="text-xs text-fg-2">{copy.row.prodConfirm(alias)}</p>
+            <p className="text-xs text-fg-2">{copy.row.autoOpsConfirm(name)}</p>
             <div className="flex justify-end gap-1.5">
               <button type="button" className="h-6.5 rounded-button bg-pill px-2.5 text-xs hover:bg-pill-hover focus-visible:ring-2 focus-visible:ring-ring outline-none" onClick={() => setConfirming(false)}>
                 {copy.common.cancel}
@@ -151,14 +146,13 @@ interface RowAction {
 }
 
 /**
- * 两行资源行（PRD 6.3、DESIGN.md row）：左品牌方块；第一行名称 + 别名 + 生产，第二行状态点 + 问题 + 档位；
+ * 两行资源行（PRD 6.3、DESIGN.md row）：左品牌方块；第一行仅显示名称，第二行状态点 + 问题 + 档位；
  * 右侧修复按钮 → Agent 图标组 → ›。打开详情的按钮铺满整行，其余控件叠在上面各自响应
  */
 function RowShell({
   asset,
   fresh,
   mark,
-  alias,
   problem,
   dot,
   fix,
@@ -169,7 +163,6 @@ function RowShell({
   asset: Asset
   fresh: boolean
   mark: ReactNode
-  alias?: string
   problem?: ReactNode
   dot: ReactNode
   fix?: ReactNode
@@ -178,7 +171,6 @@ function RowShell({
   subtitle?: string
 }) {
   const { agents } = useAgentOptions()
-  const prod = asset.production
   return (
     <motion.div
       role="listitem"
@@ -199,7 +191,8 @@ function RowShell({
             type="button"
             data-grid-cell
             data-asset-id={asset.id}
-            aria-label={copy.servers.rowOpen(handleOf(asset), asset.name, stateWords)}
+            data-handle={handleOf(asset)}
+            aria-label={copy.servers.rowOpen(asset.name, stateWords)}
             onClick={() => useUIStore.getState().selectAsset(asset.id)}
             className="absolute inset-0 outline-none"
           />
@@ -207,8 +200,6 @@ function RowShell({
           <div className="pointer-events-none relative flex min-w-0 flex-1 flex-col gap-0.5">
             <div className="flex min-w-0 items-baseline gap-2">
               <span className="truncate text-[13.5px] font-medium">{asset.name}</span>
-              {alias && <span className="shrink-0 font-mono text-xs text-muted-foreground">{alias}</span>}
-              {prod && <span className="shrink-0 text-xs font-medium text-destructive">{copy.row.prod}</span>}
             </div>
             <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
               {dot}
@@ -269,7 +260,6 @@ export function ServerRow({ asset, fresh }: { asset: ServerAsset; fresh: boolean
       asset={asset}
       fresh={fresh}
       mark={<ServerIcon className="size-4" aria-hidden />}
-      alias={asset.connection.sshAlias}
       dot={<Dot state={unreachable ? "changed" : state} label={state === "changed" ? copy.connChangedHint : word} />}
       problem={
         state !== "connected" || unreachable ? (

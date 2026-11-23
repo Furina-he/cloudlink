@@ -1,7 +1,7 @@
 import type { CliAsset, CliScopeKind } from "@/bindings"
 import { SCOPE_KINDS } from "@/lib/cliProviders"
 import { copy } from "@/lib/copy"
-import { handleOf, useAssetStore } from "@/stores/assets"
+import { useAssetStore } from "@/stores/assets"
 
 /** 已选资源的摘要：「2 个域名、1 个 Worker」 */
 export function scopeSummary(asset: CliAsset): string {
@@ -10,9 +10,9 @@ export function scopeSummary(asset: CliAsset): string {
   return parts.length ? parts.join("、") : copy.cli.scopeNone
 }
 
-/** 自动识别出的关联服务器的别名 */
+/** 自动识别出的关联服务器名称 */
 export function useLinkedAliases(asset: CliAsset): string[] {
   const byId = useAssetStore((s) => s.byId)
   const ids = [...new Set(asset.cli.scope.filter((x) => x.selected && x.linkedAssetId).map((x) => x.linkedAssetId!))]
-  return ids.map((id) => byId[id]).filter(Boolean).map(handleOf)
+  return ids.map((id) => byId[id]?.name).filter((name): name is string => !!name)
 }

@@ -7,7 +7,6 @@ import {
   collectValues,
   connState,
   handleOf,
-  isProdWritable,
   isServer,
   selectCanDistribute,
   selectCliAccount,
@@ -27,11 +26,11 @@ const withEnvs = (a: CliAsset, envStates: CliAsset["cli"]["envStates"]): CliAsse
 const env = (patch: Partial<CliEnvState>): CliEnvState => ({ installed: true, authenticated: true, expired: false, checkedAt: fx.ago(fx.MIN), ...patch })
 
 describe("资源配电盘（PRD 6.4）", () => {
-  it("分成服务器和云平台两组；组内按生产、预发、开发，再按名称排序", () => {
+  it("分成服务器和云平台两组；组内按名称自然排序", () => {
     const { servers: s, clis } = selectResourceGroups({ byId, ids }, "")
-    // 中文名称按拼音：香港（xiang）在新加坡（xin）之前
-    expect(s.map((a) => a.id)).toEqual(["ast_hk_edge", "ast_sg_db", "ast_dev_box"])
-    expect(clis.map((a) => a.id)).toEqual(["ast_cloudflare", "ast_vercel", "ast_github"])
+    // 中文名称按拼音：开发机（kai）< 香港（xiang）< 新加坡（xin）
+    expect(s.map((a) => a.id)).toEqual(["ast_dev_box", "ast_hk_edge", "ast_sg_db"])
+    expect(clis.map((a) => a.id)).toEqual(["ast_cloudflare", "ast_github", "ast_vercel"])
   })
 
   it("搜索匹配名称、别名、标签、站点名，云平台还匹配 CLI 名、账号和已选范围，不区分大小写", () => {
@@ -58,12 +57,6 @@ describe("资源配电盘（PRD 6.4）", () => {
   it("候选值去重、排序，跳过空值", () => {
     expect(collectValues(servers, (a) => [a.provider])).toEqual(["AWS Lightsail", "Tencent Cloud"])
     expect(collectValues(servers, (a) => a.tags)).toEqual(["1panel", "db", "edge"])
-  })
-
-  it("生产资源处于标准运维时琥珀色提醒，非生产或只读巡检不提醒", () => {
-    expect(isProdWritable(sgDb)).toBe(true)
-    expect(isProdWritable(hkEdge)).toBe(false)
-    expect(isProdWritable(devBox)).toBe(false)
   })
 })
 

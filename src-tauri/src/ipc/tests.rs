@@ -376,7 +376,6 @@ fn server_input(server: &ServerAsset, id: Option<&str>) -> ServerAssetInput {
         tag: VpsTag::Tag,
         id: id.map(String::from),
         name: server.name.clone(),
-        production: server.production,
         summary: server.summary.clone(),
         guardrails: server.guardrails.clone(),
         notes: server.notes.clone(),
@@ -395,28 +394,70 @@ fn server_input(server: &ServerAsset, id: Option<&str>) -> ServerAssetInput {
 }
 
 #[test]
-fn real_use_new_resources_default_to_confirmation_regardless_of_production_or_saved_default() {
+fn real_use_new_resources_default_to_confirmation_regardless_of_saved_default() {
     let fixture = Fixture::with_runner(Arc::new(MetadataRunner::default()), false);
     let mut settings = fixture.backend.get_settings().unwrap();
     settings.default_mode = Mode::AutoOps;
     fixture.backend.database().unwrap().put_settings(&settings).unwrap();
-    for production in [false, true] {
+    for (alias, account) in [("new-server-a", ACCOUNT_A), ("new-server-b", ACCOUNT_B)] {
         let mut server = fixture.server();
-        server.connection.ssh_alias = if production {
-            "new-production"
-        } else {
-            "new-development"
-        }
-        .into();
-        let mut input = server_input(&server, None);
-        input.production = production;
+        server.connection.ssh_alias = alias.into();
+        let input = server_input(&server, None);
         let result = fixture.backend.save_asset(AssetInput::Vps(input)).unwrap();
         assert_eq!(result.asset.agent().mode, Mode::ConfirmChanges);
-        let mut input = cli_input(if production { ACCOUNT_B } else { ACCOUNT_A }, None);
-        input.production = production;
+        let input = cli_input(account, None);
         let result = fixture.backend.save_asset(AssetInput::Cli(input)).unwrap();
         assert_eq!(result.asset.agent().mode, Mode::ConfirmChanges);
     }
+    fixture.assert_neighbors_untouched();
+}
+
+#[test]
+fn all_read_only_switches_every_auto_ops_resource_back_to_confirm_changes() {
+    let fixture = Fixture::with_runner(Arc::new(MetadataRunner::default()), false);
+    let mut s1 = fixture.server();
+    s1.name = "Alpha Server".into();
+    s1.connection.ssh_alias = "alpha".into();
+    let s1 = fixture
+        .backend
+        .save_asset(AssetInput::Vps(server_input(&s1, None)))
+        .unwrap()
+        .asset;
+    let mut s2 = fixture.server();
+    s2.name = "Beta Server".into();
+    s2.connection.ssh_alias = "beta".into();
+    let s2 = fixture
+        .backend
+        .save_asset(AssetInput::Vps(server_input(&s2, None)))
+        .unwrap()
+        .asset;
+    let c1 = fixture
+        .backend
+        .save_asset(AssetInput::Cli(cli_input(ACCOUNT_A, None)))
+        .unwrap()
+        .asset;
+
+    fixture.backend.set_mode(s1.id(), Mode::AutoOps).unwrap();
+    fixture.backend.set_mode(c1.id(), Mode::AutoOps).unwrap();
+
+    let switched = fixture.backend.all_read_only().unwrap();
+    assert_eq!(switched.len(), 2);
+    assert!(switched.contains(&"Alpha Server".to_string()));
+    assert!(switched.contains(&"Cloudflare".to_string()));
+    for id in [s1.id(), s2.id(), c1.id()] {
+        assert_eq!(
+            fixture
+                .backend
+                .database()
+                .unwrap()
+                .require_asset(id)
+                .unwrap()
+                .agent()
+                .mode,
+            Mode::ConfirmChanges
+        );
+    }
+    assert!(fixture.backend.all_read_only().unwrap().is_empty());
     fixture.assert_neighbors_untouched();
 }
 
@@ -425,7 +466,6 @@ fn cli_input(account: &str, scope: Option<Vec<CliScopeItem>>) -> CliAssetInput {
         tag: CliTag::Tag,
         id: None,
         name: "Cloudflare".into(),
-        production: true,
         summary: "DNS and Workers".into(),
         guardrails: Guardrails::default(),
         notes: String::new(),

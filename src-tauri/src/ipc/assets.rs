@@ -156,7 +156,6 @@ impl Backend {
                     tag: VpsTag::Tag,
                     id,
                     name,
-                    production: input.production,
                     summary: input.summary,
                     agent: old.map(|s| s.agent.clone()).unwrap_or(AssetAgent {
                         agents: Vec::new(),
@@ -357,7 +356,6 @@ impl Backend {
                     tag: CliTag::Tag,
                     id: input.id.unwrap_or_else(|| crate::new_id("ast")),
                     name: input.name,
-                    production: input.production,
                     summary: input.summary,
                     agent: old.map(|a| a.agent.clone()).unwrap_or(AssetAgent {
                         agents: Vec::new(),
@@ -514,12 +512,12 @@ impl Backend {
         self.save_result(asset, statuses)
     }
 
-    /// F-407 AC2「全部切回只读」：只动处于标准运维的生产资源，返回切回的资源名称
+    /// F-407 AC2「全部改为确认变更」：将全部处于自动运维的资源切回确认变更，返回切回的资源名称
     pub fn all_read_only(&self) -> Result<Vec<String>> {
         let _edit = self.edit()?;
         let mut switched = Vec::new();
         for mut asset in self.list_assets()? {
-            if !asset.production() || asset.agent().mode != Mode::AutoOps {
+            if asset.agent().mode != Mode::AutoOps {
                 continue;
             }
             asset.agent_mut().mode = Mode::ConfirmChanges;
@@ -646,7 +644,6 @@ impl Backend {
                     tag: VpsTag::Tag,
                     id: crate::new_id("ast"),
                     name: actual.alias.clone(),
-                    production: true,
                     summary: String::new(),
                     agent: AssetAgent {
                         agents: Vec::new(),

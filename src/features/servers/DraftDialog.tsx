@@ -14,7 +14,7 @@ export function DraftDialog({
 }: {
   title: string
   name: string
-  handle: string
+  handle?: string
   hint: string
   dirty: boolean
   busy: boolean
@@ -73,7 +73,7 @@ export function DraftDialog({
             <DialogTitle variant="editor">{title}</DialogTitle>
             <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-xs text-muted-foreground" id="editor-resource">
               <span className="wrap-anywhere">{name}</span>
-              <span className="font-mono wrap-anywhere">{handle}</span>
+              {handle && <span className="font-mono wrap-anywhere">{handle}</span>}
             </p>
           </DialogHeader>
           <ScrollArea layout="flex" className="min-h-0 flex-1" aria-describedby="editor-resource">

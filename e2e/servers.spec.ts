@@ -80,16 +80,18 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     await expect(alert).toBeHidden()
   })
 
-  test("首屏：两组两行资源行；生产自动运维琥珀色；异常就地给出修复按钮；正常即隐身", async ({ page }) => {
+  test("首屏：两组两行单名称资源行；自动运维保持中性样式；异常就地给出修复按钮；正常即隐身", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
     await expect(page.locator("#detail-title")).toHaveCount(0)
     await expect(page.getByRole("heading", { level: 2, name: /^服务器/ })).toBeVisible()
     await expect(page.getByRole("heading", { level: 2, name: /^云平台/ })).toBeVisible()
     await expect(page.getByText("权限档位")).toHaveCount(0)
-    // sg-db 是生产服务器，开着自动运维：档位文字带提醒文案（状态不只靠颜色）
-    await expect(page.getByRole("button", { name: /^sg-db 的档位：自动运维.*生产环境已启用自动运维/ })).toHaveClass(/text-warning/)
-    await expect(page.getByRole("button", { name: /^hk-edge 的档位：确认变更$/ })).toBeVisible()
+    // 自动运维保持中性样式（P10a 移除琥珀色提醒与生产标记）
+    const sgMode = page.getByRole("button", { name: /^新加坡数据库 的档位：自动运维$/ })
+    await expect(sgMode).toBeVisible()
+    await expect(sgMode).not.toHaveClass(/text-warning/)
+    await expect(page.getByRole("button", { name: /^香港边缘节点 的档位：确认变更$/ })).toBeVisible()
     // dev-box 只用密码；vercel 在 WSL 未登录
     const list = page.locator("#server-list")
     await expect(list.getByRole("button", { name: "改用密钥登录" })).toBeVisible()
@@ -97,7 +99,11 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     await expect(list.getByRole("button", { name: "去登录" })).toBeVisible()
     // 云平台不写账号和范围摘要，这些在详情里
     await expect(list.getByText(/me@example.com|2 个域名/)).toHaveCount(0)
-    await expect(list.getByText("生产", { exact: true })).toHaveCount(4)
+    await expect(list.getByText("生产", { exact: true })).toHaveCount(0)
+    // 单名称体验：列表行不并排挂出 SSH 别名
+    await expect(list.getByText("hk-edge", { exact: true })).toHaveCount(0)
+    await expect(list.getByText("sg-db", { exact: true })).toHaveCount(0)
+    await expect(list.getByText("dev-box", { exact: true })).toHaveCount(0)
     // 正常连接不写「已连接 · Ubuntu …」，云平台不写「vercel Vercel · vercel」
     await expect(list.getByText(/已连接|Ubuntu|已就绪|生产环境已启用自动运维/)).toHaveCount(0)
     await expect(list.getByText("cf", { exact: true })).toHaveCount(0)
@@ -111,6 +117,13 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     await expect(detailTitle(page)).toBeFocused()
     await expect(detailTitle(page)).toHaveText("香港边缘节点")
     const panel = inspector(page)
+    // 详情标题不并排显示 SSH 别名；SSH Host 展示在连接信息组并可复制
+    await expect(panel.locator("header").getByText("hk-edge", { exact: true })).toHaveCount(0)
+    const connSection = panel.locator("section").filter({ has: page.locator("#detail-connection") })
+    await expect(connSection.getByText("SSH Host", { exact: true })).toBeVisible()
+    await expect(connSection.getByText("hk-edge", { exact: true })).toBeVisible()
+    // Agent 权限组无生产环境开关
+    await expect(panel.getByRole("switch", { name: "生产环境" })).toHaveCount(0)
     // 没有 Tab：一路向下是分组的设置式列表
     await expect(panel.getByRole("tab")).toHaveCount(0)
     for (const g of ["Agent 权限", "连接", "Agent 需要知道的", "服务与目录", "红线", "最近动态"]) {
@@ -151,22 +164,29 @@ test.describe("资源视图：PRD 6.10 状态", () => {
     expect(errors).toEqual([])
   })
 
-  test("编译受阻：控制头的摘要，点击打开预览并定位到检查结果", async ({ page }) => {
+  test("编译受阻：控制头的摘要，点击打开预览并定位到出问题文件与修复入口", async ({ page }) => {
     await ready(page, "?mock=degraded")
     await openServer(page, "hk-edge")
     const blocked = inspector(page).getByRole("button", { name: /编译受阻/ })
     await expect(blocked).toBeVisible()
     await shot(page, "state-10-compile-blocked")
     await blocked.click()
-    const sheet = page.getByRole("dialog", { name: "预览 Skill" })
-    await expect(sheet).toBeVisible()
+    const dialog = page.getByRole("dialog", { name: "预览 Skill" })
+    await expect(dialog).toBeVisible()
     await shot(page, "state-11-preview-lint")
-    // 文件用下拉选；点检查结果跳到对应文件
-    await sheet.getByRole("combobox", { name: "文件" }).click()
-    await page.getByRole("option", { name: "SKILL.md" }).click()
-    await expect(sheet.getByRole("combobox", { name: "文件" })).toContainText("SKILL.md")
-    await sheet.getByRole("button", { name: /定位到 references\/hk-edge\.md 第 \d+ 行/ }).first().click()
-    await expect(sheet.getByRole("combobox", { name: "文件" })).toContainText("hk-edge.md")
+    // P10d：直接定位到出问题的 hk-edge.md，顶部带直达修复按钮和次要「查看位置」
+    const tree = dialog.getByRole("navigation", { name: "文件" })
+    await expect(tree.getByRole("button", { name: /^hk-edge\.md/ })).toHaveAttribute("aria-current", "page")
+    await expect(dialog.getByRole("button", { name: "去编辑资料" })).toBeVisible()
+    // 切到 SKILL.md 时不跨文件霸屏
+    await tree.getByRole("button", { name: /^SKILL\.md/ }).click()
+    await expect(tree.getByRole("button", { name: /^SKILL\.md/ })).toHaveAttribute("aria-current", "page")
+    await expect(dialog.locator("#preview-lint-heading")).toHaveCount(0)
+    // 点左下角错误计数跳回 hk-edge.md，再点「查看位置」切源码高亮行
+    await dialog.getByRole("complementary").getByRole("button", { name: /^\d+ 错误/ }).click()
+    await expect(tree.getByRole("button", { name: /^hk-edge\.md/ })).toHaveAttribute("aria-current", "page")
+    await dialog.getByRole("button", { name: "查看位置" }).first().click()
+    await expect(dialog.locator('[data-slot="code-block-line"][aria-current="true"]')).toBeVisible()
   })
 
   test("资料以查看为主：更多菜单打开草稿，统一保存后更新同一详情；连接另开弹窗，取消不保存", async ({ page }) => {
@@ -200,26 +220,34 @@ test.describe("资源视图：PRD 6.10 状态", () => {
 })
 
 test.describe("资源行右侧的档位与 Agent（PRD 6.4）", () => {
-  test("档位菜单：生产资源切到自动运维在菜单底部确认，变成琥珀色，提示条可撤销；切回只读不确认", async ({ page }) => {
+  test("档位菜单：任意资源切到自动运维在菜单底部轻确认，保持中性样式，提示条可撤销；切回确认变更不确认", async ({ page }) => {
     const errors = collectConsoleErrors(page)
     await ready(page)
-    await page.getByRole("button", { name: /^hk-edge 的档位：确认变更/ }).click()
+    await page.getByRole("button", { name: /^香港边缘节点 的档位：确认变更$/ }).click()
     const menu = page.getByRole("menu")
     await menu.getByRole("menuitemradio", { name: /^自动运维/ }).click()
-    await expect(menu.getByRole("alert")).toHaveText(/hk-edge 是生产环境/)
+    await expect(menu.getByRole("alert")).toHaveText(/为 香港边缘节点 启用自动运维/)
+    await expect(menu.getByRole("alert")).not.toContainText("生产环境")
     await shot(page, "mode-01-confirm")
     await menu.getByRole("button", { name: "切换" }).click()
-    const amber = page.getByRole("button", { name: /^hk-edge 的档位：自动运维.*生产环境已启用自动运维/ })
-    await expect(amber).toHaveClass(/text-warning/)
+    const switched = page.getByRole("button", { name: /^香港边缘节点 的档位：自动运维$/ })
+    await expect(switched).toBeVisible()
+    await expect(switched).not.toHaveClass(/text-warning/)
     await expect(page.locator("#detail-title")).toHaveCount(0)
-    await shot(page, "mode-02-amber")
+    await shot(page, "mode-02-neutral")
     // 提示条「撤销」回到确认变更
     await page.locator("[data-slot=toast]").getByRole("button", { name: "撤销" }).click()
-    await expect(page.getByRole("button", { name: /^hk-edge 的档位：确认变更/ })).toBeVisible()
-    // 非生产资源切到自动运维不用确认
-    await page.getByRole("button", { name: /^dev-box 的档位：自动运维/ }).click()
+    await expect(page.getByRole("button", { name: /^香港边缘节点 的档位：确认变更$/ })).toBeVisible()
+    // 任意资源切回确认变更不用确认；再次切回自动运维同样需要轻确认
+    await page.getByRole("button", { name: /^开发机 的档位：自动运维$/ }).click()
     await page.getByRole("menu").getByRole("menuitemradio", { name: /^确认变更/ }).click()
-    await expect(page.getByRole("button", { name: /^dev-box 的档位：确认变更/ })).toBeVisible()
+    await expect(page.getByRole("button", { name: /^开发机 的档位：确认变更$/ })).toBeVisible()
+    await page.getByRole("button", { name: /^开发机 的档位：确认变更$/ }).click()
+    const devMenu = page.getByRole("menu")
+    await devMenu.getByRole("menuitemradio", { name: /^自动运维/ }).click()
+    await expect(devMenu.getByRole("alert")).toHaveText(/为 开发机 启用自动运维/)
+    await devMenu.getByRole("button", { name: "取消" }).click()
+    await page.keyboard.press("Escape")
     expect(errors).toEqual([])
   })
 
@@ -227,19 +255,19 @@ test.describe("资源行右侧的档位与 Agent（PRD 6.4）", () => {
     const errors = collectConsoleErrors(page)
     await ready(page)
     const list = page.locator("#server-list")
-    const universal = list.getByRole("button", { name: "将 hk-edge 分发给 通用目录" })
-    await expect(list.getByRole("button", { name: "将 hk-edge 分发给 Claude Code" })).toHaveAttribute("aria-pressed", "true")
+    const universal = list.getByRole("button", { name: "将 香港边缘节点 分发给 通用目录" })
+    await expect(list.getByRole("button", { name: "将 香港边缘节点 分发给 Claude Code" })).toHaveAttribute("aria-pressed", "true")
     await expect(universal).toHaveAttribute("aria-pressed", "false")
     await universal.click()
     await expect(universal).toHaveAttribute("aria-pressed", "true")
     const feedback = toastText(page, "香港边缘节点 的选择已保存，但还没有同步成功")
     await expect(feedback).toBeVisible()
     await expect(feedback).toContainText("通用目录（WSL）：WSL Ubuntu-24.04 中没有配置私钥")
-    await expect(toastText(page, "已把 hk-edge 分发给 通用目录")).toHaveCount(0)
+    await expect(toastText(page, "已把 香港边缘节点 分发给 通用目录")).toHaveCount(0)
     await expect(page.locator("#detail-title")).toHaveCount(0)
 
     // dev-box 只用密码：没点亮的按钮不可用
-    await expect(list.getByRole("button", { name: "将 dev-box 分发给 Claude Code" })).toBeDisabled()
+    await expect(list.getByRole("button", { name: "将 开发机 分发给 Claude Code" })).toBeDisabled()
 
     // 通用目录只在 WSL 启用；hk-edge 在 WSL 没有私钥，问题行标题列出两个 Agent
     await openServer(page, "hk-edge")
@@ -281,7 +309,7 @@ test.describe("添加 SSH 服务器：连接并启用（PRD 6.5、F-106、F-108�
     await expect(feedback).toContainText("SSH 配置在 WSL Ubuntu-24.04 里还没生效")
     // 完成后关闭弹窗回到列表，新服务器直接出现在列表里
     await expect(sshForm(page)).toHaveCount(0)
-    await expect(page.locator("#server-list").getByRole("button", { name: "将 edge-copy 分发给 Claude Code" })).toHaveAttribute("aria-pressed", "true")
+    await expect(page.locator("#server-list").getByRole("button", { name: "将 Edge Copy 分发给 Claude Code" })).toHaveAttribute("aria-pressed", "true")
     expect(errors).toEqual([])
   })
 
@@ -297,7 +325,7 @@ test.describe("添加 SSH 服务器：连接并启用（PRD 6.5、F-106、F-108�
     await expect(sshForm(page)).toHaveCount(0)
     await expect(row(page, "wsl-only")).toHaveAccessibleName(/Agent 还连不上/)
     const list = page.locator("#server-list")
-    const claude = list.getByRole("button", { name: "将 wsl-only 分发给 Claude Code" })
+    const claude = list.getByRole("button", { name: "将 Wsl Only 分发给 Claude Code" })
     await expect(claude).toHaveAttribute("aria-pressed", "false")
     await shot(page, "ssh-08-unreachable-row")
     await list.getByRole("button", { name: "加入 SSH 配置" }).click()
@@ -371,7 +399,7 @@ test.describe("添加 SSH 服务器：连接并启用（PRD 6.5、F-106、F-108�
       await saveOnly.click()
       await includeAsk(page).getByRole("button", { name: "暂不加入" }).click()
       await expect(sshForm(page)).toHaveCount(0)
-      await expect(page.locator("#server-list").getByRole("button", { name: /^box-ssh-02-timeout，.*未验证/ })).toBeVisible()
+      await expect(row(page, "box-ssh-02-timeout")).toHaveAccessibleName(/^Box ssh-02-timeout，.*未验证/)
     })
   }
 
@@ -533,12 +561,12 @@ test("Vercel：WSL 未登录，提示条「去登录」后自动变为已就绪�
     expect(errors).toEqual([])
   })
 
-  test("Cloudflare：域名自动关联 hk-edge", async ({ page }) => {
+  test("Cloudflare：域名自动关联香港边缘节点", async ({ page }) => {
     await ready(page)
     await openServer(page, "cloudflare", "Cloudflare")
-    await expect(inspector(page).getByText("已关联服务器 hk-edge")).toBeVisible()
+    await expect(inspector(page).getByText("已关联服务器 香港边缘节点")).toBeVisible()
     await inspector(page).getByRole("button", { name: "管理范围", exact: true }).click()
-    await expect(page.getByRole("dialog", { name: "管理范围", exact: true }).getByText("已关联服务器 hk-edge")).toBeVisible()
+    await expect(page.getByRole("dialog", { name: "管理范围", exact: true }).getByText("已关联服务器 香港边缘节点")).toBeVisible()
     await shot(page, "cli-06-cloudflare")
   })
 })
@@ -608,28 +636,31 @@ test.describe("纯键盘流程", () => {
       await expect(feedback).toContainText("Cursor（Windows）：目录里已有同名 Skill，请到 Agent 页备份并接管")
       // 纯键盘流程使用稳定缺省别名，不再根据显示名称生成 keyboard-box。
       await expect(row(page, "cloudlink-1")).toHaveAccessibleName(/Keyboard Box/)
-      await expect(page.locator("#server-list").getByRole("button", { name: "将 cloudlink-1 分发给 Claude Code" })).toHaveAttribute("aria-pressed", "true")
+      await expect(page.locator("#server-list").getByRole("button", { name: "将 Keyboard Box 分发给 Claude Code" })).toHaveAttribute("aria-pressed", "true")
     })
   }
 
   test("方向键在资源行之间移动，Enter 进入详情；方向键在 Agent 按钮间移动，Space 切换", async ({ page }) => {
     await ready(page)
-    await row(page, "hk-edge").focus()
+    // 组内按名称自然排序：开发机 → 香港边缘节点 → 新加坡数据库 → Cloudflare
+    await row(page, "dev-box").focus()
+    await page.keyboard.press("ArrowDown")
+    await expect(row(page, "hk-edge")).toBeFocused()
     await page.keyboard.press("ArrowDown")
     await expect(row(page, "sg-db")).toBeFocused()
     await page.keyboard.press("ArrowDown")
-    await expect(row(page, "dev-box")).toBeFocused()
-    await page.keyboard.press("ArrowDown")
     await expect(row(page, "cloudflare")).toBeFocused()
     await page.keyboard.press("Home")
+    await expect(row(page, "dev-box")).toBeFocused()
+    await page.keyboard.press("ArrowDown")
     await expect(row(page, "hk-edge")).toBeFocused()
     await page.keyboard.press("Enter")
     await expect(detailTitle(page)).toHaveText("香港边缘节点")
     await page.keyboard.press("Escape")
 
     const list = page.locator("#server-list")
-    const claude = list.getByRole("button", { name: "将 hk-edge 分发给 Claude Code" })
-    const universal = list.getByRole("button", { name: "将 hk-edge 分发给 通用目录" })
+    const claude = list.getByRole("button", { name: "将 香港边缘节点 分发给 Claude Code" })
+    const universal = list.getByRole("button", { name: "将 香港边缘节点 分发给 通用目录" })
     await claude.focus()
     await page.keyboard.press("ArrowRight")
     await expect(universal).toBeFocused()
@@ -637,7 +668,7 @@ test.describe("纯键盘流程", () => {
     await expect(claude).toBeFocused()
     await page.keyboard.press("Space")
     await expect(claude).toHaveAttribute("aria-pressed", "false")
-    await expect(toastText(page, "hk-edge 已停止分发给 Claude Code")).toBeVisible()
+    await expect(toastText(page, "香港边缘节点 已停止分发给 Claude Code")).toBeVisible()
     await page.keyboard.press("Space")
     await expect(claude).toHaveAttribute("aria-pressed", "true")
   })
@@ -675,8 +706,8 @@ test.describe("纯键盘流程", () => {
     await page.keyboard.press("Control+k")
     await page.keyboard.type("切换为「确认变更」")
     await page.keyboard.press("Enter")
-    await expect(toastText(page, "dev-box 已切换为「确认变更」")).toBeVisible()
+    await expect(toastText(page, "开发机 已切换为「确认变更」")).toBeVisible()
     await back(page)
-    await expect(page.getByRole("button", { name: /^dev-box 的档位：确认变更/ })).toBeVisible()
+    await expect(page.getByRole("button", { name: /^开发机 的档位：确认变更$/ })).toBeVisible()
   })
 })

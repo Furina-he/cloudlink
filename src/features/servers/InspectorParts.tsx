@@ -73,12 +73,17 @@ export function CompileSummary({ asset, dirty }: { asset: Asset; dirty: boolean 
   const { compileTargets } = useAgentOptions()
   const statuses = useMemo(() => Object.values(statusByKey), [statusByKey])
   const { errors, warnings, blockedByOthers } = useMemo(() => selectAssetCompile(statuses, asset.id), [statuses, asset.id])
-  // 定位到出问题的那一份：这项资源自己的错误、警告优先，其次是被其他资源拖累受阻的
+  // 定位到出问题的那一份，并默认打开出问题的对应文件（P10d 按文件归属展示告警）
   const showLint = () => {
     const own = (level: "error" | "warning") => statuses.find((s) => s.lint.some((l) => l.assetId === asset.id && l.level === level))
     const target = own("error") ?? blockedByOthers[0] ?? own("warning")
     if (target) useUIStore.getState().setPreviewKey(compileKey(target))
-    useUIStore.getState().openPreview({ file: "SKILL.md", lint: true })
+    const first =
+      target?.lint.find((l) => l.assetId === asset.id && l.level === "error") ??
+      target?.lint.find((l) => l.level === "error") ??
+      target?.lint.find((l) => l.assetId === asset.id && l.level === "warning") ??
+      target?.lint.find((l) => l.level === "warning")
+    useUIStore.getState().openPreview({ file: first?.file ?? "SKILL.md", lint: true })
   }
   const link = "h-auto gap-1 p-0 text-xs"
   const blocked = errors > 0 || blockedByOthers.length > 0

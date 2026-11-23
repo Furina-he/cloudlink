@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { copy } from "@/lib/copy"
 import { isProbing, useProbeStore } from "@/stores/probe"
+import { useUIStore } from "@/stores/ui"
 import { serverActions } from "./actions"
 import { ConnectionDialog } from "./ConnectionDialog"
 import { TestResult, useConnectionTest } from "./ConnectionTest"
@@ -35,6 +36,7 @@ function ConnectionGroup({ asset, onEdit }: { asset: ServerAsset; onEdit: () => 
   const keyPath = c.auth ? (c.auth.identityFile.windows ?? Object.values(c.auth.identityFile)[0]) : undefined
   return (
     <ListGroup id="detail-connection" title={copy.detail.groups.connection} action={<Button variant="ghost" size="sm" onClick={onEdit}><PencilIcon data-icon="inline-start" />{copy.detail.edit}</Button>}>
+      <PrefRow label={copy.detail.rows.sshHost}><CopyValue value={c.sshAlias} label={copy.detail.rows.sshHost} className="max-w-80" /></PrefRow>
       <PrefRow label={copy.detail.rows.address} hint={imported ? copy.connection.importedFrom(sortEnvs(c.definedIn).map(copy.env.long).join("、")) : undefined}><CopyValue value={address} label={copy.detail.rows.address} className="max-w-80" /></PrefRow>
       {method && <PrefRow label={copy.detail.rows.auth}>{method === "key" && keyPath ? <CopyValue value={keyPath} label={copy.detail.rows.auth} className="max-w-80" /> : <span className="text-xs text-fg-2">{copy.detail.authMethod[method]}</span>}</PrefRow>}
       <PrefRow label={copy.detail.rows.jump}>{jump ? <CopyValue value={jump} label={copy.detail.rows.jump} className="max-w-80" /> : <span className="text-xs text-muted-foreground">{copy.common.none}</span>}</PrefRow>
@@ -82,13 +84,19 @@ export function ServerDetail({ asset }: { asset: ServerAsset }) {
   const titleRef = useRef<HTMLHeadingElement>(null)
   const conn = useConnectionTest(form, asset.id, asset.id)
   const [editor, setEditor] = useState<"connection" | "profile" | null>(null)
+  const pendingEdit = useUIStore((s) => (s.pendingEdit?.assetId === asset.id ? s.pendingEdit.kind : null))
+  const activeEditor = editor ?? pendingEdit
+  const closeEditor = () => {
+    setEditor(null)
+    useUIStore.getState().consumePendingEdit(asset.id)
+  }
   const edit = () => setEditor("connection")
   const runTest = () => void conn.run()
   const convert = () => void serverActions.convertToKey(asset.id)
   return (
     <FormProvider {...form}>
       <DetailPage>
-        <DetailHeader asset={asset} name={asset.name} production={asset.production} titleRef={titleRef} conn={conn} onTest={runTest} onEditConnection={edit} onEditProfile={() => setEditor("profile")} />
+        <DetailHeader asset={asset} name={asset.name} titleRef={titleRef} conn={conn} onTest={runTest} onEditConnection={edit} onEditProfile={() => setEditor("profile")} />
         <TestResult className="empty:hidden" test={conn.test} current={conn.current} method={conn.method} assetId={asset.id} onConvert={convert} />
         <div className="empty:hidden"><CompileSummary asset={asset} dirty={form.formState.isDirty} /></div>
         <PermissionGroup asset={asset} problems={<ServerProblems asset={asset} onTest={runTest} onConvert={convert} onEdit={edit} />} />
@@ -98,8 +106,8 @@ export function ServerDetail({ asset }: { asset: ServerAsset }) {
         <RulesGroup rules={asset.guardrails.rules} />
         <RecentActivityGroup assetId={asset.id} />
       </DetailPage>
-      <ConnectionDialog asset={asset} open={editor === "connection"} onOpenChange={(open) => !open && setEditor(null)} />
-      {editor === "profile" && <ProfileDialog asset={asset} onClose={() => setEditor(null)} />}
+      <ConnectionDialog asset={asset} open={activeEditor === "connection"} onOpenChange={(open) => !open && closeEditor()} />
+      {activeEditor === "profile" && <ProfileDialog asset={asset} onClose={closeEditor} />}
       <DraftPreview control={form.control} asset={asset} dirty={form.formState.isDirty} />
     </FormProvider>
   )

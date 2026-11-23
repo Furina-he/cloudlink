@@ -88,7 +88,7 @@ test.describe("P8c GitHub 归属与范围", () => {
       await expect(page.getByText("登录有效", { exact: true })).toBeVisible()
       await expect(page.getByRole("button", { name: "重新核对", exact: true })).toHaveCount(1)
       await expect(page.getByRole("button", { name: "去登录", exact: true })).toHaveCount(0)
-      await expect(page.getByRole("button", { name: "将 github 分发给 通用目录", exact: true })).toBeDisabled()
+      await expect(page.getByRole("button", { name: "将 GitHub 分发给 通用目录", exact: true })).toBeDisabled()
       const after = await github(page)
       expect(after.cli.envStates.windows?.authenticated).toBe(true)
       expect(after.agent.agents).toEqual(before.agent.agents)

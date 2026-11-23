@@ -1,6 +1,6 @@
-# hk-edge — Hong Kong edge proxy node
+# Hong Kong edge proxy node (hk-edge)
 
-> Production | Mode: confirm-changes | Snapshot: 2026-10-27
+> Mode: confirm-changes | Snapshot: 2026-10-27
 
 ## Connect
 Pass exactly one quoted remote command after `--`; the stable ID maps to the private SSH configuration. Do not replace this entry with a direct alias:

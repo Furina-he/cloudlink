@@ -3,10 +3,10 @@ import type { Asset, AssetInput, CliAsset, CliAssetInput, Service, ServerAsset, 
 import type { CliFormValues, ServerFormValues } from "@/lib/schemas"
 import { formValuesOf, serviceInputOf, toAssetInput } from "./serverForm"
 
-export const cliValuesOf = (a: CliAsset): CliFormValues => structuredClone({ name: a.name, production: a.production, summary: a.summary, rules: a.guardrails.rules, notes: a.notes })
+export const cliValuesOf = (a: CliAsset): CliFormValues => structuredClone({ name: a.name, summary: a.summary, rules: a.guardrails.rules, notes: a.notes })
 
 export function cliInputOf(v: CliFormValues, a: Pick<CliAsset, "id" | "cliProvider" | "account">): CliAssetInput {
-  return { id: a.id, type: "cli", cliProvider: a.cliProvider, account: a.account, name: v.name.trim(), production: v.production, summary: v.summary, guardrails: { rules: v.rules }, notes: v.notes }
+  return { id: a.id, type: "cli", cliProvider: a.cliProvider, account: a.account, name: v.name.trim(), summary: v.summary, guardrails: { rules: v.rules }, notes: v.notes }
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
