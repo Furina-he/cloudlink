@@ -593,8 +593,22 @@ pub(super) fn capture(spec: &Spec, stdin: &[u8]) -> Result<Finished> {
 fn id(value: &Value) -> Option<String> {
     value
         .as_str()
+        .filter(|s| !s.is_empty())
         .map(String::from)
         .or_else(|| value.as_u64().map(|id| id.to_string()))
+}
+
+/// CloudLink persists GitHub GraphQL `node_id` for users/owners and `repo:<node_id>`
+/// for repositories. Real GitHub REST API payloads carry both numeric `id` and
+/// `node_id`; prefer `node_id` and fall back to `id` only when `node_id` is absent.
+fn github_node_id(value: &Value) -> Option<String> {
+    id(&value["node_id"]).or_else(|| id(&value["id"]))
+}
+
+fn github_repo_id(value: &Value) -> Option<String> {
+    id(&value["node_id"])
+        .map(|node| format!("repo:{node}"))
+        .or_else(|| id(&value["id"]))
 }
 fn github_state(route: &Value) -> &Value {
     &route["github"]["envStates"][route["envId"].as_str().unwrap_or_default()]
@@ -773,33 +787,17 @@ fn force_targets_default(input: &Value, default_branch: &str) -> bool {
         })
 }
 
-pub(super) fn github_preflight(manifest: &Value, route: &Value, input: &Value) -> Result<Value> {
-    let identity = gh_query(manifest, route, input, "user")?;
-    if id(&identity["id"]) != id(&github_state(route)["identity"]["id"]) || id(&identity["id"]).is_none() {
+fn verify_github_identity(route: &Value, identity: &Value) -> Result<String> {
+    let actual = github_node_id(identity).ok_or_else(|| Error::new("cli-account"))?;
+    let expected = id(&github_state(route)["identity"]["id"]).ok_or_else(|| Error::new("cli-account"))?;
+    if actual != expected {
         return Err(Error::new("cli-account"));
     }
-    let full = if input["tool"] == "git" {
-        Some(git_target(manifest, route, input)?)
-    } else {
-        repo_name(route, input)?
-    };
-    let Some(full) = full else {
-        return Ok(json!({"id":id(&identity["id"]),"login":identity["login"],"host":route["github"]["host"]}));
-    };
-    let mut parts = full.split('/');
-    let owner = parts.next().unwrap_or_default();
-    let repo = parts.next().unwrap_or_default();
-    if parts.next().is_some()
-        || owner.is_empty()
-        || repo.is_empty()
-        || !full
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"._-/".contains(&byte))
-    {
-        return Err(Error::new("cli-scope"));
-    }
-    let target = gh_query(manifest, route, input, &format!("repos/{owner}/{repo}"))?;
-    let repo_id = id(&target["id"]).ok_or_else(|| Error::new("cli-scope"))?;
+    Ok(actual)
+}
+
+fn verify_github_target(route: &Value, input: &Value, identity: &Value, identity_id: &str, target: &Value) -> Result<Value> {
+    let repo_id = github_repo_id(target).ok_or_else(|| Error::new("cli-scope"))?;
     if input["tool"] == "git"
         && force_targets_default(
             input,
@@ -810,7 +808,9 @@ pub(super) fn github_preflight(manifest: &Value, route: &Value, input: &Value) -
     {
         return Err(Error::new("github-default-force"));
     }
-    if id(&target["owner"]["id"]) != id(&route["github"]["owner"]["id"]) {
+    let owner_id = github_node_id(&target["owner"]).ok_or_else(|| Error::new("cli-scope"))?;
+    let expected_owner_id = id(&route["github"]["owner"]["id"]).ok_or_else(|| Error::new("cli-scope"))?;
+    if owner_id != expected_owner_id {
         return Err(Error::new("cli-scope"));
     }
     let github = &route["github"];
@@ -833,8 +833,61 @@ pub(super) fn github_preflight(manifest: &Value, route: &Value, input: &Value) -
         return Err(Error::new("cli-scope"));
     }
     Ok(
-        json!({"id":id(&identity["id"]),"login":identity["login"],"host":github["host"],"repoId":repo_id,"ownerId":id(&target["owner"]["id"]),"name":target["full_name"],"defaultBranch":target["default_branch"]}),
+        json!({"id":identity_id,"login":identity["login"],"host":github["host"],"repoId":repo_id,"ownerId":owner_id,"name":target["full_name"],"defaultBranch":target["default_branch"]}),
     )
+}
+
+fn filter_discovered_repos(route: &Value, rows: &[Value]) -> Result<Vec<Value>> {
+    let expected_owner_id = id(&route["github"]["owner"]["id"]).ok_or_else(|| Error::new("cli-scope"))?;
+    let mut out = Vec::new();
+    for repo in rows {
+        if github_node_id(&repo["owner"]).as_deref() != Some(expected_owner_id.as_str()) {
+            continue;
+        }
+        let Some(repo_id) = github_repo_id(repo) else {
+            return Err(Error::new("execution-identity-unavailable"));
+        };
+        let included = |key: &str| {
+            route["github"][key]
+                .as_array()
+                .is_some_and(|ids| ids.iter().any(|value| id(value).as_deref() == Some(&repo_id)))
+        };
+        if if route["github"]["mode"] == "auto" {
+            !included("excludedRepoIds")
+        } else {
+            included("selectedRepoIds")
+        } {
+            out.push(json!({"id":repo_id,"name":repo["full_name"],"defaultBranch":repo["default_branch"],"visibility":repo["visibility"]}));
+        }
+    }
+    Ok(out)
+}
+
+pub(super) fn github_preflight(manifest: &Value, route: &Value, input: &Value) -> Result<Value> {
+    let identity = gh_query(manifest, route, input, "user")?;
+    let identity_id = verify_github_identity(route, &identity)?;
+    let full = if input["tool"] == "git" {
+        Some(git_target(manifest, route, input)?)
+    } else {
+        repo_name(route, input)?
+    };
+    let Some(full) = full else {
+        return Ok(json!({"id":identity_id,"login":identity["login"],"host":route["github"]["host"]}));
+    };
+    let mut parts = full.split('/');
+    let owner = parts.next().unwrap_or_default();
+    let repo = parts.next().unwrap_or_default();
+    if parts.next().is_some()
+        || owner.is_empty()
+        || repo.is_empty()
+        || !full
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-/".contains(&byte))
+    {
+        return Err(Error::new("cli-scope"));
+    }
+    let target = gh_query(manifest, route, input, &format!("repos/{owner}/{repo}"))?;
+    verify_github_target(route, input, &identity, &identity_id, &target)
 }
 
 pub(super) fn discover(
@@ -871,26 +924,7 @@ pub(super) fn discover(
         let rows = result
             .as_array()
             .ok_or_else(|| Error::new("execution-identity-unavailable"))?;
-        for repo in rows {
-            if id(&repo["owner"]["id"]) != id(&route["github"]["owner"]["id"]) {
-                continue;
-            }
-            let Some(repo_id) = id(&repo["id"]) else {
-                return Err(Error::new("execution-identity-unavailable"));
-            };
-            let included = |key: &str| {
-                route["github"][key]
-                    .as_array()
-                    .is_some_and(|ids| ids.iter().any(|value| id(value).as_deref() == Some(&repo_id)))
-            };
-            if if route["github"]["mode"] == "auto" {
-                !included("excludedRepoIds")
-            } else {
-                included("selectedRepoIds")
-            } {
-                repos.push(json!({"id":repo_id,"name":repo["full_name"],"defaultBranch":repo["default_branch"],"visibility":repo["visibility"]}));
-            }
-        }
+        repos.extend(filter_discovered_repos(route, rows)?);
         if rows.len() < 100 {
             let value = json!({"status":"complete","repos":repos});
             let bytes = serde_json::to_vec(&value).map_err(|_| Error::new("execution-output-invalid"))?;
@@ -1052,5 +1086,146 @@ mod tests {
         );
         assert!(repo_name(&route, &json!({"args":["pr","list"]})).is_err());
         assert!(repo_name(&route, &json!({"args":["pr","list","-R","team/a","--repo=team/b"]})).is_err());
+    }
+
+    #[test]
+    fn github_verification_matches_rest_node_ids_and_prefixed_repo_ids() {
+        let route = json!({
+            "envId": "windows",
+            "github": {
+                "host": "github.com",
+                "owner": { "id": "U_kgDOUser1", "login": "octo", "kind": "user" },
+                "mode": "auto",
+                "selectedRepoIds": [],
+                "excludedRepoIds": ["repo:R_kgDOSecret"],
+                "envStates": {
+                    "windows": {
+                        "status": "complete",
+                        "identity": { "id": "U_kgDOUser1", "login": "octo", "host": "github.com" },
+                        "repos": [
+                            { "id": "repo:R_kgDOApp1", "name": "octo/app", "ownerId": "U_kgDOUser1", "selected": true }
+                        ]
+                    }
+                }
+            }
+        });
+        let rest_user = json!({ "id": 12345678, "node_id": "U_kgDOUser1", "login": "octo" });
+        let identity_id = verify_github_identity(&route, &rest_user).unwrap();
+        assert_eq!(identity_id, "U_kgDOUser1");
+
+        let wrong_user = json!({ "id": 12345678, "node_id": "U_kgDOOther", "login": "other" });
+        assert_eq!(
+            verify_github_identity(&route, &wrong_user).unwrap_err().reason,
+            "cli-account"
+        );
+
+        let allowed_repo = json!({
+            "id": 987654321,
+            "node_id": "R_kgDOApp1",
+            "full_name": "octo/app",
+            "default_branch": "main",
+            "owner": { "id": 12345678, "node_id": "U_kgDOUser1", "login": "octo" }
+        });
+        let verified = verify_github_target(
+            &route,
+            &json!({"tool": null, "args": ["repo", "view", "octo/app"]}),
+            &rest_user,
+            &identity_id,
+            &allowed_repo,
+        )
+        .unwrap();
+        assert_eq!(verified["id"], "U_kgDOUser1");
+        assert_eq!(verified["ownerId"], "U_kgDOUser1");
+        assert_eq!(verified["repoId"], "repo:R_kgDOApp1");
+
+        let excluded_repo = json!({
+            "id": 987654322,
+            "node_id": "R_kgDOSecret",
+            "full_name": "octo/secret",
+            "default_branch": "main",
+            "owner": { "id": 12345678, "node_id": "U_kgDOUser1", "login": "octo" }
+        });
+        assert_eq!(
+            verify_github_target(
+                &route,
+                &json!({"tool": null, "args": ["repo", "view", "octo/secret"]}),
+                &rest_user,
+                &identity_id,
+                &excluded_repo,
+            )
+            .unwrap_err()
+            .reason,
+            "cli-scope"
+        );
+
+        let transferred_repo = json!({
+            "id": 987654323,
+            "node_id": "R_kgDOMoved",
+            "full_name": "other/app",
+            "default_branch": "main",
+            "owner": { "id": 999999, "node_id": "O_kgDOOther", "login": "other" }
+        });
+        assert_eq!(
+            verify_github_target(
+                &route,
+                &json!({"tool": null, "args": ["repo", "view", "other/app"]}),
+                &rest_user,
+                &identity_id,
+                &transferred_repo,
+            )
+            .unwrap_err()
+            .reason,
+            "cli-scope"
+        );
+    }
+
+    #[test]
+    fn github_discover_filters_by_owner_node_id_and_emits_prefixed_repo_ids() {
+        let route = json!({
+            "envId": "windows",
+            "github": {
+                "host": "github.com",
+                "owner": { "id": "U_kgDOUser1", "login": "octo", "kind": "user" },
+                "mode": "auto",
+                "selectedRepoIds": [],
+                "excludedRepoIds": ["repo:R_kgDOSecret"]
+            }
+        });
+        let rows = vec![
+            json!({
+                "id": 101,
+                "node_id": "R_kgDOApp1",
+                "full_name": "octo/app",
+                "default_branch": "main",
+                "visibility": "public",
+                "owner": { "id": 12345678, "node_id": "U_kgDOUser1" }
+            }),
+            json!({
+                "id": 102,
+                "node_id": "R_kgDOSecret",
+                "full_name": "octo/secret",
+                "default_branch": "main",
+                "visibility": "private",
+                "owner": { "id": 12345678, "node_id": "U_kgDOUser1" }
+            }),
+            json!({
+                "id": 103,
+                "node_id": "R_kgDOOther",
+                "full_name": "other/repo",
+                "default_branch": "main",
+                "visibility": "private",
+                "owner": { "id": 999999, "node_id": "O_kgDOOther" }
+            }),
+        ];
+        let discovered = filter_discovered_repos(&route, &rows).unwrap();
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(discovered[0]["id"], "repo:R_kgDOApp1");
+        assert_eq!(discovered[0]["name"], "octo/app");
+
+        let missing_owner = json!({ "envId": "windows", "github": { "mode": "auto" } });
+        assert_eq!(
+            filter_discovered_repos(&missing_owner, &rows).unwrap_err().reason,
+            "cli-scope"
+        );
     }
 }
