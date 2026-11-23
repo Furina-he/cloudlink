@@ -37,15 +37,13 @@ export function AgentPicker({
       return Object.fromEntries(agents.map((a) => [a.key, sharingKeys(a.key, deliveries).join(",")]))
     })
   )
-  const selected = agents
-    .map((a) => a.key)
-    .filter((k) => (pending && k in pending ? pending[k] : asset.agent.agents.includes(k)))
+  const selected = asset.agent.agents
 
   const onChange = (next: string[]) => {
     const added = next.find((k) => !selected.includes(k))
     const removed = selected.find((k) => !next.includes(k))
     const key = added ?? removed
-    if (!key || (pending && key in pending)) return
+    if (!key) return
     const agent = agents.find((a) => a.key === key)
     if (agent) serverActions.toggleAgent(asset, agent, !!added)
   }

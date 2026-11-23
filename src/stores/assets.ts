@@ -34,8 +34,8 @@ interface AssetState {
   lastSaved: Record<string, string>
   /** 刚新建或导入的资源：资源行短暂高亮（中性底色，约 2.4 秒，PRD 6.5、7.7） */
   freshIds: string[]
-  /** 正在提交中的 Agent 分发视觉乐观态（不改权威 byId，避免污染队列里的 latest-builder） */
-  pendingAgents: Record<string, Record<string, boolean>>
+  /** 正在提交中的 Agent 分发序号（用于按钮即时 busy 反馈，不伪造权威选择态） */
+  pendingAgents: Record<string, Record<string, number>>
   /** 再高亮一次：添加流程在保存之后还要装密钥、同步，关闭弹窗时才让新行亮起来 */
   flash: (ids: string[]) => void
 
@@ -68,6 +68,7 @@ const markFresh = (set: (fn: (s: AssetState) => Partial<AssetState>) => void, id
 
 export const useAssetStore = create<AssetState>()((set, get) => {
   const pending = new Map<string, Promise<void>>()
+  let pendingSeq = 0
   const enqueue = <T,>(id: string, run: () => Promise<T>): Promise<T> => {
     const task = (pending.get(id) ?? Promise.resolve()).then(run)
     // 尾节点始终完成，单次失败仍返回调用方，但不能阻塞之后的保存。
@@ -158,16 +159,17 @@ export const useAssetStore = create<AssetState>()((set, get) => {
     },
 
     setDistribute: (id, agentKey, on) => {
+      const seq = ++pendingSeq
       set((s) => ({
         pendingAgents: {
           ...s.pendingAgents,
-          [id]: { ...s.pendingAgents[id], [agentKey]: on },
+          [id]: { ...s.pendingAgents[id], [agentKey]: seq },
         },
       }))
       const clearPending = () =>
         set((s) => {
           const cur = s.pendingAgents[id]
-          if (!cur || !(agentKey in cur)) return {}
+          if (!cur || cur[agentKey] !== seq) return {}
           const next = { ...cur }
           delete next[agentKey]
           const all = { ...s.pendingAgents }
