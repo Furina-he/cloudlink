@@ -26,7 +26,7 @@ import { OperationLine } from "./sections/OperationsSection"
 const NO_OPS: Operation[] = []
 
 export function DetailGroup({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
-  return <section className="flex flex-col gap-2"><div className="flex min-h-7 items-center gap-2"><h3 className="text-sm font-semibold">{title}</h3>{action && <span className="ml-auto">{action}</span>}</div>{children}</section>
+  return <section className="flex flex-col gap-2"><div className="flex min-h-7 items-center gap-2"><h3 className="text-[13px] font-semibold">{title}</h3>{action && <span className="ml-auto">{action}</span>}</div>{children}</section>
 }
 
 export function DetailPage({ children, onBlurCapture }: { children: ReactNode; onBlurCapture?: (e: React.FocusEvent) => void }) {
@@ -98,7 +98,7 @@ export function ProblemRow({ title, reason, action, onAction, busy }: { title: s
 export function RulesGroup({ rules }: { rules: Asset["guardrails"]["rules"] }) {
   return (
     <ListGroup id="detail-rules" title={copy.detail.groups.guardrails} count={rules.length}>
-      {rules.length === 0 ? <p className="px-3.5 py-3 text-sm text-muted-foreground">{copy.guardrails.empty}</p> : <ol className="divide-y divide-line-2" aria-labelledby="detail-rules">{rules.map((r, i) => <Item key={r.id} render={<li />} className="flex-nowrap items-start rounded-none"><span aria-hidden className="w-4 shrink-0 text-right text-xs text-muted-foreground tabular-nums">{i + 1}</span><span className="min-w-0 whitespace-pre-wrap wrap-anywhere select-text">{r.text}</span></Item>)}</ol>}
+      {rules.length === 0 ? <p className="px-3.5 py-3 text-xs text-muted-foreground">{copy.guardrails.empty}</p> : <ol className="divide-y divide-line-2" aria-labelledby="detail-rules">{rules.map((r, i) => <Item key={r.id} render={<li />} className="flex-nowrap items-start rounded-none text-[13px]"><span aria-hidden className="w-4 shrink-0 text-right text-xs text-muted-foreground tabular-nums">{i + 1}</span><span className="min-w-0 whitespace-pre-wrap wrap-anywhere select-text">{r.text}</span></Item>)}</ol>}
       <ListNote icon={<InfoIcon />}>{copy.detail.honest}</ListNote>
     </ListGroup>
   )
@@ -113,14 +113,14 @@ export function RecentActivityGroup({ assetId }: { assetId: string }) {
   return (
     <ListGroup id="detail-activity" title={copy.detail.groups.activity} action={<Button variant="ghost" size="sm" onClick={openFeed}>{copy.detail.viewAll}<ChevronRightIcon data-icon="inline-end" /></Button>}>
       {pendingNotes > 0 && <button type="button" onClick={openFeed} className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-[13px] outline-none hover:bg-card-2 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"><span aria-hidden className="size-1.5 rounded-full bg-signal" /><span className="flex-1">{copy.detail.notesPending(pendingNotes)}</span><ChevronRightIcon aria-hidden className="size-4 text-faint" /></button>}
-      {recent.length > 0 ? <Trace role="list" aria-label={copy.operations.listLabel} className="px-3.5 py-2">{recent.map((op) => <OperationLine key={op.id} op={op} />)}</Trace> : <p className="px-3.5 py-3 text-sm text-muted-foreground">{copy.detail.activityEmpty}</p>}
+      {recent.length > 0 ? <Trace role="list" aria-label={copy.operations.listLabel} className="px-3.5 py-2">{recent.map((op) => <OperationLine key={op.id} op={op} />)}</Trace> : <p className="px-3.5 py-3 text-xs text-muted-foreground">{copy.detail.activityEmpty}</p>}
     </ListGroup>
   )
 }
 
 export function SummaryRow({ summary }: { summary: string }) {
-  return <PrefRow label={copy.basic.summary} block><p className="whitespace-pre-wrap wrap-anywhere select-text">{summary || copy.detail.summaryEmpty}</p></PrefRow>
+  return <PrefRow label={copy.basic.summary} block><p className="text-[13px] leading-relaxed whitespace-pre-wrap wrap-anywhere select-text">{summary || copy.detail.summaryEmpty}</p></PrefRow>
 }
 export function NotesRow({ notes }: { notes: string }) {
-  return <PrefRow label={copy.detail.rows.notes} block><p className="whitespace-pre-wrap wrap-anywhere select-text">{notes || copy.detail.notesEmpty}</p></PrefRow>
+  return <PrefRow label={copy.detail.rows.notes} block><p className="text-[13px] leading-relaxed whitespace-pre-wrap wrap-anywhere select-text">{notes || copy.detail.notesEmpty}</p></PrefRow>
 }

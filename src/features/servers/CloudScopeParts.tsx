@@ -3,7 +3,7 @@ import { useId, useMemo, useRef, useState } from "react"
 import { useWatch, type UseFormReturn } from "react-hook-form"
 
 import type { Asset, CliAsset, CliScopeItem, CloudScopeConfig, CloudScopeMode, IpcError } from "@/bindings"
-import { CopyValue, ListGroup, PrefRow } from "@/components/app/SettingsList"
+import { CopyValue, ListGroup, ListNote, PrefRow } from "@/components/app/SettingsList"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -58,12 +58,12 @@ export function CloudSnapshotNote({
   return (
     <Alert variant="default">
       <InfoIcon />
-      <AlertDescription className="flex flex-col gap-2">
+      <AlertDescription className="flex flex-col gap-2 text-xs leading-normal">
         <span>{text}</span>
         {reason && <span className="text-xs text-muted-foreground">{reason}</span>}
         {onRetry && (
           <span>
-            <Button type="button" variant="outline" size="sm" disabled={loading} onClick={onRetry}>
+            <Button type="button" variant="outline" size="xs" disabled={loading} onClick={onRetry}>
               {loading ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}
               {copy.cloudScope.refresh}
             </Button>
@@ -122,24 +122,43 @@ export function CloudScopeFields({
   }
 
   return (
-    <FieldGroup className="gap-4">
-      <Field>
-        <FieldLabel id={`${id}-mode`}>{copy.cloudScope.mode}</FieldLabel>
-        <ToggleGroup aria-labelledby={`${id}-mode`} variant="outline" size="sm" value={[draft.mode]} onValueChange={setMode}>
-          <ToggleGroupItem value="auto">{copy.cloudScope.modeLabel.auto}</ToggleGroupItem>
-          <ToggleGroupItem value="manual">{copy.cloudScope.modeLabel.manual}</ToggleGroupItem>
-        </ToggleGroup>
-        <FieldDescription>{draft.mode === "auto" ? copy.cloudScope.autoHint : copy.cloudScope.manualHint}</FieldDescription>
+    <FieldGroup className="gap-3">
+      <Field className="gap-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <FieldLabel id={`${id}-mode`} className="text-[13px] font-medium">
+            {copy.cloudScope.mode}
+          </FieldLabel>
+          <ToggleGroup
+            aria-labelledby={`${id}-mode`}
+            variant="outline"
+            size="sm"
+            spacing={0}
+            value={[draft.mode]}
+            onValueChange={setMode}
+          >
+            <ToggleGroupItem value="auto" className="px-3">
+              {copy.cloudScope.modeLabel.auto}
+            </ToggleGroupItem>
+            <ToggleGroupItem value="manual" className="px-3">
+              {copy.cloudScope.modeLabel.manual}
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+        <FieldDescription className="text-xs leading-normal">
+          {draft.mode === "auto" ? copy.cloudScope.autoHint : copy.cloudScope.manualHint}
+        </FieldDescription>
         {draft.mode === "manual" && initialMode === "manual" && (
-          <FieldDescription>{copy.cloudScope.manualPreserved}</FieldDescription>
+          <FieldDescription className="text-xs leading-normal">{copy.cloudScope.manualPreserved}</FieldDescription>
         )}
         {draft.mode === "auto" && initialMode === "manual" && (
-          <FieldDescription>{copy.cloudScope.expansion(newlyProvided)}</FieldDescription>
+          <FieldDescription className="text-xs leading-normal">{copy.cloudScope.expansion(newlyProvided)}</FieldDescription>
         )}
       </Field>
       <Field>
         <div className="flex items-center justify-between gap-2">
-          <FieldLabel htmlFor={`${id}-search`}>{copy.cloudScope.search}</FieldLabel>
+          <FieldLabel htmlFor={`${id}-search`} className="text-[13px] font-medium">
+            {copy.cloudScope.search}
+          </FieldLabel>
           {onRefresh && (
             <Button type="button" variant="ghost" size="xs" disabled={loading} onClick={onRefresh}>
               {loading ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}
@@ -149,6 +168,7 @@ export function CloudScopeFields({
         </div>
         <Input
           id={`${id}-search`}
+          className="text-[13px] md:text-[13px]"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder={copy.cloudScope.searchPlaceholder}
@@ -156,13 +176,13 @@ export function CloudScopeFields({
       </Field>
       {loading && scope.length === 0 ? (
         <div aria-busy="true" aria-label={copy.cloudScope.loading} className="flex flex-col gap-2">
-          <Skeleton className="h-10" />
-          <Skeleton className="h-10" />
-          <Skeleton className="h-10" />
+          <Skeleton className="h-9" />
+          <Skeleton className="h-9" />
+          <Skeleton className="h-9" />
         </div>
       ) : shown.length === 0 ? (
-        <Empty className="border border-line p-4">
-          <EmptyDescription>
+        <Empty className="rounded-lg border border-line p-4">
+          <EmptyDescription className="text-xs leading-normal">
             {normalized
               ? copy.cloudScope.noMatch
               : draft.mode === "auto"
@@ -179,7 +199,7 @@ export function CloudScopeFields({
         </Empty>
       ) : (
         <ItemGroup
-          className="gap-0 divide-y divide-line-2 overflow-hidden rounded-[10px] border border-line"
+          className="gap-0 divide-y divide-line-2 overflow-hidden rounded-lg border border-line"
           aria-label={copy.cloudScope.scopeTitle}
         >
           {shown.map((item) => {
@@ -189,7 +209,7 @@ export function CloudScopeFields({
             const linked = aliasOf(item.linkedAssetId)
             const fieldId = `${id}-item-${item.id}`
             return (
-              <Item key={item.id} role="listitem" size="sm">
+              <Item key={item.id} role="listitem" size="xs" className="px-3 py-2 text-xs">
                 <ItemContent>
                   <Field orientation="horizontal" className="min-w-0 gap-2.5">
                     <Checkbox
@@ -301,19 +321,20 @@ export function CloudResourcesGroup({
       title={copy.cloudScope.listTitle}
       count={items.length}
       action={
-        <Button type="button" variant="ghost" size="xs" disabled={loading} onClick={onRefresh}>
+        <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={onRefresh}>
           {loading ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}
           {copy.cloudScope.refresh}
         </Button>
       }
     >
-      <div className="px-3.5 py-3">
+      <div className="px-3.5 py-2.5">
         <Field>
           <FieldLabel htmlFor={id} className="sr-only">
             {copy.cloudScope.search}
           </FieldLabel>
           <Input
             id={id}
+            className="text-[13px] md:text-[13px]"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={copy.cloudScope.searchPlaceholder}
@@ -322,7 +343,7 @@ export function CloudResourcesGroup({
       </div>
       {shown.length === 0 ? (
         <Empty className="border-0 p-4">
-          <EmptyDescription>
+          <EmptyDescription className="text-xs leading-normal">
             {query.trim()
               ? copy.cloudScope.noMatch
               : mode === "auto"
@@ -341,9 +362,9 @@ export function CloudResourcesGroup({
         <Table className="table-fixed text-xs" aria-label={copy.cloudScope.table}>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[46%]">{copy.cloudScope.columns.name}</TableHead>
-              <TableHead className="w-[22%]">{copy.cloudScope.columns.kind}</TableHead>
-              <TableHead className="w-[32%]">{copy.cloudScope.columns.link}</TableHead>
+              <TableHead className="h-9 w-[46%] text-xs text-muted-foreground first:pl-3.5">{copy.cloudScope.columns.name}</TableHead>
+              <TableHead className="h-9 w-[22%] text-xs text-muted-foreground">{copy.cloudScope.columns.kind}</TableHead>
+              <TableHead className="h-9 w-[32%] text-xs text-muted-foreground last:pr-3.5">{copy.cloudScope.columns.link}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -351,9 +372,9 @@ export function CloudResourcesGroup({
               const linked = aliasOf(item.linkedAssetId)
               return (
                 <TableRow key={item.id}>
-                  <TableCell className="font-mono whitespace-normal wrap-anywhere">{item.name}</TableCell>
+                  <TableCell className="font-mono whitespace-normal wrap-anywhere first:pl-3.5">{item.name}</TableCell>
                   <TableCell>{copy.cli.kind[item.kind]}</TableCell>
-                  <TableCell className="whitespace-normal">
+                  <TableCell className="whitespace-normal last:pr-3.5">
                     <span className="flex flex-wrap items-center gap-1.5">
                       {linked ? (
                         <Badge variant="outline" className="shrink-0">
@@ -376,7 +397,7 @@ export function CloudResourcesGroup({
           </TableBody>
         </Table>
       )}
-      <p className="px-3.5 py-2.5 text-xs text-muted-foreground">{copy.cloudScope.relationNote}</p>
+      <ListNote icon={<InfoIcon />}>{copy.cloudScope.relationNote}</ListNote>
     </ListGroup>
   )
 }

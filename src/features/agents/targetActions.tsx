@@ -65,7 +65,7 @@ export const targetActions = {
       return
     }
     void withBusy(ids, async () => {
-      for (const id of ids) await useTargetStore.getState().setEnabled(id, true)
+      await useTargetStore.getState().setEnabledMany(ids, true)
       const label = targetLabel(targets[0])
       const current = useTargetStore.getState().targets.filter((t) => ids.includes(t.id))
       const outcome = targetSyncOutcome(current, currentDeliverySnapshot())
@@ -113,9 +113,10 @@ export function TargetDialogs() {
     if (!shown || chosen.length === 0) return
     setBusy(true)
     try {
-      for (const t of chosen) {
-        if (shown.kind === "disable") await useTargetStore.getState().setEnabled(t.id, false)
-        else await useTargetStore.getState().removeCustom(t.id)
+      if (shown.kind === "disable") {
+        await useTargetStore.getState().setEnabledMany(chosen.map((t) => t.id), false)
+      } else {
+        for (const t of chosen) await useTargetStore.getState().removeCustom(t.id)
       }
       const remaining = currentDeliverySnapshot().deliveries.filter((d) => shown.targetIds.includes(d.targetId))
       const problems = remaining.filter((d) => d.status !== "conflict" && isDeliveryProblem(d))

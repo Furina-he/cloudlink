@@ -144,16 +144,58 @@ impl Backend {
         if !cfg!(test) {
             let tools = self.tools()?;
             let mut mismatches = BTreeMap::new();
+            let mut pending_checks = Vec::new();
+            let cache_guard = self.ssh_readback_cache.lock().ok();
             for asset in &assets {
                 for env in envs
                     .iter()
                     .filter(|e| e.available && (!self.paths.isolated || e.is_windows()))
                 {
                     if let Some(host) = ssh::managed::ManagedHost::from_asset(asset, env) {
-                        let fields = ssh::readback_mismatches(&tools, env, &host);
-                        if !fields.is_empty() {
-                            mismatches.insert((asset.id().to_string(), env.id.clone()), fields.join(", "));
+                        let key = super::backend::SshReadbackKey {
+                            env_id: env.id.clone(),
+                            alias: host.alias.clone(),
+                            host: host.host.clone(),
+                            port: host.port,
+                            user: host.user.clone(),
+                            ssh_exe: tools.windows_ssh.clone(),
+                            user_config: super::backend::file_stamp(&env.host_in_home(&[".ssh", "config"])),
+                            managed_config: super::backend::file_stamp(&env.host_in_home(&[".ssh", "cloudlink.conf"])),
+                        };
+                        if let Some(cached) = cache_guard.as_ref().and_then(|c| c.get(&key)) {
+                            if !cached.is_empty() {
+                                mismatches.insert((asset.id().to_string(), env.id.clone()), cached.join(", "));
+                            }
+                        } else {
+                            pending_checks.push((asset.id().to_string(), env, host, key));
                         }
+                    }
+                }
+            }
+            drop(cache_guard);
+            if !pending_checks.is_empty() {
+                let checked: Vec<_> = std::thread::scope(|scope| {
+                    let handles: Vec<_> = pending_checks
+                        .into_iter()
+                        .map(|(asset_id, env, host, key)| {
+                            let tools = &tools;
+                            scope.spawn(move || {
+                                let fields = ssh::readback_mismatches(tools, env, &host);
+                                (asset_id, env.id.clone(), key, fields)
+                            })
+                        })
+                        .collect();
+                    handles.into_iter().filter_map(|handle| handle.join().ok()).collect()
+                });
+                if let Ok(mut cache) = self.ssh_readback_cache.lock() {
+                    if cache.len() > 256 {
+                        cache.clear();
+                    }
+                    for (asset_id, env_id, key, fields) in checked {
+                        if !fields.is_empty() {
+                            mismatches.insert((asset_id, env_id), fields.join(", "));
+                        }
+                        cache.insert(key, fields);
                     }
                 }
             }
@@ -350,54 +392,79 @@ impl Backend {
             .lock()
             .map_err(|_| crate::error::AppError::internal("sharing state unavailable"))?
             .clone();
+        let mut active_units = Vec::new();
         for unit in &plan.units {
             handled.extend(unit.targets.iter().map(|t| t.id.clone()));
             if !unit.enabled() || !envs.iter().any(|e| e.id == unit.env_id) {
+                let db = self.database()?;
                 for target in &unit.targets {
-                    self.database()?.delete_delivery(&format!("dlv_{}", target.id))?;
+                    db.delete_delivery(&format!("dlv_{}", target.id))?;
                 }
                 continue;
             }
             let Some(env) = all_envs.iter().find(|e| e.id == unit.env_id) else {
                 continue;
             };
-            let key = (unit.env_id.clone(), plan.source_key(unit));
-            let hash = hashes.get(&key).map(String::as_str);
-            let outcome = if withdraw.contains(&key) {
-                deliver::inspect_unit(&self.paths, env, unit, hash).and_then(|checked| {
-                    if checked.status == DeliveryStatus::Conflict {
-                        return Ok(checked);
-                    }
-                    deliver::remove_unit(&self.paths, env, unit)?;
-                    if let Some((marker, files)) = sources.get(&key) {
-                        deliver::sync_unit(&self.paths, env, unit, files, marker)
-                    } else {
-                        deliver::inspect_unit(&self.paths, env, unit, hash)
-                    }
+            active_units.push((unit, env));
+        }
+        // Disjoint units (guaranteed non-overlapping by Plan::new) sync/inspect in parallel.
+        let unit_outcomes: Vec<_> = std::thread::scope(|scope| {
+            let handles: Vec<_> = active_units
+                .into_iter()
+                .map(|(unit, env)| {
+                    let paths = &self.paths;
+                    let key = (unit.env_id.clone(), plan.source_key(unit));
+                    let hash = hashes.get(&key).map(String::as_str);
+                    let should_withdraw = withdraw.contains(&key);
+                    let source = sources.get(&key);
+                    scope.spawn(move || {
+                        let mut saved_backup = None;
+                        let outcome = if should_withdraw {
+                            deliver::inspect_unit(paths, env, unit, hash).and_then(|checked| {
+                                if checked.status == DeliveryStatus::Conflict {
+                                    return Ok(checked);
+                                }
+                                deliver::remove_unit(paths, env, unit)?;
+                                if let Some((marker, files)) = source {
+                                    deliver::sync_unit(paths, env, unit, files, marker)
+                                } else {
+                                    deliver::inspect_unit(paths, env, unit, hash)
+                                }
+                            })
+                        } else if let Some((marker, files)) = source {
+                            deliver::sync_unit_auto(paths, env, unit, files, marker).map(|(delivery, saved)| {
+                                saved_backup = saved;
+                                delivery
+                            })
+                        } else {
+                            deliver::inspect_unit(paths, env, unit, hash)
+                        };
+                        let checked = outcome.unwrap_or_else(|error| deliver::broken(unit.owner(), &error));
+                        (unit, key, checked, saved_backup)
+                    })
                 })
-            } else if let Some((marker, files)) = sources.get(&key) {
-                deliver::sync_unit_auto(&self.paths, env, unit, files, marker).map(|(delivery, saved)| {
-                    if let Some(saved) = saved {
-                        backups.push(saved);
-                    }
-                    delivery
-                })
-            } else {
-                deliver::inspect_unit(&self.paths, env, unit, hash)
-            };
-            let checked = outcome.unwrap_or_else(|error| deliver::broken(unit.owner(), &error));
-            for target in &unit.targets {
-                let mut delivery = unit.decorate(checked.clone(), target, mismatches.contains(&target.id));
-                if delivery.status == DeliveryStatus::Ok {
-                    delivery.asset_ids = written_assets.get(&key).cloned();
+                .collect();
+            handles.into_iter().filter_map(|handle| handle.join().ok()).collect()
+        });
+        {
+            let db = self.database()?;
+            for (unit, key, checked, saved_backup) in unit_outcomes {
+                if let Some(saved) = saved_backup {
+                    backups.push(saved);
                 }
-                if delivery.status == DeliveryStatus::Missing
-                    && !mismatches.contains(&target.id)
-                    && sources.get(&key).is_some_and(|(_, files)| files.is_empty())
-                {
-                    self.database()?.delete_delivery(&delivery.id)?;
-                } else {
-                    self.database()?.upsert_delivery(&delivery)?;
+                for target in &unit.targets {
+                    let mut delivery = unit.decorate(checked.clone(), target, mismatches.contains(&target.id));
+                    if delivery.status == DeliveryStatus::Ok {
+                        delivery.asset_ids = written_assets.get(&key).cloned();
+                    }
+                    if delivery.status == DeliveryStatus::Missing
+                        && !mismatches.contains(&target.id)
+                        && sources.get(&key).is_some_and(|(_, files)| files.is_empty())
+                    {
+                        db.delete_delivery(&delivery.id)?;
+                    } else {
+                        db.upsert_delivery(&delivery)?;
+                    }
                 }
             }
         }

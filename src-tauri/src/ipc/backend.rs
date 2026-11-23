@@ -1,10 +1,10 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 
 use serde::Serialize;
 use tauri::Emitter;
@@ -45,6 +45,27 @@ impl EventSink for TauriEvents {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) struct SshReadbackKey {
+    pub env_id: EnvId,
+    pub alias: String,
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub ssh_exe: PathBuf,
+    pub user_config: Option<(u64, u128)>,
+    pub managed_config: Option<(u64, u128)>,
+}
+
+pub(super) fn file_stamp(path: &Path) -> Option<(u64, u128)> {
+    let meta = fs::symlink_metadata(path).ok()?;
+    if fsx::is_link(&meta) || !meta.is_file() {
+        return None;
+    }
+    let modified = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_nanos();
+    Some((meta.len(), modified))
+}
+
 pub struct Backend {
     pub paths: Paths,
     pub(super) db: Mutex<Db>,
@@ -52,6 +73,8 @@ pub struct Backend {
     pub(super) mutation: Mutex<()>,
     /// 本会话首次发现共用目录选择不一致；收窄后仍提示，明确开关一次后清除。
     pub(super) shared_mismatches: Mutex<BTreeSet<String>>,
+    /// 缓存 `ssh -G` 回读结果（按环境、主机字段与 ssh config 文件指纹），避免每次点击分发都重复启动子进程。
+    pub(super) ssh_readback_cache: Mutex<HashMap<SshReadbackKey, Vec<&'static str>>>,
     pub(super) credentials: Arc<dyn CredentialStore>,
     pub(super) system: Arc<dyn System>,
     pub(super) cli: cli::Service,
@@ -248,6 +271,7 @@ impl Backend {
             envs: Mutex::new(Vec::new()),
             mutation: Mutex::new(()),
             shared_mismatches: Mutex::new(BTreeSet::new()),
+            ssh_readback_cache: Mutex::new(HashMap::new()),
             credentials,
             system,
             cli,
@@ -396,45 +420,93 @@ impl Backend {
         })
     }
 
-    /// 这个环境里装了哪些 Agent：先看目录，Claude Code 和 Codex 再看 PATH 里有没有命令（2026-11-07）
+    /// 这个环境里装了哪些 Agent：先看目录，Claude Code、Codex 和 Antigravity 再看 PATH 里有没有命令（2026-11-07）
     fn detect_agents(&self, env: &EnvContext) -> Vec<DetectedAgent> {
         let mut agents = deliver::agents::detect(env);
-        for (brand, binary) in [
+        let missing: Vec<(AgentBrand, &str)> = [
             (AgentBrand::ClaudeCode, "claude"),
             (AgentBrand::Codex, "codex"),
             (AgentBrand::Antigravity, "agy"),
-        ] {
-            if !agents.iter().any(|a| a.brand == brand) && self.binary_on_path(env, binary) {
-                agents.push(deliver::agents::found(brand));
+        ]
+        .into_iter()
+        .filter(|(brand, _)| !agents.iter().any(|a| a.brand == *brand))
+        .collect();
+        if !missing.is_empty() {
+            let names: Vec<&str> = missing.iter().map(|(_, bin)| *bin).collect();
+            let found = self.binaries_on_path(env, &names);
+            for (brand, binary) in missing {
+                if found.contains(binary) {
+                    agents.push(deliver::agents::found(brand));
+                }
             }
         }
         deliver::agents::sort(&mut agents);
         agents
     }
 
-    fn binary_on_path(&self, env: &EnvContext, binary: &str) -> bool {
-        if self.paths.isolated || cfg!(test) || !env.available {
-            return false;
+    fn binaries_on_path(&self, env: &EnvContext, binaries: &[&str]) -> BTreeSet<String> {
+        let mut found = BTreeSet::new();
+        if self.paths.isolated || cfg!(test) || !env.available || binaries.is_empty() {
+            return found;
         }
-        let mut cmd = if let Some(distro) = env.distro() {
-            let mut c = proc::command("wsl.exe");
-            c.args(["-d", distro, "-e", "bash", "-ilc"]);
-            c.arg(format!("command -v {binary} >/dev/null 2>&1"));
-            c
-        } else {
-            let mut c = proc::command("where.exe");
-            c.arg(binary);
-            c
-        };
-        cmd.stdin(std::process::Stdio::null());
-        proc::run(
-            cmd,
-            RunOpts {
-                timeout: Duration::from_secs(5),
-                ..Default::default()
-            },
-        )
-        .is_ok_and(|o| o.success())
+        if let Some(distro) = env.distro() {
+            let mut cmd = proc::command("wsl.exe");
+            cmd.args([
+                "-d",
+                distro,
+                "-e",
+                "bash",
+                "-ilc",
+                r#"for b in "$@"; do command -v "$b" >/dev/null 2>&1 && printf '%s\n' "$b"; done"#,
+                "cloudlink-which",
+            ]);
+            cmd.args(binaries);
+            cmd.stdin(std::process::Stdio::null());
+            if let Ok(output) = proc::run(
+                cmd,
+                RunOpts {
+                    timeout: Duration::from_secs(5),
+                    ..Default::default()
+                },
+            ) && output.success()
+            {
+                for line in output.stdout_str().lines() {
+                    let trimmed = line.trim();
+                    if binaries.contains(&trimmed) {
+                        found.insert(trimmed.to_string());
+                    }
+                }
+            }
+            return found;
+        }
+        // Windows: check PATH directly without spawning where.exe per binary.
+        let path_var = std::env::var_os("PATH").unwrap_or_default();
+        let pathext: Vec<String> = std::env::var("PATHEXT")
+            .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
+            .split(';')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_ascii_lowercase())
+            .collect();
+        let dirs: Vec<PathBuf> = std::env::split_paths(&path_var).collect();
+        for &binary in binaries {
+            let has_ext = Path::new(binary).extension().is_some();
+            'dirs: for dir in &dirs {
+                if has_ext {
+                    if dir.join(binary).is_file() {
+                        found.insert(binary.to_string());
+                        break 'dirs;
+                    }
+                } else {
+                    for ext in &pathext {
+                        if dir.join(format!("{binary}{ext}")).is_file() {
+                            found.insert(binary.to_string());
+                            break 'dirs;
+                        }
+                    }
+                }
+            }
+        }
+        found
     }
 
     pub fn detect_environments(&self) -> Result<Vec<Environment>> {
@@ -720,24 +792,52 @@ impl Backend {
     }
 
     pub fn set_target_enabled(&self, id: &str, enabled: bool) -> Result<Target> {
+        let updated = self.set_targets_enabled(std::slice::from_ref(&id.to_string()), enabled)?;
+        updated
+            .into_iter()
+            .next()
+            .ok_or_else(|| AppError::ipc(IpcErrorId::NotFound))
+    }
+
+    /// 批量开关同一 Agent 在各运行环境的目录，只做一次对账与发布，减少重复磁盘与 WSL 开销。
+    pub fn set_targets_enabled(&self, ids: &[String], enabled: bool) -> Result<Vec<Target>> {
         let _edit = self.edit()?;
-        let mut target = self.require_target(id)?;
-        if !enabled && target.enabled {
+        let mut targets = Vec::with_capacity(ids.len());
+        for id in ids {
+            targets.push(self.require_target(id)?);
+        }
+        if !enabled {
             let plan = self.delivery_plan()?;
-            if let Some(unit) = plan.unit_for(&target.id) {
-                if !unit.targets.iter().any(|t| t.id != target.id && t.enabled) {
-                    let env = self.context(&target.env_id)?;
-                    deliver::remove_unit(&self.paths, &env, unit)?;
+            let id_set: BTreeSet<&str> = ids.iter().map(String::as_str).collect();
+            let mut removed_units = BTreeSet::new();
+            for target in &targets {
+                if !target.enabled {
+                    continue;
                 }
-            } else if !plan.windows_shared.contains_key(&target.id) {
-                let env = self.context(&target.env_id)?;
-                deliver::remove(&self.paths, &env, &target)?;
+                if let Some(unit) = plan.unit_for(&target.id) {
+                    let any_remaining = unit
+                        .targets
+                        .iter()
+                        .any(|t| !id_set.contains(t.id.as_str()) && t.enabled);
+                    if !any_remaining && removed_units.insert(unit.id().to_string()) {
+                        let env = self.context(&target.env_id)?;
+                        deliver::remove_unit(&self.paths, &env, unit)?;
+                    }
+                } else if !plan.windows_shared.contains_key(&target.id) {
+                    let env = self.context(&target.env_id)?;
+                    deliver::remove(&self.paths, &env, target)?;
+                }
             }
         }
-        target.enabled = enabled;
-        self.database()?.upsert_target(&target)?;
+        {
+            let db = self.database()?;
+            for target in &mut targets {
+                target.enabled = enabled;
+                db.upsert_target(target)?;
+            }
+        }
         self.publish_locked()?;
-        Ok(target)
+        Ok(targets)
     }
 
     pub fn add_custom_target(&self, req: AddCustomTargetRequest) -> Result<Target> {

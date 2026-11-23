@@ -128,8 +128,8 @@ export function NewServerForm() {
       setStage("enabling")
       const current = (useAssetStore.getState().byId[asset.id] ?? asset) as ServerAsset
       // 选了「暂不加入」、Agent 在哪里都连不上时先不同步；资源行上「加入 SSH 配置」之后再同步
-      if (selectCanDistribute(current).ok && !isUnreachableByAgents(current, useTargetStore.getState().environments)) {
-        for (const a of agents) await useAssetStore.getState().setDistribute(asset.id, a.key, true)
+      if (selectCanDistribute(current).ok && !isUnreachableByAgents(current, useTargetStore.getState().environments) && agents.length > 0) {
+        await useAssetStore.getState().setDistributeMany(asset.id, agents.map((a) => a.key), true)
       }
       void useProbeStore.getState().start(current.id).catch(toastError)
       announce((useAssetStore.getState().byId[asset.id] ?? current) as ServerAsset, true)

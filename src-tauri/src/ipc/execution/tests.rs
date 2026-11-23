@@ -145,6 +145,8 @@ fn runner_metadata_is_bounded_and_cannot_claim_a_trusted_hook_identity() {
     reported["caller"] = json!({"agent":"codex","provenance":"self-reported"});
     reported["sessionId"] = "fixture-session".into();
     assert!(valid_input(&reported));
+    reported["caller"] = json!({"agent":"antigravity","provenance":"self-reported"});
+    assert!(valid_input(&reported));
     for caller in [
         json!({"agent":"claude-code","provenance":"hook"}),
         json!({"agent":"not-a-known-agent","provenance":"self-reported"}),

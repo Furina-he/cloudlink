@@ -3,7 +3,7 @@ import { useId, useMemo, useRef, useState } from "react"
 import { useWatch, type UseFormReturn } from "react-hook-form"
 
 import type { CliAsset, CliScopeItem, GithubConfig, GithubOwner, IpcError, Relation } from "@/bindings"
-import { CopyValue, ListGroup, PrefRow } from "@/components/app/SettingsList"
+import { CopyValue, ListGroup, ListNote, PrefRow } from "@/components/app/SettingsList"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -26,14 +26,14 @@ export function GithubOwnerPicker({ owners, value, taken = [], onChange }: { own
   const id = useId()
   return (
     <FieldSet className="min-w-0 gap-2">
-      <FieldLegend variant="label">{copy.github.ownerPick}</FieldLegend>
-      <FieldDescription>{copy.github.ownerHint}</FieldDescription>
-      <RadioGroup value={value} onValueChange={(login) => onChange(login as string)} aria-label={copy.github.ownerPick} className="gap-0 divide-y divide-line-2 rounded-[10px] border border-line">
+      <FieldLegend variant="label" className="mb-0 text-[13px] font-semibold">{copy.github.ownerPick}</FieldLegend>
+      <FieldDescription className="text-xs leading-normal">{copy.github.ownerHint}</FieldDescription>
+      <RadioGroup value={value} onValueChange={(login) => onChange(login as string)} aria-label={copy.github.ownerPick} className="gap-0 divide-y divide-line-2 rounded-lg border border-line">
         {owners.map((owner) => {
           const disabled = taken.includes(owner.id)
           const fieldId = `${id}-${owner.id}`
           return (
-            <Field key={owner.id} orientation="horizontal" data-disabled={disabled || undefined} className="min-h-10 items-center gap-2.5 px-3 py-2">
+            <Field key={owner.id} orientation="horizontal" data-disabled={disabled || undefined} className="min-h-9 items-center gap-2.5 px-3 py-1.5">
               <RadioGroupItem id={fieldId} value={owner.login} disabled={disabled} />
               <FieldLabel htmlFor={fieldId} className="min-w-0 flex-1 font-normal">
                 <span className="font-mono text-xs wrap-anywhere">{owner.login}</span>
@@ -55,9 +55,9 @@ export function GithubSnapshotNote({ config, error, loading, onRetry }: { config
   return (
     <Alert variant={error ? "destructive" : "default"}>
       <InfoIcon />
-      <AlertDescription className="flex flex-col gap-2">
+      <AlertDescription className="flex flex-col gap-2 text-xs leading-normal">
         {text}
-        {onRetry && <span><Button type="button" variant="outline" size="sm" disabled={loading} onClick={onRetry}>{loading ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy.github.refresh}</Button></span>}
+        {onRetry && <span><Button type="button" variant="outline" size="xs" disabled={loading} onClick={onRetry}>{loading ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy.github.refresh}</Button></span>}
       </AlertDescription>
     </Alert>
   )
@@ -96,40 +96,42 @@ export function GithubScopeFields({ form, scope, config, initiallyProvided, load
     form.setValue(update.mode === "auto" ? "excludedRepoIds" : "selectedRepoIds", update.mode === "auto" ? update.excludedRepoIds : update.selectedRepoIds, { shouldDirty: true })
   }
   return (
-    <FieldGroup className="gap-4">
-      <Field>
-        <FieldLabel id={`${id}-mode`}>{copy.github.mode}</FieldLabel>
-        <ToggleGroup aria-labelledby={`${id}-mode`} variant="outline" size="sm" value={[draft.mode]} onValueChange={mode}>
-          <ToggleGroupItem value="auto">{copy.github.modeLabel.auto}</ToggleGroupItem>
-          <ToggleGroupItem value="manual">{copy.github.modeLabel.manual}</ToggleGroupItem>
-        </ToggleGroup>
-        <FieldDescription>{draft.mode === "auto" ? copy.github.autoHint : copy.github.manualHint}</FieldDescription>
-        {draft.mode === "manual" && initialMode === "manual" && <FieldDescription>{copy.github.manualPreserved}</FieldDescription>}
-        {draft.mode === "auto" && initialMode === "manual" && <FieldDescription>{copy.github.expansion(newlyProvided)}</FieldDescription>}
+    <FieldGroup className="gap-3">
+      <Field className="gap-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <FieldLabel id={`${id}-mode`} className="text-[13px] font-medium">{copy.github.mode}</FieldLabel>
+          <ToggleGroup aria-labelledby={`${id}-mode`} variant="outline" size="sm" spacing={0} value={[draft.mode]} onValueChange={mode}>
+            <ToggleGroupItem value="auto" className="px-3">{copy.github.modeLabel.auto}</ToggleGroupItem>
+            <ToggleGroupItem value="manual" className="px-3">{copy.github.modeLabel.manual}</ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+        <FieldDescription className="text-xs leading-normal">{draft.mode === "auto" ? copy.github.autoHint : copy.github.manualHint}</FieldDescription>
+        {draft.mode === "manual" && initialMode === "manual" && <FieldDescription className="text-xs leading-normal">{copy.github.manualPreserved}</FieldDescription>}
+        {draft.mode === "auto" && initialMode === "manual" && <FieldDescription className="text-xs leading-normal">{copy.github.expansion(newlyProvided)}</FieldDescription>}
       </Field>
       <Field>
         <div className="flex items-center justify-between gap-2">
-          <FieldLabel htmlFor={`${id}-search`}>{copy.github.search}</FieldLabel>
+          <FieldLabel htmlFor={`${id}-search`} className="text-[13px] font-medium">{copy.github.search}</FieldLabel>
           {onRefresh && <Button type="button" variant="ghost" size="xs" disabled={loading} onClick={onRefresh}>{loading ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy.github.refresh}</Button>}
         </div>
-        <Input id={`${id}-search`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={copy.github.searchPlaceholder} />
+        <Input id={`${id}-search`} className="text-[13px] md:text-[13px]" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={copy.github.searchPlaceholder} />
       </Field>
       {loading && scope.length === 0 ? (
-        <div aria-busy="true" aria-label={copy.github.reposLoading} className="flex flex-col gap-2"><Skeleton className="h-10" /><Skeleton className="h-10" /><Skeleton className="h-10" /></div>
+        <div aria-busy="true" aria-label={copy.github.reposLoading} className="flex flex-col gap-2"><Skeleton className="h-9" /><Skeleton className="h-9" /><Skeleton className="h-9" /></div>
       ) : shown.length === 0 ? (
-        <Empty className="border border-line p-4">
-          <EmptyDescription>{normalized ? copy.github.noMatch : copy.github.noneAvailable}</EmptyDescription>
+        <Empty className="rounded-lg border border-line p-4">
+          <EmptyDescription className="text-xs leading-normal">{normalized ? copy.github.noMatch : copy.github.noneAvailable}</EmptyDescription>
           {normalized && <EmptyContent><Button type="button" variant="outline" size="sm" onClick={() => setQuery("")}>{copy.github.clearSearch}</Button></EmptyContent>}
         </Empty>
       ) : (
-        <ItemGroup className="gap-0 divide-y divide-line-2 overflow-hidden rounded-[10px] border border-line" aria-label={copy.github.scopeTitle}>
+        <ItemGroup className="gap-0 divide-y divide-line-2 overflow-hidden rounded-lg border border-line" aria-label={copy.github.scopeTitle}>
           {shown.map((repo) => {
             const selected = provided.includes(repo.id) && (complete || initiallyProvided.includes(repo.id))
             const excluded = draft.mode === "auto" && draft.excludedRepoIds.includes(repo.id)
             const addition = selected && !initiallyProvided.includes(repo.id)
             const fieldId = `${id}-repo-${repo.id}`
             return (
-              <Item key={repo.id} role="listitem" size="sm">
+              <Item key={repo.id} role="listitem" size="xs" className="px-3 py-2 text-xs">
                 <ItemContent>
                   <Field orientation="horizontal" className="min-w-0 gap-2.5">
                     <Checkbox id={fieldId} checked={selected} disabled={!complete && !initiallyProvided.includes(repo.id)} onCheckedChange={(value) => toggle(repo.id, value === true)} aria-label={copy.github.repoLabel(repo.name)} />
@@ -182,24 +184,24 @@ export function GithubReposGroup({ asset }: { asset: CliAsset }) {
   const shown = repos.filter((repo) => repo.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
   return (
     <ListGroup id="detail-repos" title={copy.detail.groups.repos} count={repos.length}>
-      <div className="px-3.5 py-3"><Field><FieldLabel htmlFor={id} className="sr-only">{copy.github.search}</FieldLabel><Input id={id} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={copy.github.searchPlaceholder} /></Field></div>
+      <div className="px-3.5 py-2.5"><Field><FieldLabel htmlFor={id} className="sr-only">{copy.github.search}</FieldLabel><Input id={id} className="text-[13px] md:text-[13px]" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={copy.github.searchPlaceholder} /></Field></div>
       {shown.length === 0 ? (
-        <Empty className="border-0 p-4"><EmptyDescription>{query.trim() ? copy.github.noMatch : copy.github.noneProvided}</EmptyDescription>{query.trim() && <EmptyContent><Button variant="outline" size="sm" onClick={() => setQuery("")}>{copy.github.clearSearch}</Button></EmptyContent>}</Empty>
+        <Empty className="border-0 p-4"><EmptyDescription className="text-xs leading-normal">{query.trim() ? copy.github.noMatch : copy.github.noneProvided}</EmptyDescription>{query.trim() && <EmptyContent><Button variant="outline" size="sm" onClick={() => setQuery("")}>{copy.github.clearSearch}</Button></EmptyContent>}</Empty>
       ) : (
         <Table className="table-fixed text-xs" aria-label={copy.github.table}>
-          <TableHeader><TableRow><TableHead className="w-[38%]">{copy.github.columns.name}</TableHead><TableHead className="w-[17%]">{copy.github.columns.branch}</TableHead><TableHead className="w-[13%]">{copy.github.columns.visibility}</TableHead><TableHead className="w-[32%]">{copy.github.columns.deployment}</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead className="h-9 w-[38%] text-xs text-muted-foreground first:pl-3.5">{copy.github.columns.name}</TableHead><TableHead className="h-9 w-[17%] text-xs text-muted-foreground">{copy.github.columns.branch}</TableHead><TableHead className="h-9 w-[13%] text-xs text-muted-foreground">{copy.github.columns.visibility}</TableHead><TableHead className="h-9 w-[32%] text-xs text-muted-foreground last:pr-3.5">{copy.github.columns.deployment}</TableHead></TableRow></TableHeader>
           <TableBody>{shown.map((repo) => {
             const targets = deploymentRelations(asset, repo, relations, assets)
             return <TableRow key={repo.id}>
-              <TableCell className="font-mono whitespace-normal wrap-anywhere">{repo.name}</TableCell>
+              <TableCell className="font-mono whitespace-normal wrap-anywhere first:pl-3.5">{repo.name}</TableCell>
               <TableCell className="font-mono whitespace-normal wrap-anywhere">{repo.defaultBranch ?? copy.common.none}</TableCell>
               <TableCell>{repo.visibility ? copy.github.visibility[repo.visibility] : copy.common.none}</TableCell>
-              <TableCell className="whitespace-normal">{targets.length ? <span className="flex flex-col gap-1">{targets.map((target) => <Tooltip key={target.id}><TooltipTrigger render={<span tabIndex={0} className="rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring wrap-anywhere" />}>{target.name}</TooltipTrigger><TooltipContent>{copy.github.evidence(copy.github.evidenceSource[target.evidence] ?? copy.common.none)}</TooltipContent></Tooltip>)}</span> : copy.common.none}</TableCell>
+              <TableCell className="whitespace-normal last:pr-3.5">{targets.length ? <span className="flex flex-col gap-1">{targets.map((target) => <Tooltip key={target.id}><TooltipTrigger render={<span tabIndex={0} className="rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring wrap-anywhere" />}>{target.name}</TooltipTrigger><TooltipContent>{copy.github.evidence(copy.github.evidenceSource[target.evidence] ?? copy.common.none)}</TooltipContent></Tooltip>)}</span> : copy.common.none}</TableCell>
             </TableRow>
           })}</TableBody>
         </Table>
       )}
-      <p className="px-3.5 py-2.5 text-xs text-muted-foreground">{copy.github.relationNote}</p>
+      <ListNote icon={<InfoIcon />}>{copy.github.relationNote}</ListNote>
     </ListGroup>
   )
 }

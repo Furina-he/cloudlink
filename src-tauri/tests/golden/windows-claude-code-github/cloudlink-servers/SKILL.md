@@ -34,7 +34,7 @@ Each details file states its resource's mode.
 
 ## Running commands
 - Use the absolute runner path and stable resource ID in the details, never a name as a route. Git Bash/WSL and PowerShell examples use their own quoting; do not alter the executable path.
-- Identify your actual invoking Agent with `--agent claude-code`, `--agent codex` or `--agent cursor` before `--` in exec/put/get when known; omit it when unknown. This is a display-only self-report, never approval.
+- Identify your actual invoking Agent with `--agent <id>` before `--` in exec/put/get/discover when known (e.g. `claude-code`, `antigravity`, `codex`, `cursor`, `gemini-cli`, `windsurf`, `opencode`, `trae`, `kiro`); omit it when unknown. This is a display-only self-report, never approval.
 - No TTY or opaque stdin scripts. Foreground execution defaults to 90 seconds; set `--timeout <seconds>` before `--` (maximum 3600) and raise your own tool timeout when needed.
 - A structured `waiting` result with a request ticket (exit 75) is not rejection or execution failure: the user is being asked in CloudLink. Continue the same request as `references/execution.md` describes; never resubmit it through another tool. Read that file as well after a timeout or a result you cannot interpret.
 

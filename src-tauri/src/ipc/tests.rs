@@ -2614,3 +2614,43 @@ fn auto_cloud_scope_saves_without_catalog_and_supports_mode_switching_with_optim
     assert_eq!(cs_man.selected_ids, vec![first_id]);
     assert!(manual.asset.as_cli().unwrap().cli.scope[0].selected);
 }
+
+#[test]
+fn ready_cli_set_distribute_many_skips_redundant_live_detection_and_batches_targets() {
+    let runner = Arc::new(MetadataRunner::default());
+    let fixture = Fixture::with_runner(runner.clone(), false);
+    fixture.backend.detect_cli_environment(cli_request(None, None)).unwrap();
+    let mut input = cli_input(ACCOUNT_A, None);
+    input.cloud_scope = Some(CloudScopeCreateInput {
+        mode: CloudScopeMode::Auto,
+        selected_ids: Vec::new(),
+        excluded_ids: Vec::new(),
+    });
+    let saved = fixture.backend.save_asset(AssetInput::Cli(input)).unwrap().asset;
+    // Enable both claude-code and universal targets in one batch.
+    let target_ids: Vec<String> = fixture
+        .backend
+        .list_targets()
+        .unwrap()
+        .into_iter()
+        .filter(|t| t.env_id == EnvId::windows() && matches!(t.agent_key.as_str(), "claude-code" | "universal"))
+        .map(|t| t.id)
+        .collect();
+    let enabled = fixture.backend.set_targets_enabled(&target_ids, true).unwrap();
+    assert_eq!(enabled.len(), target_ids.len());
+    assert!(enabled.iter().all(|t| t.enabled));
+
+    runner.calls.lock().unwrap().clear();
+    let distributed = fixture
+        .backend
+        .set_distribute_many(saved.id(), &["claude-code".into(), "universal".into()], true)
+        .unwrap();
+    // Already-ready CLI asset must not re-run live CLI detection on every distribution click.
+    assert!(runner.calls.lock().unwrap().is_empty());
+    assert!(distributed.asset.agent().agents.contains(&"claude-code".to_string()));
+    assert!(distributed.asset.agent().agents.contains(&"universal".to_string()));
+    assert_eq!(
+        distributed.affected_agent_keys,
+        vec!["claude-code".to_string(), "universal".to_string()]
+    );
+}

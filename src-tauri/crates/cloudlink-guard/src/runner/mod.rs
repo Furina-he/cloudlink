@@ -43,8 +43,38 @@ struct Parsed {
     status: bool,
 }
 
-fn known_agent(agent: &str) -> bool {
+fn normalize_agent(agent: &str) -> Option<&'static str> {
     // Kept aligned with model::delivery::AgentBrand; the desktop validates the enum again.
+    match agent.trim().to_ascii_lowercase().as_str() {
+        "claude-code" => Some("claude-code"),
+        "codex" => Some("codex"),
+        "cursor" => Some("cursor"),
+        "windsurf" => Some("windsurf"),
+        "gemini-cli" => Some("gemini-cli"),
+        "antigravity" | "agy" => Some("antigravity"),
+        "copilot" => Some("copilot"),
+        "opencode" => Some("opencode"),
+        "cline" => Some("cline"),
+        "roo-code" => Some("roo-code"),
+        "kilo-code" => Some("kilo-code"),
+        "goose" => Some("goose"),
+        "amp" => Some("amp"),
+        "qwen-code" => Some("qwen-code"),
+        "droid" => Some("droid"),
+        "augment" => Some("augment"),
+        "crush" => Some("crush"),
+        "junie" => Some("junie"),
+        "warp" => Some("warp"),
+        "trae" => Some("trae"),
+        "trae-cn" => Some("trae-cn"),
+        "kiro" => Some("kiro"),
+        "continue" => Some("continue"),
+        _ => None,
+    }
+}
+
+fn known_agent(agent: &str) -> bool {
+    // Exact canonical AgentBrand IDs only; JSON protocol rejects aliases or mixed case.
     matches!(
         agent,
         "claude-code"
@@ -129,7 +159,10 @@ fn parse(args: &[String]) -> Result<Parsed> {
                 "--env" if env.is_none() => env = Some(value.clone()),
                 "--asset" if asset.is_none() => asset = Some(value.clone()),
                 "--tool" if tool.is_none() && value == "git" => tool = Some(value.clone()),
-                "--agent" if agent.is_none() && known_agent(value) => agent = Some(value.clone()),
+                "--agent" if agent.is_none() => {
+                    let canonical = normalize_agent(value).ok_or_else(|| Error::new("execution-input-invalid"))?;
+                    agent = Some(canonical.to_string());
+                }
                 "--session" if session_id.is_none() => session_id = Some(value.clone()),
                 "--timeout" => timeout = value.parse().map_err(|_| Error::new("execution-input-invalid"))?,
                 _ => return Err(Error::new("execution-input-invalid")),
@@ -788,6 +821,17 @@ mod tests {
         .input;
         assert_eq!(input["caller"], json!({"agent":"codex","provenance":"self-reported"}));
         assert_eq!(input["sessionId"], "original-session");
+        for alias in ["antigravity", "Antigravity", "agy"] {
+            let parsed = parse(&strings(&[
+                "exec", "--env", "windows", "--asset", "ast_1", "--agent", alias, "--", "uptime",
+            ]))
+            .unwrap()
+            .input;
+            assert_eq!(
+                parsed["caller"],
+                json!({"agent":"antigravity","provenance":"self-reported"})
+            );
+        }
         let unknown = parse(&strings(&[
             "exec", "--env", "windows", "--asset", "ast_1", "--", "uptime",
         ]))

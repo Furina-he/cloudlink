@@ -10,6 +10,7 @@ describe("实际调用来源与检查通道", () => {
 
   it.each([
     ["claude-code", "Claude Code（自报）"],
+    ["antigravity", "Antigravity（自报）"],
     ["codex", "Codex（自报）"],
     ["cursor", "Cursor（自报）"],
   ] as const)("%s 的 runner 元数据明确标记自报", (agent, name) => {

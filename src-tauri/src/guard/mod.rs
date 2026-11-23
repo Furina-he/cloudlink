@@ -1,15 +1,65 @@
 //! Claude Code hook management (F-306). File paths are always supplied by the
 //! backend; this module never resolves HOME or falls back outside an override.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use serde_json::Value;
 
 use crate::env::EnvContext;
 use crate::error::Result;
+use crate::model::env::EnvId;
 use crate::paths::Paths;
 use crate::proc::{self, RunOpts};
+
+const SELF_TEST_TTL: Duration = Duration::from_secs(60);
+
+type FileStamp = Option<(u64, u128)>;
+
+#[derive(Clone, PartialEq, Eq)]
+struct SelfTestKey {
+    exe: FileStamp,
+    policy: FileStamp,
+    settings: FileStamp,
+}
+
+struct CachedSelfTest {
+    key: SelfTestKey,
+    at: Instant,
+}
+
+fn self_test_cache() -> &'static Mutex<HashMap<EnvId, CachedSelfTest>> {
+    static CACHE: OnceLock<Mutex<HashMap<EnvId, CachedSelfTest>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+type BinaryHashKey = (PathBuf, u64, u128);
+type BinaryHashCache = Mutex<HashMap<BinaryHashKey, String>>;
+
+fn binary_hash_cache() -> &'static BinaryHashCache {
+    static CACHE: OnceLock<BinaryHashCache> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn file_stamp(path: &Path) -> FileStamp {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if crate::fsx::is_link(&meta) || !meta.is_file() {
+        return None;
+    }
+    let modified = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_nanos();
+    Some((meta.len(), modified))
+}
+
+pub fn invalidate_self_test_cache() {
+    if let Ok(mut cache) = self_test_cache().lock() {
+        cache.clear();
+    }
+    if let Ok(mut cache) = binary_hash_cache().lock() {
+        cache.clear();
+    }
+}
 
 mod json_edit;
 mod owned;
@@ -36,6 +86,20 @@ impl SelfTest for ProcessSelfTest {
         if (paths.isolated && env.distro().is_some()) || !runtime_valid(paths) || !env.available || !env.interop {
             return false;
         }
+        let key = SelfTestKey {
+            exe: file_stamp(&executable_path(paths)),
+            policy: file_stamp(&paths.data_dir.join("guard").join("policy.json")),
+            settings: file_stamp(&settings::settings_path(env)),
+        };
+        if key.exe.is_some()
+            && key.policy.is_some()
+            && let Ok(cache) = self_test_cache().lock()
+            && let Some(entry) = cache.get(&env.id)
+            && entry.key == key
+            && entry.at.elapsed() <= SELF_TEST_TTL
+        {
+            return true;
+        }
         let mut command = if let Some(distro) = env.distro() {
             let mut command = proc::command("wsl.exe");
             command.args(["-d", distro, "-e", &env.windows_path_to_native(&executable_path(paths))]);
@@ -44,7 +108,7 @@ impl SelfTest for ProcessSelfTest {
             proc::command(executable_path(paths))
         };
         command.args(["--self-test", "--env", env.id.as_str()]);
-        proc::run(
+        let ok = proc::run(
             command,
             RunOpts {
                 timeout: Duration::from_secs(3),
@@ -52,7 +116,17 @@ impl SelfTest for ProcessSelfTest {
                 ..Default::default()
             },
         )
-        .is_ok_and(|output| output.success() && output.stdout == b"cloudlink-guard:ok\n" && output.stderr.is_empty())
+        .is_ok_and(|output| output.success() && output.stdout == b"cloudlink-guard:ok\n" && output.stderr.is_empty());
+        if ok && let Ok(mut cache) = self_test_cache().lock() {
+            cache.insert(
+                env.id.clone(),
+                CachedSelfTest {
+                    key,
+                    at: Instant::now(),
+                },
+            );
+        }
+        ok
     }
 }
 
@@ -130,6 +204,7 @@ pub fn sync_binary(paths: &Paths, source: &Path) -> Result<bool> {
         owned::MAX_SETTINGS,
     )?;
     cleanup_retired(&directory)?;
+    invalidate_self_test_cache();
     Ok(true)
 }
 
@@ -190,10 +265,39 @@ fn binary_valid(paths: &Paths) -> bool {
     let Ok(Some(marker)) = owned::marker(&directory, "guard-bin") else {
         return false;
     };
-    let Ok(Some(bytes)) = owned::read(&executable_path(paths), owned::MAX_BINARY) else {
+    if marker.get("pendingHash").is_some() {
+        return false;
+    }
+    let Some(expected) = marker["hash"].as_str() else {
         return false;
     };
-    marker.get("pendingHash").is_none() && marker["hash"].as_str() == Some(owned::hash(&bytes).as_str())
+    let exe = executable_path(paths);
+    if owned::check(&exe).is_err() {
+        return false;
+    }
+    if let Some((len, modified)) = file_stamp(&exe) {
+        let key = (exe.clone(), len, modified);
+        if let Ok(cache) = binary_hash_cache().lock()
+            && let Some(cached) = cache.get(&key)
+        {
+            return cached == expected;
+        }
+        let Ok(Some(bytes)) = owned::read(&exe, owned::MAX_BINARY) else {
+            return false;
+        };
+        let hash = owned::hash(&bytes);
+        if let Ok(mut cache) = binary_hash_cache().lock() {
+            if cache.len() > 8 {
+                cache.clear();
+            }
+            cache.insert(key, hash.clone());
+        }
+        return hash == expected;
+    }
+    let Ok(Some(bytes)) = owned::read(&exe, owned::MAX_BINARY) else {
+        return false;
+    };
+    expected == owned::hash(&bytes)
 }
 
 fn runtime_valid(paths: &Paths) -> bool {

@@ -195,6 +195,19 @@ pub async fn set_distribute(
 }
 
 #[tauri::command]
+pub async fn set_distribute_many(
+    state: State<'_, Arc<Backend>>,
+    asset_id: String,
+    agent_keys: Vec<String>,
+    on: bool,
+) -> Result<crate::model::misc::DistributeResult> {
+    blocking(state, move |backend| {
+        backend.set_distribute_many(&asset_id, &agent_keys, on)
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn set_mode(state: State<'_, Arc<Backend>>, asset_id: String, mode: Mode) -> Result<SaveResult> {
     blocking(state, move |backend| backend.set_mode(&asset_id, mode)).await
 }
@@ -343,6 +356,15 @@ pub async fn list_targets(state: State<'_, Arc<Backend>>) -> Result<Vec<Target>>
 #[tauri::command]
 pub async fn set_target_enabled(state: State<'_, Arc<Backend>>, id: String, enabled: bool) -> Result<Target> {
     blocking(state, move |backend| backend.set_target_enabled(&id, enabled)).await
+}
+
+#[tauri::command]
+pub async fn set_targets_enabled(
+    state: State<'_, Arc<Backend>>,
+    ids: Vec<String>,
+    enabled: bool,
+) -> Result<Vec<Target>> {
+    blocking(state, move |backend| backend.set_targets_enabled(&ids, enabled)).await
 }
 
 #[tauri::command]

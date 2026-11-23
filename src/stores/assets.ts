@@ -34,6 +34,8 @@ interface AssetState {
   lastSaved: Record<string, string>
   /** 刚新建或导入的资源：资源行短暂高亮（中性底色，约 2.4 秒，PRD 6.5、7.7） */
   freshIds: string[]
+  /** 正在提交中的 Agent 分发视觉乐观态（不改权威 byId，避免污染队列里的 latest-builder） */
+  pendingAgents: Record<string, Record<string, boolean>>
   /** 再高亮一次：添加流程在保存之后还要装密钥、同步，关闭弹窗时才让新行亮起来 */
   flash: (ids: string[]) => void
 
@@ -49,6 +51,7 @@ interface AssetState {
   /** 立即生效，不经过保存（PRD 6.4）。失败时回滚并抛出 */
   /** 授权与共用成员、实际送达以后端完整快照为准（P8a）。 */
   setDistribute: (id: string, agentKey: string, on: boolean) => Promise<DistributeResult>
+  setDistributeMany: (id: string, agentKeys: string[], on: boolean) => Promise<DistributeResult>
   setMode: (id: string, mode: Mode, beforeSend?: (latest: Asset) => void) => Promise<void>
   /** 范围勾选立即生效（PRD 6.4）；乐观更新，失败时恢复 */
   setCliScope: (id: string, selectedIds: string[]) => Promise<void>
@@ -96,6 +99,7 @@ export const useAssetStore = create<AssetState>()((set, get) => {
     error: null,
     lastSaved: {},
     freshIds: [],
+    pendingAgents: {},
     flash: (ids) => markFresh(set, ids),
 
     load: async () => {
@@ -153,17 +157,51 @@ export const useAssetStore = create<AssetState>()((set, get) => {
       return created
     },
 
-    setDistribute: (id, agentKey, on) => enqueue(id, async () => {
-      try {
-        const result = await ipc.setDistribute(id, agentKey, on)
-        get()._upsert(result.asset)
-        useDeliveryStore.getState()._onChanged(result)
-        useSkillStore.getState()._onCompiled(result.statuses)
-        return result
-      } catch (e) {
-        throw toIpcError(e)
-      }
-    }),
+    setDistribute: (id, agentKey, on) => {
+      set((s) => ({
+        pendingAgents: {
+          ...s.pendingAgents,
+          [id]: { ...s.pendingAgents[id], [agentKey]: on },
+        },
+      }))
+      const clearPending = () =>
+        set((s) => {
+          const cur = s.pendingAgents[id]
+          if (!cur || !(agentKey in cur)) return {}
+          const next = { ...cur }
+          delete next[agentKey]
+          const all = { ...s.pendingAgents }
+          if (Object.keys(next).length === 0) delete all[id]
+          else all[id] = next
+          return { pendingAgents: all }
+        })
+      return enqueue(id, async () => {
+        try {
+          const result = await ipc.setDistribute(id, agentKey, on)
+          get()._upsert(result.asset)
+          useDeliveryStore.getState()._onChanged(result)
+          useSkillStore.getState()._onCompiled(result.statuses)
+          return result
+        } catch (e) {
+          throw toIpcError(e)
+        } finally {
+          clearPending()
+        }
+      })
+    },
+
+    setDistributeMany: (id, agentKeys, on) =>
+      enqueue(id, async () => {
+        try {
+          const result = await ipc.setDistributeMany(id, agentKeys, on)
+          get()._upsert(result.asset)
+          useDeliveryStore.getState()._onChanged(result)
+          useSkillStore.getState()._onCompiled(result.statuses)
+          return result
+        } catch (e) {
+          throw toIpcError(e)
+        }
+      }),
 
     setMode: (id, mode, beforeSend) => enqueue(id, async () => {
       const latest = get().byId[id]

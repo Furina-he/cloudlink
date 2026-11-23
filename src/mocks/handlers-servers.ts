@@ -213,17 +213,23 @@ function importHosts(hosts: ImportHost[], probeAfter: boolean) {
   return created
 }
 
-function setDistribute(id: string, agentKey: string, on: boolean) {
+function setDistributeMany(id: string, agentKeys: string[], on: boolean) {
   const asset = assetById(id)
-  if (!db.targets.some((t) => t.agentKey === agentKey)) fail("not-found")
+  const affectedAgentKeys = [...new Set(agentKeys)]
+  for (const agentKey of affectedAgentKeys) {
+    if (!db.targets.some((t) => t.agentKey === agentKey)) fail("not-found")
+  }
   const can = selectCanDistribute(asset)
-  if (on && !can.ok) fail("cannot-distribute", { reason: can.reason })
-  const affectedAgentKeys = [agentKey]
+  if (on && affectedAgentKeys.length > 0 && !can.ok) fail("cannot-distribute", { reason: can.reason })
   const rest = asset.agent.agents.filter((k) => !affectedAgentKeys.includes(k))
   const next = on ? [...rest, ...affectedAgentKeys] : rest
   if (JSON.stringify([...asset.agent.agents].sort()) !== JSON.stringify([...next].sort())) cancelMockExecutions(id)
   asset.agent.agents = next
   return { ...saveSnapshot(asset), affectedAgentKeys }
+}
+
+function setDistribute(id: string, agentKey: string, on: boolean) {
+  return setDistributeMany(id, [agentKey], on)
 }
 
 function setMode(id: string, mode: Mode) {
@@ -254,6 +260,7 @@ export const serverHandlers: Record<string, (a: Args) => unknown> = {
   delete_asset: (a) => deleteAsset(a.id as string, a.opts as { removeGeneratedKey: boolean }),
   import_hosts: (a) => importHosts(a.hosts as ImportHost[], a.probeAfter as boolean),
   set_distribute: (a) => setDistribute(a.assetId as string, a.agentKey as string, a.on as boolean),
+  set_distribute_many: (a) => setDistributeMany(a.assetId as string, a.agentKeys as string[], a.on as boolean),
   set_mode: (a) => setMode(a.assetId as string, a.mode as Mode),
   all_read_only: () => allReadOnly(),
   // 托盘只在桌面版里有；mock 记下文字，e2e 可以检查

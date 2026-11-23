@@ -422,6 +422,180 @@ pub(crate) fn resolve_parent(paths: &Paths, env: &EnvContext, target: &Target) -
     checked_parent(paths, env, canonical_future(&env.to_host(native))?, false)
 }
 
+const WSL_REAL_PARENTS_BATCH: &str = r#"LC_ALL=C; export LC_ALL
+home=$1; shift
+rootdev=$(stat -c %d /) || exit 10
+homedev=$(stat -c %d -- "$home") || exit 10
+newline='
+'
+resolve_one() {
+  check=$1; links=0
+  while :; do
+    parent=/; rest=${check#/}; linked=0
+    while [ -n "$rest" ]; do
+      part=${rest%%/*}
+      if [ "$part" = "$rest" ]; then rest=; else rest=${rest#*/}; fi
+      case "$part" in ''|.) continue ;; ..) parent=${parent%/*}; [ -n "$parent" ] || parent=/; continue ;; esac
+      parent=${parent%/}/$part
+      if [ -L "$parent" ]; then
+        links=$((links + 1)); [ "$links" -le 40 ] || { printf 'err 4\n'; return; }
+        link=$(readlink -- "$parent" && printf '.') || { printf 'err 2\n'; return; }
+        link=${link%.}; link=${link%"$newline"}
+        case "$link" in *[[:cntrl:]]*) printf 'err 5\n'; return ;; esac
+        case "$link" in /*) check=$link ;; *) check=${parent%/*}/$link ;; esac
+        [ -z "$rest" ] || check=$check/$rest
+        linked=1; break
+      fi
+      [ -e "$parent" ] || break
+      [ -d "$parent" ] || { printf 'err 3\n'; return; }
+    done
+    [ "$linked" = 1 ] || break
+  done
+  path=$1; suffix=
+  while [ ! -e "$path" ] && [ ! -L "$path" ]; do
+    [ "$path" != / ] || { printf 'err 2\n'; return; }
+    name=${path##*/}; suffix=/$name$suffix; path=${path%/*}; [ -n "$path" ] || path=/
+  done
+  real=$(realpath -e -- "$path" && printf '.') || { printf 'err 2\n'; return; }
+  real=${real%.}; real=${real%"$newline"}
+  case "$real" in *[[:cntrl:]]*) printf 'err 5\n'; return ;; esac
+  [ -d "$real" ] || { printf 'err 3\n'; return; }
+  dev=$(stat -c %d -- "$real") || { printf 'err 3\n'; return; }
+  if [ "$dev" = "$rootdev" ] || [ "$dev" = "$homedev" ]; then loc=local; else loc=mount; fi
+  printf 'ok %s %s%s\n' "$loc" "$real" "$suffix"
+}
+for p in "$@"; do
+  resolve_one "$p"
+done"#;
+
+/// 同一 WSL 发行版里的多个目标在一次 `wsl.exe` 调用内批量解析，减少重复进程启动开销。
+pub(crate) fn resolve_parents_batch(
+    paths: &Paths,
+    env: &EnvContext,
+    targets: &[Target],
+) -> Vec<Result<ResolvedParent>> {
+    if targets.is_empty() {
+        return Vec::new();
+    }
+    let Some(distro) = env.distro().filter(|_| !paths.isolated && !cfg!(test)) else {
+        return targets
+            .iter()
+            .map(|target| resolve_parent(paths, env, target))
+            .collect();
+    };
+    let mut results: Vec<Option<Result<ResolvedParent>>> = (0..targets.len()).map(|_| None).collect();
+    let mut query_indices = Vec::new();
+    let mut query_paths = Vec::new();
+    for (idx, target) in targets.iter().enumerate() {
+        if target.env_id != env.id {
+            results[idx] = Some(Err(AppError::ipc(IpcErrorId::NotFound)));
+            continue;
+        }
+        if let Err(err) = host_path(paths, &target.env_id, &target.path) {
+            results[idx] = Some(Err(err));
+            continue;
+        }
+        query_indices.push(idx);
+        query_paths.push(target.path.as_str());
+    }
+    if !query_indices.is_empty() {
+        let mut command = crate::proc::command("wsl.exe");
+        command.args([
+            "-d",
+            distro,
+            "-e",
+            "sh",
+            "-c",
+            WSL_REAL_PARENTS_BATCH,
+            "cloudlink-real-parents",
+            &env.home,
+        ]);
+        command.args(&query_paths);
+        let batch_out = crate::proc::run(
+            command,
+            crate::proc::RunOpts {
+                timeout: Duration::from_secs(10),
+                max_output: 64 * 1024,
+                ..Default::default()
+            },
+        );
+        match batch_out {
+            Ok(output) if output.success() => {
+                let text = output.stdout_str();
+                let lines: Vec<&str> = text.lines().collect();
+                if lines.len() == query_indices.len() {
+                    for (idx, line) in query_indices.into_iter().zip(lines) {
+                        let parsed = if let Some(rest) = line.strip_prefix("ok ") {
+                            if let Some((location, native)) = rest.split_once(' ') {
+                                if !native_path_ok(&env.id, native) {
+                                    Err(bad_path())
+                                } else if let Some(win) = windows_mount(env, native) {
+                                    real_directory(&win, None).and_then(|real| checked_parent(paths, env, real, true))
+                                } else if location != "local" {
+                                    Err(path_error("wsl-path-unsupported"))
+                                } else {
+                                    canonical_future(&env.to_host(native))
+                                        .map_err(AppError::from)
+                                        .and_then(|real| checked_parent(paths, env, real, false))
+                                }
+                            } else {
+                                Err(bad_path())
+                            }
+                        } else if let Some(code) = line.strip_prefix("err ") {
+                            Err(path_error(match code {
+                                "4" => "path-loop",
+                                "5" => "path-invalid",
+                                _ => "path-unavailable",
+                            }))
+                        } else {
+                            Err(bad_path())
+                        };
+                        results[idx] = Some(parsed);
+                    }
+                } else {
+                    for idx in query_indices {
+                        results[idx] = Some(Err(path_error("path-unavailable")));
+                    }
+                }
+            }
+            Ok(_) => {
+                for idx in query_indices {
+                    results[idx] = Some(Err(path_error("path-unavailable")));
+                }
+            }
+            Err(err) => {
+                for idx in query_indices {
+                    results[idx] = Some(Err(AppError::internal(err.to_string())));
+                }
+            }
+        }
+    }
+    results
+        .into_iter()
+        .map(|entry| entry.unwrap_or_else(|| Err(path_error("path-unavailable"))))
+        .collect()
+}
+
+pub(crate) fn recheck_parents_batch(
+    paths: &Paths,
+    env: &EnvContext,
+    targets: &[Target],
+    expected: &Path,
+) -> Result<()> {
+    let resolved = resolve_parents_batch(paths, env, targets);
+    for entry in resolved {
+        let parent = entry?;
+        if parent.windows_shared {
+            return Err(path_error("wsl-path-unsupported"));
+        }
+        if comparison(&parent.path) != comparison(expected) {
+            return Err(path_error("path-retargeted"));
+        }
+    }
+    reject_link_ancestors(expected)?;
+    Ok(())
+}
+
 /// 普通操作不能通过 WSL 指向 Windows 的目录写入；D15 由计划层绑定现有 Windows 写入者。
 pub fn resolve_target_path(paths: &Paths, env: &EnvContext, target: &Target) -> Result<PathBuf> {
     let resolved = resolve_parent(paths, env, target)?;
@@ -431,6 +605,7 @@ pub fn resolve_target_path(paths: &Paths, env: &EnvContext, target: &Target) -> 
     Ok(resolved.path)
 }
 
+#[cfg(test)]
 pub(crate) fn recheck_parent(paths: &Paths, env: &EnvContext, target: &Target, expected: &Path) -> Result<()> {
     let actual = resolve_target_path(paths, env, target)?;
     if comparison(&actual) != comparison(expected) {

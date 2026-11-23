@@ -95,20 +95,20 @@ export function CliEnvList({
                 <EnvIcon envId={envId} className="text-muted-foreground" />
               </ItemMedia>
               <ItemContent className="min-w-0">
-                <ItemTitle className="flex-wrap">
+                <ItemTitle className="flex-wrap text-[13px]">
                   {copy.env.long(envId)}
                   {detecting ? (
-                    <span className="flex items-center gap-1 font-normal text-muted-foreground">
-                      <Spinner className="size-3.5" aria-hidden />
+                    <span className="flex items-center gap-1 text-xs font-normal text-muted-foreground">
+                      <Spinner className="size-3" aria-hidden />
                       {copy.cli.checking}
                     </span>
                   ) : waiting ? (
-                    <span role="status" className="flex items-center gap-1 font-normal text-muted-foreground">
-                      <Spinner className="size-3.5" aria-hidden />
+                    <span role="status" className="flex items-center gap-1 text-xs font-normal text-muted-foreground">
+                      <Spinner className="size-3" aria-hidden />
                       {run?.state === "waiting-install" ? copy.cli.waitingInstall : copy.cli.waitingLogin}
                     </span>
                   ) : (
-                    <StateText tone={tone} icon={icon} className="font-normal">
+                    <StateText tone={tone} icon={icon} className="text-xs font-normal">
                       {copy.cli.status[status]}
                     </StateText>
                   )}

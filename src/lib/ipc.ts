@@ -93,6 +93,9 @@ export const ipc = {
   /** P8a：返回实际送达快照和共用目录的受影响 Agent，不以选择/列入冒充成功。 */
   setDistribute: (assetId: string, agentKey: string, on: boolean) =>
     invoke<DistributeResult>("set_distribute", { assetId, agentKey, on }),
+  /** 批量设置单个资源的多个 Agent 分发开关，合并为一次发布。 */
+  setDistributeMany: (assetId: string, agentKeys: string[], on: boolean) =>
+    invoke<DistributeResult>("set_distribute_many", { assetId, agentKeys, on }),
   setMode: (assetId: string, mode: Mode) =>
     invoke<SaveResult>("set_mode", { assetId, mode }),
   /** F-104 AC1：只检测已启用 Agent 所在的运行环境（Login Shell）；带 assetId 时同时更新这项资源 */
@@ -140,6 +143,8 @@ export const ipc = {
   listTargets: () => invoke<Target[]>("list_targets"),
   setTargetEnabled: (id: string, enabled: boolean) =>
     invoke<Target>("set_target_enabled", { id, enabled }),
+  setTargetsEnabled: (ids: string[], enabled: boolean) =>
+    invoke<Target[]>("set_targets_enabled", { ids, enabled }),
   addCustomTarget: (req: AddCustomTargetRequest) =>
     invoke<Target>("add_custom_target", { req }),
   removeCustomTarget: (id: string) =>

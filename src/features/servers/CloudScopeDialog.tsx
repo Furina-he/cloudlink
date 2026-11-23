@@ -9,7 +9,6 @@ import { toIpcError } from "@/lib/ipc"
 import { useAssetStore } from "@/stores/assets"
 import { useCliStore } from "@/stores/cli"
 import { useUIStore } from "@/stores/ui"
-import { serverActions } from "./actions"
 import { CloudScopeFields, CloudSnapshotNote } from "./CloudScopeParts"
 import { cloudScopeDraft, cloudScopeSchema, type CloudScopeDraft } from "./cloudScopeForm"
 import { DraftDialog } from "./DraftDialog"
@@ -27,9 +26,10 @@ export function CloudScopeDialog({ asset, onClose }: { asset: CliAsset; onClose:
   const [error, setError] = useState<IpcError | null>(null)
   const dirty = form.formState.isDirty
   const loading = !!detection?.scopeLoading || !!detection?.detecting
+  const scopeError = detection?.scopeAccount === (current.account ?? null) ? detection?.scopeError : null
 
   const refresh = () => {
-    serverActions.recheckCli(current)
+    void useCliStore.getState().refreshScope(current.cliProvider, current.account ?? undefined, current.id).catch(() => undefined)
   }
 
   const save = () => {
@@ -68,7 +68,7 @@ export function CloudScopeDialog({ asset, onClose }: { asset: CliAsset; onClose:
       >
         <CloudSnapshotNote
           config={current.cloudScope}
-          error={detection?.scopeError}
+          error={scopeError}
           loading={loading}
           onRetry={refresh}
         />

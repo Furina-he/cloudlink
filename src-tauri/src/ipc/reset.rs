@@ -181,6 +181,10 @@ impl Backend {
                 .lock()
                 .map_err(|_| AppError::internal("sharing state unavailable"))?
                 .clear();
+            if let Ok(mut cache) = self.ssh_readback_cache.lock() {
+                cache.clear();
+            }
+            guard::invalidate_self_test_cache();
             drop(lock);
             // An OS credential UI/service may block. Neither state nor SQLite locks may be held.
             self.cleanup_credentials()?;

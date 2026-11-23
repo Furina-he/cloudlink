@@ -35,6 +35,8 @@ interface TargetState {
   addSshInclude: (envId: EnvId) => Promise<void>
   /** 启用后自动写入副本；停用时移除 CloudLink 分发的总 Skill（F-302） */
   setEnabled: (id: string, enabled: boolean) => Promise<Target>
+  /** 批量启用或停用同一 Agent 在各运行环境的目录，合并为一次发布 */
+  setEnabledMany: (ids: string[], enabled: boolean) => Promise<Target[]>
   addCustom: (req: AddCustomTargetRequest) => Promise<Target>
   removeCustom: (id: string) => Promise<void>
 }
@@ -111,6 +113,19 @@ export const useTargetStore = create<TargetState>()((set, get) => ({
       set((s) => ({ targets: replace(s.targets, target) }))
       await refreshPublication()
       return target
+    } catch (e) {
+      throw toIpcError(e)
+    }
+  },
+
+  setEnabledMany: async (ids, enabled) => {
+    if (ids.length === 0) return []
+    try {
+      const updated = await ipc.setTargetsEnabled(ids, enabled)
+      const byId = new Map(updated.map((t) => [t.id, t]))
+      set((s) => ({ targets: s.targets.map((x) => byId.get(x.id) ?? x) }))
+      await refreshPublication()
+      return updated
     } catch (e) {
       throw toIpcError(e)
     }

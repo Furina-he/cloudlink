@@ -1,3 +1,5 @@
+import { useShallow } from "zustand/react/shallow"
+
 import type { Asset } from "@/bindings"
 import { AGENT_TILE_ON, AgentMark } from "@/components/app/AgentMark"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
@@ -6,7 +8,7 @@ import { copy } from "@/lib/copy"
 import { sharingKeys } from "@/lib/deliveryFeedback"
 import { cn } from "@/lib/utils"
 import type { AgentOption } from "@/features/agents/agentKeys"
-import { handleOf, selectCanDistribute } from "@/stores/assets"
+import { handleOf, selectCanDistribute, useAssetStore } from "@/stores/assets"
 import { useDeliveryStore } from "@/stores/deliveries"
 import { serverActions } from "./actions"
 
@@ -28,9 +30,16 @@ export function AgentPicker({
 }) {
   const alias = handleOf(asset)
   const can = selectCanDistribute(asset)
-  const byId = useDeliveryStore((s) => s.byId)
-  const deliveries = Object.values(byId)
-  const selected = agents.map((a) => a.key).filter((k) => asset.agent.agents.includes(k))
+  const pending = useAssetStore((s) => s.pendingAgents[asset.id])
+  const sharedByKey = useDeliveryStore(
+    useShallow((s) => {
+      const deliveries = Object.values(s.byId)
+      return Object.fromEntries(agents.map((a) => [a.key, sharingKeys(a.key, deliveries).join(",")]))
+    })
+  )
+  const selected = agents
+    .map((a) => a.key)
+    .filter((k) => (pending && k in pending ? pending[k] : asset.agent.agents.includes(k)))
 
   const onChange = (next: string[]) => {
     const added = next.find((k) => !selected.includes(k))
@@ -55,8 +64,9 @@ export function AgentPicker({
     >
       {agents.map((a) => {
         const on = selected.includes(a.key)
-        const shared = sharingKeys(a.key, deliveries).flatMap((key) => {
-          const option = agents.find((a) => a.key === key)
+        const busy = !!pending && a.key in pending
+        const shared = (sharedByKey[a.key] ? sharedByKey[a.key].split(",") : []).flatMap((key) => {
+          const option = agents.find((item) => item.key === key)
           return option ? [option.label] : []
         })
         const tip = [
@@ -67,7 +77,7 @@ export function AgentPicker({
         const tile = compact ? "size-7 border-transparent bg-transparent px-0 hover:bg-foreground/6" : "max-w-44"
         return (
           <Tooltip key={a.key}>
-            <TooltipTrigger render={<ToggleGroupItem value={a.key} disabled={!on && !can.ok} aria-label={copy.servers.agentToggle(alias, a.label)} className={cn(tile, AGENT_TILE_ON[a.agent], !compact && (on ? "text-foreground" : "text-muted-foreground"))} />}>
+            <TooltipTrigger render={<ToggleGroupItem value={a.key} disabled={(!on && !can.ok) || busy} aria-busy={busy || undefined} aria-label={copy.servers.agentToggle(alias, a.label)} className={cn(tile, AGENT_TILE_ON[a.agent], busy && "animate-pulse", !compact && (on ? "text-foreground" : "text-muted-foreground"))} />}>
               <AgentMark agent={a.agent} label={a.label} lit={on} />
               {!compact && <span className="truncate">{a.short}</span>}
             </TooltipTrigger>

@@ -139,6 +139,7 @@ impl Backend {
         if !cfg!(test) {
             self.prepare_guard_binary()?;
         }
+        guard::invalidate_self_test_cache();
         guard::write_policy(&self.paths, &self.list_assets()?)?;
         let denied = operations::denied_today(&*self.database()?, env_id, crate::time::now_secs())?;
         let status = guard::install(&self.paths, &env, denied, self.guard_test.as_ref())?;
@@ -157,6 +158,7 @@ impl Backend {
         let _edit = self.edit()?;
         let env = self.context(env_id)?;
         let denied = operations::denied_today(&*self.database()?, env_id, crate::time::now_secs())?;
+        guard::invalidate_self_test_cache();
         let status = guard::remove(&self.paths, &env, denied, self.guard_test.as_ref())?;
         self.activity(
             ActivityKind::Guard,

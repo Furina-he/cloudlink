@@ -118,8 +118,11 @@ const envLong = (id: EnvId) =>
   id.startsWith("wsl:") ? `WSL ${id.slice(4)}` : envShort(id)
 const envOf = (p: Params) => envLong(v(p, "env") as EnvId)
 /** 「Claude Code（Windows）」：一份总 Skill 属于哪个 Agent、哪个运行环境；没有 target 参数时只写运行环境 */
-const targetOf = (p: Params) =>
-  p?.target ? `${v(p, "target")}（${envOf(p)}）` : `${envOf(p)} `
+const targetOf = (p: Params) => {
+  const raw = p?.target ? v(p, "target") : ""
+  const name = raw ? (AGENT_LABEL[raw as AgentId] ?? (raw.startsWith("custom:") ? raw.slice(7) : raw)) : ""
+  return name ? `${name}（${envOf(p)}）` : `${envOf(p)} `
+}
 /** Lint 的主语：资源的问题写标识（「hk-edge 里」），全局内容的问题写「资源关系或运维约定里」。行号在下面的位置里，文案不重复 */
 const within = (p: Params) =>
   p?.alias ? `${p.alias} 里` : "资源关系或运维约定里"

@@ -169,6 +169,7 @@ export const agentHandlers: Record<string, (a: Args) => unknown> = {
   get_compile_status: () => Object.values(db.compile),
   list_targets: () => db.targets,
   set_target_enabled: (a) => setTargetEnabled(a.id as string, a.enabled as boolean),
+  set_targets_enabled: (a) => (a.ids as string[]).map((id) => setTargetEnabled(id, a.enabled as boolean)),
   add_custom_target: (a) => addCustomTarget(a.req as AddCustomTargetRequest),
   remove_custom_target: (a) => removeCustomTarget(a.id as string),
   list_inclusions: () => db.inclusions,

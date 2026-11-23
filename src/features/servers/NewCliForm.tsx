@@ -95,10 +95,11 @@ function StandardCliForm({ provider }: { provider: CliProvider }) {
   }, [provider])
 
   useEffect(() => {
-    if (ready && !allBound && account) {
-      // 拉取已知资源是非阻塞的背景信息；失败由 CloudSnapshotNote 温和展示，不弹红色错误 Toast
-      void useCliStore.getState().refreshScope(provider, account).catch(() => undefined)
-    }
+    if (!ready || allBound || !account) return
+    const cur = useCliStore.getState().byProvider[provider]
+    if (cur?.scopeAccount === account && (cur.scopeLoading || cur.scope !== null || cur.scopeError !== null)) return
+    // 拉取已知资源是非阻塞的背景信息；失败由 CloudSnapshotNote 温和展示，不弹红色错误 Toast
+    void useCliStore.getState().refreshScope(provider, account).catch(() => undefined)
   }, [provider, account, ready, allBound])
 
   const selectAccount = (value: string) => {
@@ -140,8 +141,10 @@ function StandardCliForm({ provider }: { provider: CliProvider }) {
         },
       })
       const saved = asset as CliAsset
-      // 云平台按生产对待，从确认变更开始（F-202 AC2）；同步给全部已启用的 Agent
-      for (const a of agents) await useAssetStore.getState().setDistribute(saved.id, a.key, true)
+      // 云平台按生产对待，从确认变更开始（F-202 AC2）；一次批量同步给全部已启用的 Agent
+      if (agents.length > 0) {
+        await useAssetStore.getState().setDistributeMany(saved.id, agents.map((a) => a.key), true)
+      }
       const outcome = deliveryOutcome(
         saved.id,
         agents.map((a) => a.key),
@@ -221,7 +224,7 @@ function StandardCliForm({ provider }: { provider: CliProvider }) {
                   value={account ?? ""}
                   onValueChange={(v) => selectAccount(v as string)}
                   aria-label={copy.cli.accountTitle[provider]}
-                  className="gap-0 divide-y divide-line-2 rounded-[10px] border border-line"
+                  className="gap-0 divide-y divide-line-2 rounded-lg border border-line"
                 >
                   {accounts.map((a) => {
                     const taken = bound.includes(a)
@@ -231,7 +234,7 @@ function StandardCliForm({ provider }: { provider: CliProvider }) {
                         key={a}
                         orientation="horizontal"
                         data-disabled={taken || undefined}
-                        className="min-h-10 items-center gap-2.5 px-3 py-2"
+                        className="min-h-9 items-center gap-2.5 px-3 py-1.5"
                       >
                         <RadioGroupItem value={a} id={id} disabled={taken} />
                         <FieldLabel
@@ -257,7 +260,7 @@ function StandardCliForm({ provider }: { provider: CliProvider }) {
               </DetailGroup>
             )}
             {ready && !allBound && account && (
-              <>
+              <DetailGroup title={copy.cloudScope.scopeTitle}>
                 <CloudSnapshotNote
                   error={detection.scopeError}
                   mode={draft.mode}
@@ -277,7 +280,7 @@ function StandardCliForm({ provider }: { provider: CliProvider }) {
                     })
                   }
                 />
-              </>
+              </DetailGroup>
             )}
             {error && (
               <Alert variant="destructive">

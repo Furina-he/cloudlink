@@ -114,10 +114,7 @@ fn inspect_path(path: &Path, target: &Target, latest_hash: Option<&str>, keys: &
 }
 
 fn recheck(paths: &Paths, env: &EnvContext, targets: &[Target], parent: &Path) -> Result<()> {
-    for target in targets {
-        paths::recheck_parent(paths, env, target, parent)?;
-    }
-    Ok(())
+    paths::recheck_parents_batch(paths, env, targets, parent)
 }
 
 pub fn inspect(paths: &Paths, env: &EnvContext, target: &Target, latest_hash: Option<&str>) -> Result<Delivery> {
@@ -196,9 +193,6 @@ pub(crate) fn load_source_with_key(
     let marker = publish::read_marker(&source)
         .filter(|m| marker_matches(m, env_id, agent_key))
         .ok_or_else(|| AppError::ipc(IpcErrorId::SourceMissing))?;
-    if publish::dir_hash(&source)?.as_deref() != Some(marker.content_hash.as_str()) {
-        return Err(AppError::ipc(IpcErrorId::SourceMissing));
-    }
     fn walk(root: &Path, dir: &Path, files: &mut Vec<CompiledFile>) -> Result<()> {
         for entry in fs::read_dir(dir)? {
             let path = entry?.path();
@@ -215,9 +209,11 @@ pub(crate) fn load_source_with_key(
                     .to_string_lossy()
                     .replace('\\', "/");
                 if relative != MARKER_FILE {
+                    let bytes = fs::read(&path)?;
+                    let content = String::from_utf8(bytes).map_err(|_| AppError::ipc(IpcErrorId::SourceMissing))?;
                     files.push(CompiledFile {
                         path: relative,
-                        content: fs::read_to_string(&path)?,
+                        content,
                     });
                 }
             }
@@ -251,6 +247,7 @@ pub fn sync(
         env,
         std::slice::from_ref(target),
         None,
+        false,
         files,
         marker,
         repair_modified,
@@ -271,6 +268,7 @@ pub fn sync_auto(
         env,
         std::slice::from_ref(target),
         None,
+        false,
         files,
         marker,
         true,
@@ -285,7 +283,17 @@ pub(crate) fn sync_unit_auto(
     files: &[CompiledFile],
     marker: &Marker,
 ) -> Result<(Delivery, Option<backup::BackupMeta>)> {
-    sync_inner(paths, env, &unit.targets, Some(&unit.parent), files, marker, true, true)
+    sync_inner(
+        paths,
+        env,
+        &unit.targets,
+        Some(&unit.parent),
+        true,
+        files,
+        marker,
+        true,
+        true,
+    )
 }
 
 pub(crate) fn sync_unit(
@@ -300,6 +308,7 @@ pub(crate) fn sync_unit(
         env,
         &unit.targets,
         Some(&unit.parent),
+        true,
         files,
         marker,
         false,
@@ -353,7 +362,7 @@ fn take_over_inner(
     }
     let saved = backup::take_over(paths, target, &destination)?;
     recheck(paths, env, targets, &parent)?;
-    let (delivery, _) = sync_inner(paths, env, targets, Some(&parent), files, marker, false, false)?;
+    let (delivery, _) = sync_inner(paths, env, targets, Some(&parent), true, files, marker, false, false)?;
     Ok((delivery, saved))
 }
 
@@ -404,6 +413,7 @@ fn sync_inner(
     env: &EnvContext,
     targets: &[Target],
     expected: Option<&Path>,
+    parent_preverified: bool,
     files: &[CompiledFile],
     marker: &Marker,
     repair_modified: bool,
@@ -428,7 +438,9 @@ fn sync_inner(
         Ok(p) => p,
         Err(error) => return Ok((broken(target, &error), None)),
     };
-    recheck(paths, env, targets, &parent)?;
+    if !parent_preverified {
+        recheck(paths, env, targets, &parent)?;
+    }
     let destination = parent.join(SKILL_DIR);
     let checked = inspect_path(&destination, target, Some(&marker.content_hash), &keys)?;
     if checked == DeliveryStatus::Conflict || (checked == DeliveryStatus::Modified && !repair_modified) {
@@ -454,12 +466,10 @@ fn sync_inner(
     fs::create_dir(&staged)?;
     let mut saved = None;
     let result = (|| {
-        fsx::write_atomic(&staged.join(MARKER_FILE), &serde_json::to_vec_pretty(marker)?)?;
         publish::write_tree(&staged, files, marker)?;
         if publish::dir_hash(&staged)?.as_deref() != Some(marker.content_hash.as_str()) {
             return Err(AppError::ipc(IpcErrorId::SourceMissing));
         }
-        recheck(paths, env, targets, &parent)?;
         let current = inspect_path(&destination, target, Some(&marker.content_hash), &keys)?;
         if current == DeliveryStatus::Conflict || (current == DeliveryStatus::Modified && !repair_modified) {
             return Ok(current);

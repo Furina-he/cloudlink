@@ -113,8 +113,8 @@ export const serverActions = {
   async joinSshConfig(asset: ServerAsset, agentKeys: string[]) {
     try {
       for (const env of missingIncludeEnvs(asset, useTargetStore.getState().environments)) await useTargetStore.getState().addSshInclude(env)
-      if (asset.agent.agents.length === 0 && selectCanDistribute(asset).ok) {
-        for (const key of agentKeys) await useAssetStore.getState().setDistribute(asset.id, key, true)
+      if (asset.agent.agents.length === 0 && selectCanDistribute(asset).ok && agentKeys.length > 0) {
+        await useAssetStore.getState().setDistributeMany(asset.id, agentKeys, true)
       }
       // 加入之后重新读取实际结果，不能因 Include 写入成功就冒报 Skill 已同步。
       const [deliveries, inclusions, statuses] = await Promise.all([ipc.listDeliveries(), ipc.listInclusions(), ipc.getCompileStatus()])

@@ -540,10 +540,24 @@ impl Backend {
     }
 
     pub fn set_distribute(&self, asset_id: &str, agent_key: &str, on: bool) -> Result<DistributeResult> {
+        self.set_distribute_many(asset_id, &[agent_key.to_string()], on)
+    }
+
+    /// 批量设置单个资源的多个 Agent 分发开关，合并为一次保存与发布；已就绪的 CLI 资源不再重复联网重检。
+    pub fn set_distribute_many(&self, asset_id: &str, agent_keys: &[String], on: bool) -> Result<DistributeResult> {
+        let mut affected_agent_keys = Vec::new();
+        for key in agent_keys {
+            if !affected_agent_keys.contains(key) {
+                affected_agent_keys.push(key.clone());
+            }
+        }
         let epoch = self.reset_epoch.load(Ordering::SeqCst);
-        if on {
+        if on && !affected_agent_keys.is_empty() {
             let snapshot = self.database()?.require_asset(asset_id)?;
-            if let Some(cli) = snapshot.as_cli() {
+            // 仅在 CLI 当前未就绪时尝试重新检测一次；已就绪时直接分发，避免每次点击都阻塞在联网检测与二次发布上。
+            if let Some(cli) = snapshot.as_cli()
+                && cli_distribute_block_reason(cli).is_some()
+            {
                 self.detect_cli_environment(super::requests::CliRequest {
                     provider: cli.cli_provider,
                     asset_id: Some(asset_id.into()),
@@ -553,14 +567,23 @@ impl Backend {
         }
         let _edit = self.edit_at(epoch)?;
         let mut asset = self.database()?.require_asset(asset_id)?;
-        let affected_agent_keys = vec![agent_key.to_string()];
+        if affected_agent_keys.is_empty() {
+            let statuses = self.get_compile_status()?;
+            let result = self.save_result(asset, statuses)?;
+            return Ok(DistributeResult {
+                asset: result.asset,
+                inclusions: result.inclusions,
+                deliveries: result.deliveries,
+                statuses: result.statuses,
+                affected_agent_keys,
+            });
+        }
         if on {
-            if !self
-                .list_targets()?
-                .iter()
-                .any(|t| t.enabled && t.agent_key == agent_key)
-            {
-                return Err(AppError::ipc(IpcErrorId::NotFound));
+            let targets = self.list_targets()?;
+            for agent_key in &affected_agent_keys {
+                if !targets.iter().any(|t| t.enabled && &t.agent_key == agent_key) {
+                    return Err(AppError::ipc(IpcErrorId::NotFound));
+                }
             }
             let reason = match &asset {
                 Asset::Vps(s)
@@ -572,32 +595,7 @@ impl Backend {
                     Some("password-only")
                 }
                 Asset::Vps(s) if !s.connection.verified.as_ref().is_some_and(|v| v.ok) => Some("unverified"),
-                Asset::Cli(c) if c.cli_provider == CliProvider::Github => {
-                    let login_ready = |s: &CliEnvState| s.installed && s.authenticated && !s.expired;
-                    if c.cli
-                        .env_states
-                        .iter()
-                        .any(|(env_id, state)| login_ready(state) && c.github_scope_ready(env_id))
-                    {
-                        None
-                    } else if c.cli.env_states.values().any(login_ready) {
-                        Some("github-scope-unverified")
-                    } else {
-                        Some("cli-not-ready")
-                    }
-                }
-                Asset::Cli(c)
-                    if !c.cli.env_states.values().any(|s| {
-                        s.installed
-                            && s.authenticated
-                            && !s.expired
-                            && c.account
-                                .as_ref()
-                                .is_none_or(|a| s.accounts.as_ref().is_some_and(|accounts| accounts.contains(a)))
-                    }) =>
-                {
-                    Some("cli-not-ready")
-                }
+                Asset::Cli(c) => cli_distribute_block_reason(c),
                 _ => None,
             };
             if let Some(reason) = reason {
@@ -887,6 +885,34 @@ pub(super) fn connection_matches(saved: &AssetConnection, input: &ConnectionInpu
                     .as_ref()
                     .is_some_and(|a| a.method == auth.method && a.identity_file == auth.identity_file)
         }
+    }
+}
+
+fn cli_distribute_block_reason(c: &CliAsset) -> Option<&'static str> {
+    if c.cli_provider == CliProvider::Github {
+        let login_ready = |s: &CliEnvState| s.installed && s.authenticated && !s.expired;
+        if c.cli
+            .env_states
+            .iter()
+            .any(|(env_id, state)| login_ready(state) && c.github_scope_ready(env_id))
+        {
+            None
+        } else if c.cli.env_states.values().any(login_ready) {
+            Some("github-scope-unverified")
+        } else {
+            Some("cli-not-ready")
+        }
+    } else if !c.cli.env_states.values().any(|s| {
+        s.installed
+            && s.authenticated
+            && !s.expired
+            && c.account
+                .as_ref()
+                .is_none_or(|a| s.accounts.as_ref().is_some_and(|accounts| accounts.contains(a)))
+    }) {
+        Some("cli-not-ready")
+    } else {
+        None
     }
 }
 

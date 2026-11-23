@@ -108,26 +108,46 @@ impl Plan {
         let mut grouped = BTreeMap::<(EnvId, PathBuf), Unit>::new();
         let mut invalid = BTreeMap::new();
         let mut cross = Vec::new();
+        let mut by_env: BTreeMap<EnvId, Vec<Target>> = BTreeMap::new();
         for target in targets {
-            let Some(env) = envs.iter().find(|e| e.id == target.env_id && e.available) else {
-                continue;
-            };
-            match paths::resolve_parent(paths, env, target) {
-                Ok(resolved) if resolved.windows_shared => cross.push((target.id.clone(), resolved.path)),
-                Ok(resolved) => {
-                    let key = (target.env_id.clone(), paths::comparison(&resolved.path));
-                    grouped
-                        .entry(key)
-                        .or_insert_with(|| Unit {
-                            env_id: target.env_id.clone(),
-                            parent: resolved.path,
-                            targets: Vec::new(),
-                        })
-                        .targets
-                        .push(target.clone());
-                }
-                Err(error) => {
-                    invalid.insert(target.id.clone(), error_detail(&error));
+            if envs.iter().any(|e| e.id == target.env_id && e.available) {
+                by_env.entry(target.env_id.clone()).or_default().push(target.clone());
+            }
+        }
+        // Resolve environments in parallel and batch all targets per WSL distro into one wsl.exe call.
+        let resolved_by_env: Vec<(Vec<Target>, Vec<crate::error::Result<paths::ResolvedParent>>)> =
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = by_env
+                    .into_iter()
+                    .filter_map(|(env_id, env_targets)| {
+                        let env = envs.iter().find(|e| e.id == env_id && e.available)?;
+                        Some(scope.spawn(move || {
+                            let res = paths::resolve_parents_batch(paths, env, &env_targets);
+                            (env_targets, res)
+                        }))
+                    })
+                    .collect();
+                handles.into_iter().filter_map(|handle| handle.join().ok()).collect()
+            });
+        for (env_targets, resolved_list) in resolved_by_env {
+            for (target, resolved) in env_targets.into_iter().zip(resolved_list) {
+                match resolved {
+                    Ok(resolved) if resolved.windows_shared => cross.push((target.id.clone(), resolved.path)),
+                    Ok(resolved) => {
+                        let key = (target.env_id.clone(), paths::comparison(&resolved.path));
+                        grouped
+                            .entry(key)
+                            .or_insert_with(|| Unit {
+                                env_id: target.env_id.clone(),
+                                parent: resolved.path,
+                                targets: Vec::new(),
+                            })
+                            .targets
+                            .push(target);
+                    }
+                    Err(error) => {
+                        invalid.insert(target.id.clone(), error_detail(&error));
+                    }
                 }
             }
         }

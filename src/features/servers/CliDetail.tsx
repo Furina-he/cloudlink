@@ -57,7 +57,7 @@ function CliPreview({ asset, control, dirty }: { asset: CliAsset; control: Contr
 }
 
 /** 标题行 + 状态行：右边「重新检测」和「⋯」（刷新范围、预览 Skill、在文件夹中显示、删除） */
-function CliHeader({ asset, name, production, titleRef, onEditProfile, onRefresh }: { asset: CliAsset; name: string; production: boolean; titleRef: React.RefObject<HTMLHeadingElement | null>; onEditProfile: () => void; onRefresh: () => void }) {
+function CliHeader({ asset, name, production, titleRef, onEditProfile, onRefresh, onRefreshScope }: { asset: CliAsset; name: string; production: boolean; titleRef: React.RefObject<HTMLHeadingElement | null>; onEditProfile: () => void; onRefresh: () => void; onRefreshScope: () => void }) {
   const cliDetecting = useCliStore((s) => !!s.byProvider[asset.cliProvider]?.detecting)
   const githubDetecting = useGithubStore((s) => !!s.byKey[asset.id]?.loading)
   const detecting = asset.cliProvider === "github" ? githubDetecting : cliDetecting
@@ -88,7 +88,7 @@ function CliHeader({ asset, name, production, titleRef, onEditProfile, onRefresh
           <DropdownMenuGroup><DropdownMenuItem onClick={onEditProfile}><PencilIcon />{copy.detail.editProfile}</DropdownMenuItem></DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
-          {asset.cliProvider !== "github" && <DropdownMenuItem disabled={detecting} onClick={onRefresh}>
+          {asset.cliProvider !== "github" && <DropdownMenuItem disabled={detecting} onClick={onRefreshScope}>
             <RefreshCwIcon />
             {copy.cli.refreshScope}
           </DropdownMenuItem>}
@@ -171,10 +171,14 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
   const setup = useCliStore((s) => s.setups[asset.cliProvider])
   const detecting = asset.cliProvider === "github" ? github.loading : !!detection?.detecting
   const scopeLoading = asset.cliProvider === "github" ? github.loading : !!detection?.scopeLoading || !!detection?.detecting
+  const scopeError = detection?.scopeAccount === (asset.account ?? null) ? detection?.scopeError : null
   const refresh = () => {
     if (asset.cliProvider === "github") {
       void useGithubStore.getState().load({ assetId: asset.id, force: true })
     } else serverActions.recheckCli(asset)
+  }
+  const refreshScopeOnly = () => {
+    void useCliStore.getState().refreshScope(asset.cliProvider, asset.account ?? undefined, asset.id).catch(() => undefined)
   }
   useEffect(() => {
     if (asset.cliProvider === "github") void useGithubStore.getState().load({ assetId: asset.id })
@@ -186,7 +190,7 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
   return (
     <FormProvider {...form}>
       <DetailPage>
-        <CliHeader asset={asset} name={asset.name} production={asset.production} titleRef={titleRef} onEditProfile={() => setProfileOpen(true)} onRefresh={refresh} />
+        <CliHeader asset={asset} name={asset.name} production={asset.production} titleRef={titleRef} onEditProfile={() => setProfileOpen(true)} onRefresh={refresh} onRefreshScope={refreshScopeOnly} />
         <div className="empty:hidden">
           <CompileSummary asset={asset} dirty={form.formState.isDirty} />
         </div>
@@ -207,8 +211,8 @@ export function CliDetail({ asset }: { asset: CliAsset }) {
           <GithubReposGroup asset={asset} />
         </> : <>
           <CloudAccountGroup asset={asset} onScope={() => setScopeOpen(true)} />
-          <CloudSnapshotNote config={asset.cloudScope} error={detection?.scopeError} loading={scopeLoading} onRetry={refresh} />
-          <CloudResourcesGroup asset={asset} loading={scopeLoading} onRefresh={refresh} />
+          <CloudSnapshotNote config={asset.cloudScope} error={scopeError} loading={scopeLoading} onRetry={refreshScopeOnly} />
+          <CloudResourcesGroup asset={asset} loading={scopeLoading} onRefresh={refreshScopeOnly} />
         </>}
         {/* 「重新检测」只在标题行：这里再放一个是重复的；一键安装登录由后端轮询并自动刷新 */}
         <ListGroup id="detail-envs" title={copy.detail.groups.envs}>

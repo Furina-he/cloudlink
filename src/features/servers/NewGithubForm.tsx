@@ -117,7 +117,9 @@ export function NewGithubForm() {
           github: { host: result?.config.host ?? "github.com", ownerLogin: draft.ownerLogin, mode: draft.mode, selectedRepoIds: draft.selectedRepoIds, excludedRepoIds: draft.excludedRepoIds },
         })
         const saved = savedResult.asset as CliAsset
-        for (const agent of agents) await useAssetStore.getState().setDistribute(saved.id, agent.key, true)
+        if (agents.length > 0) {
+          await useAssetStore.getState().setDistributeMany(saved.id, agents.map((agent) => agent.key), true)
+        }
         const outcome = deliveryOutcome(saved.id, agents.map((agent) => agent.key), true, currentDeliverySnapshot(), useTargetStore.getState().targets)
         toast.add({
           title: outcome.complete ? copy.create.added(saved.name, outcome.count) : copy.deliveryFeedback.addedPartial(saved.name, outcome.count),
@@ -156,7 +158,11 @@ export function NewGithubForm() {
             }} />}
             {allBound ? <p className="text-xs text-muted-foreground">{copy.github.ownerAllAdded}</p> : !owners.length && loading ? <p className="text-xs text-muted-foreground">{copy.github.ownerLoading}</p> : null}
             <GithubSnapshotNote config={result?.config} error={queried.error ?? all.error} loading={loading} />
-            {ownerLogin && !allBound && <GithubScopeFields form={form} scope={result?.scope ?? []} config={result?.config} initiallyProvided={[]} loading={loading} initialMode="auto" />}
+            {ownerLogin && !allBound && (
+              <DetailGroup title={copy.github.scopeTitle}>
+                <GithubScopeFields form={form} scope={result?.scope ?? []} config={result?.config} initiallyProvided={[]} loading={loading} initialMode="auto" />
+              </DetailGroup>
+            )}
             {error && <Alert variant="destructive"><AlertDescription>{ipcErrorText(error.id, error.params)}</AlertDescription></Alert>}
           </div>
         </ScrollArea>
