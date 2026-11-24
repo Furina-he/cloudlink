@@ -7,7 +7,7 @@
 ## 开发环境
 
 - Windows 10／11 x64 与 WebView2 Runtime。
-- Node.js 22.20 或更新的 22.x 版本，pnpm 10.12.3。
+- Node.js 22.23 或更新的 22.x 版本（Cloudflare 官方 `cf` CLI 要求 22.23+），pnpm 10.12.3。
 - 推荐与 CI 一致的 Rust 1.95.0，MSVC 工具链，安装 rustfmt 和 clippy。
 - Visual Studio 2022 Build Tools 的 C++ 工具集及 Windows SDK。
 - 系统 OpenSSH；涉及 WSL 场景时还需 WSL2。桌面 SSH 靶机使用 WSL 中的 Docker。

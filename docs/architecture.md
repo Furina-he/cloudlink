@@ -2,7 +2,7 @@
 
 CloudLink 是 Windows 优先的 Tauri v2 桌面应用。它把服务器连接、云平台 CLI 账号与资源范围整理成统一的 `cloudlink-servers` Skill，并向 Windows 和 WSL 中的 Agent 目录分发受管副本。
 
-本文说明当前源码的职责与数据流，不替代接口定义。执行通道、审批与 GitHub 按归属范围在 v0.3 引入，v0.3.1 修订两档语义、独立分发与来源展示；各发行版以[发布说明](releases/)为准。开发命令见[贡献指南](../CONTRIBUTING.md)，实现约定见[代码规范](code-standards.md)。
+本文说明当前源码的职责与数据流，不替代接口定义。各发行版演进（执行通道与审批、Cloudflare `cf` CLI 与一键安装登录、四大云平台统一动态范围与 Antigravity 支持、移除生产环境标识与单名称体验、宽弹窗 Skill 预览等）以[发布说明](releases/)为准。开发命令见[贡献指南](../CONTRIBUTING.md)，实现约定见[代码规范](code-standards.md)。
 
 ## 分层与源码入口
 
@@ -60,7 +60,7 @@ Rust 的领域模型位于 [model](../src-tauri/src/model/)，前端使用 [bind
 
 “测试成功”不等于“Agent 已可使用”。[列入计算](../src-tauri/src/deliver/inclusion.rs) 还检查运行环境、Agent 选择、认证方式和配置是否实际就绪。受管连接需要相应密钥及 SSH Include；发布对账还检查 OpenSSH 读回结果。只有密码的连接不会直接列入 Skill。
 
-[cli](../src-tauri/src/cli/mod.rs) 通过可注入的 runner 执行固定的只读查询，检测程序、版本、登录账号和可选资源。目录缓存绑定提供方与账号，保存范围时验证来源；安装或登录命令通过明确的界面操作打开终端，不在检测流程中偷偷执行。
+[cli](../src-tauri/src/cli/mod.rs) 通过可注入的 runner 执行固定的只读查询，检测程序、版本、登录账号和已知资源快照（Cloudflare 使用官方新版 `cf` CLI）。Cloudflare、Vercel、Oracle Cloud 与 GitHub 一致采用动态范围模型（默认自动跟随当前及未来全部资源，可按稳定 ID 排除个别项或切回手动选择），快照拉取失败仅温和提示、不阻塞保存。安装与登录由用户点击明确操作触发，不在检测流程中偷偷执行：`cf`、`vercel`、`gh` 在后台执行固定命令并由 CLI 打开默认浏览器授权（WSL 经临时 `xdg-open` 转发到 Windows 浏览器）；只有仅提供终端向导的 `oci setup bootstrap` 保留可见终端。
 
 GitHub 将资源归属与登录身份分开：[GithubConfig](../src-tauri/src/model/github.rs) 绑定 host 和稳定 owner ID，各环境另存有效身份与仓库快照。新接入默认自动跟随该归属当前及未来有权访问的仓库，已有手动模式保留明确选择；排除项使用稳定仓库 ID，不依赖可改名的仓库路径。有效登录不等于仓库范围已完整核对，两者分别显示和校验。
 
@@ -78,7 +78,7 @@ GitHub 将资源归属与登录身份分开：[GithubConfig](../src-tauri/src/mo
 
 [compile::compile](../src-tauri/src/compile/mod.rs) 接收已列入资源、Skill 配置、环境、runner 入口和显式时间，生成正文与明细文件，并返回 lint、预算和阻断状态。预览与发布复用同一编译器；相同输入产生相同内容。
 
-渲染与检查分别位于 [render.rs](../src-tauri/src/compile/render.rs) 和 [lint.rs](../src-tauri/src/compile/lint.rs)。所有已提供的 SSH 与云 CLI 资源都生成基于稳定资源 ID 的受管入口，不因生产标记或模式改走直连；用户手动 SSH 别名仍保留。检查包括内容预算、资源数据及敏感信息；错误级 lint 阻止新产物发布。
+渲染与检查分别位于 [render.rs](../src-tauri/src/compile/render.rs) 和 [lint.rs](../src-tauri/src/compile/lint.rs)。所有已提供的 SSH 与云 CLI 资源都生成基于稳定资源 ID 的受管入口，不因执行模式改走直连；用户手动 SSH 别名仍保留。`SKILL.md` 的描述与总览表以资源显示名称为主体（忽略系统默认 `cloudlink-N` 别名，仅附注有语义的自定义别名），云平台与 GitHub 采用精简范围概括。检查聚焦敏感信息、未导出字段泄漏、疑似注入与发布错误（长度限制改为自动静默精简，不再报长度警告）；错误级 lint 阻止新产物发布。
 
 [publication.rs](../src-tauri/src/ipc/publication.rs) 串起列入、策略与路由投影、编译及分发。策略和私有路由不依赖 Skill lint 放行；路由失效会取消未启动请求。编译受阻时可能保留上一份成功产物，但不能恢复已撤销的资源、范围或导出权限，必要时撤回旧副本。
 
@@ -110,7 +110,7 @@ Sidecar 不直接读取 SQLite 或原生密码库，但会读取受管运行身�
 
 ### 判定、审批与最多一次消费
 
-[执行规则](../src-tauri/crates/guard-rules/src/execution.rs) 使用 `confirm-changes`（确认变更）和 `auto-ops`（自动运维）两档。查询直接执行；确认变更的变更先审批，自动运维仅直接执行范围内规则明确的常规变更。高危与目标明确但解析不明的操作两档都进入审批；凭据导出、目标或范围无效、删除仓库、默认或未指定分支强推等不会因为审批而变成可执行。生产只是独立风险标记，生产自动运维需用户确认；新资源固定确认变更，两个旧模式及历史快照也保守迁入确认变更。
+[执行规则](../src-tauri/crates/guard-rules/src/execution.rs) 使用 `confirm-changes`（确认变更）和 `auto-ops`（自动运维）两档。已识别的非敏感查询直接执行；确认变更的常规变更先审批；自动运维下常规变更直接执行，仅在删除数据类操作、用户点名的关键服务、内容不可见的脚本、重启或关闭主机、修改防火墙、修改 SSH 配置或停止 `sshd` 时先审批。凭据导出、目标或范围无效、删除仓库、默认或未指定分支强推等红线两档均直接拒绝，不会因为审批而变成可执行。新资源默认处于确认变更，任意资源切到自动运维均需中性轻确认（旧版生产环境标记已移除，SQLite v9 自动清理历史字段）。
 
 [协调器](../src-tauri/src/ipc/execution.rs) 保存本会话待处理请求。其 [loopback 协议](../src-tauri/crates/guard-rules/src/protocol.rs) 有版本、帧上限、短读写超时和会话凭证，只暴露提交、领取、取消及状态回报；允许一次或拒绝只能由主窗口的具名 Tauri 命令进入。
 
@@ -122,7 +122,7 @@ Sidecar 不直接读取 SQLite 或原生密码库，但会读取受管运行身�
 
 ### Hook 分工与操作记录
 
-[guard](../src-tauri/src/guard/mod.rs) 仍负责 hook 设置备份、安装记录、策略和受管可执行文件。Hook 分支读取 policy 与 runtime：运行中拦下可识别的纳管直连并引导到执行通道，不按生产标记分流；准确识别本安装的 runner 后避免重复判定。策略损坏／缺失或通信故障不能被当作退出而静默放行；只有核实完全退出后才停止检查，也不继续把调用记录为受检。
+[guard](../src-tauri/src/guard/mod.rs) 仍负责 hook 设置备份、安装记录、策略和受管可执行文件。Hook 分支读取 policy 与 runtime：运行中拦下可识别的纳管直连并引导到执行通道；准确识别本安装的 runner 后避免重复判定。策略损坏／缺失或通信故障不能被当作退出而静默放行；只有核实完全退出后才停止检查，也不继续把调用记录为受检。
 
 这些检查不覆盖任意工具、凭据或未知别名，也不是同一系统用户之间的安全沙箱。原始 argv 与许可只留在必要的会话内存；持久化的是脱敏操作记录，不是可重放任务队列。
 

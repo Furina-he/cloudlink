@@ -4,7 +4,7 @@
 
 <h1>CloudLink</h1>
 
-<p><strong>面向 AI Agent 的本地服务器与云平台配电盘及命令护栏。</strong></p>
+<p><strong>面向 AI Agent 的本地基础设施接入与安全护栏。</strong></p>
 
 <p>
   一次接入 SSH 服务器与主流云平台 CLI，编译为统一的总 Skill（<code>cloudlink-servers</code>），
@@ -38,7 +38,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/resources-dark.png" />
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/resources-light.png" />
-  <img src="docs/assets/resources-light.png" width="880" alt="CloudLink 资源配电盘界面" />
+  <img src="docs/assets/resources-light.png" width="880" alt="CloudLink 资源管理界面" />
 </picture>
 
 </div>
@@ -47,7 +47,7 @@
 
 ## 为什么需要 CloudLink？
 
-当你同时用多个 AI 编程 Agent 维护 VPS 与云平台资源时，往往会遇到三个反复出现的痛点：
+当你同时用多个 AI Agent 维护 VPS 与云平台资源时，往往会遇到三个反复出现的痛点：
 
 - **上下文零散、反复解释** — 每换一个对话或切换 Agent，都要重新说明服务器别名、Docker 编排路径、域名指向和部署关系。
 - **高风险命令缺乏刹车** — 把 SSH 和云 CLI 交给 Agent 后，一次误判的 `docker compose down -v`、`cf delete` 或 `cat .env` 就可能误删数据或泄露凭据。
@@ -56,17 +56,17 @@
 **CloudLink 用一个安静的本地桌面窗口解决这些问题**：一次接入并验证服务器与云 CLI，勾选要提供给哪些 Agent，高风险变更在桌面「允许一次 / 拒绝」，Agent 记下的经验经你审阅后一键同步给所有已授权 Agent。
 
 > [!NOTE]
-> CloudLink **不是** SSH 终端、云平台控制台复刻，也不是操作系统级安全沙箱。它负责把准确的资源上下文、受管 Skill 分发与命令护栏交到本机 Agent 手里，真实访问权限仍由系统 OpenSSH、官方 CLI 和远端账号决定。
+> CloudLink **不是** SSH 终端、云平台控制台复刻，也不是操作系统级安全沙箱。它负责把准确的资源上下文、受管 Skill 分发与安全护栏交到本机 Agent 手里，真实访问权限仍由系统 OpenSSH、官方 CLI 和远端账号决定。
 
 ---
 
 ## 核心特性
 
-- **统一资源配电盘** — 在同一视图管理 Linux SSH 服务器与 **Cloudflare（`cf`）**、**Vercel（`vercel`）**、**Oracle Cloud（`oci`）**、**GitHub（`gh`）**。支持导入现有 `~/.ssh/config` 别名，或通过密码自动转免密密钥、逐项核对主机指纹与只读探测完成接入。
+- **统一基础设施接入** — 在同一视图管理 Linux SSH 服务器与 **Cloudflare（`cf`）**、**Vercel（`vercel`）**、**Oracle Cloud（`oci`）**、**GitHub（`gh`）**。支持导入现有 `~/.ssh/config` 别名，或通过密码自动转免密密钥、逐项核对主机指纹与只读探测完成接入。
 - **云平台动态范围管理** — Cloudflare、Vercel、Oracle Cloud 和 GitHub 新接入均默认按绑定账号／归属**自动跟随当前及未来全部资源**，不再因预列举失败阻塞添加，同时支持稳定排除个别资源或切回手动选择（存量手动范围升级后不静默扩围）。
 - **一份活的总 Skill（`cloudlink-servers`）** — 将已验证连接、只读探测摘要（Docker、systemd、1Panel、宝塔）、自动推导的资源关系（域名 → 服务器、跳板机、代码仓 → 部署）与运维约定整理为单一英文 Skill（`SKILL.md` + `references/*.md`），**不含任何密码、私钥或 API Secret**。
 - **可预测的多 Agent 分发（Windows + WSL2）** — 自动识别 **23 款主流 AI Agent** 并支持自定义路径。点谁只改谁的选择，绝不悄悄联动其他 Agent；多 Agent 共用真实目录时仅写入明确选择的交集；写入前校验 `.cloudlink.json` 所有权、软链接与 Windows 重解析点，冲突支持备份接管与一键撤销。
-- **本地命令护栏与桌面实时审批** — 所有已提供资源的 SSH 与云 CLI 操作统一经独立 `cloudlink-guard` Runner 执行（Claude Code 额外自动接管 `PreToolUse` Hook 拦截可识别直连）。支持「确认变更／自动运维」两档，并在「动态」视图实时审批。
+- **本地安全护栏与桌面实时审批** — 所有已提供资源的 SSH 与云 CLI 操作统一经独立 `cloudlink-guard` Runner 执行（Claude Code 额外自动接管 `PreToolUse` Hook 拦截可识别直连）。支持「确认变更／自动运维」两档，并在「动态」视图实时审批。
 - **跨 Agent 共享运维记忆（笔记收件箱）** — Agent 将排障学到的路径与注意事项写入 `~/.cloudlink/inbox/<资源>.md`。CloudLink 自动扫描疑似密钥（基于 gitleaks 规则）与提示词注入模式；你点一次并入，立刻重编译并同步给所有已授权 Agent。
 - **本地优先的原生桌面体验** — 基于 Tauri v2 + Rust 构建。零账号、零遥测，支持浅色／深色主题、顶栏／侧栏导航切换、系统托盘常驻、开机自启与基于 minisign 签名的应用内更新。
 

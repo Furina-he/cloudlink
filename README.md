@@ -4,7 +4,7 @@
 
 <h1>CloudLink</h1>
 
-<p><strong>The local infrastructure switchboard &amp; command guardrail for your AI coding agents.</strong></p>
+<p><strong>Local infrastructure access &amp; guardrails for your AI Agents.</strong></p>
 
 <p>
   Connect SSH servers and cloud CLIs once. CloudLink compiles them into one living Agent Skill (<code>cloudlink-servers</code>),
@@ -38,7 +38,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/resources-dark.png" />
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/resources-light.png" />
-  <img src="docs/assets/resources-light.png" width="880" alt="CloudLink Resources Switchboard" />
+  <img src="docs/assets/resources-light.png" width="880" alt="CloudLink Resources View" />
 </picture>
 
 <p><sub>
@@ -51,7 +51,7 @@
 
 ## Why CloudLink?
 
-Working with multiple AI coding agents against real VPS hosts and cloud accounts usually runs into the same friction:
+Working with multiple AI Agents against real VPS hosts and cloud accounts usually runs into the same friction:
 
 - **Scattered context** — Every new session or agent switch means re-explaining SSH aliases, Docker paths, reverse-proxy domains, and which repo deploys where.
 - **Risky one-shot commands** — Giving an agent SSH or cloud CLI access means one hallucinated `docker compose down -v`, `cf delete`, or `cat .env` can break production or leak secrets.
@@ -60,17 +60,17 @@ Working with multiple AI coding agents against real VPS hosts and cloud accounts
 **CloudLink fixes this in one quiet local desktop window:** verify your servers and cloud CLIs once, toggle which agents can see which resources, review risky changes with one-click desktop approvals, and merge verified agent notes straight into every authorized agent's Skill.
 
 > [!NOTE]
-> CloudLink is **not** an SSH terminal, a cloud console clone, or an OS-level sandbox. It is a local-first context compiler, Skill distributor, and command guardrail—your real permissions remain governed by OpenSSH, official CLIs, and remote accounts.
+> CloudLink is **not** an SSH terminal, a cloud console clone, or an OS-level sandbox. It is a local-first context compiler, Skill distributor, and safety guardrail—your real permissions remain governed by OpenSSH, official CLIs, and remote accounts.
 
 ---
 
 ## Key Features
 
-- **Unified Infrastructure Switchboard** — Manage Linux SSH servers alongside **Cloudflare (`cf`)**, **Vercel (`vercel`)**, **Oracle Cloud (`oci`)**, and **GitHub (`gh`)** in one place. Import existing `~/.ssh/config` aliases or onboard with password-to-key conversion, host fingerprint verification, and read-only system probing.
+- **Unified Infrastructure Access** — Manage Linux SSH servers alongside **Cloudflare (`cf`)**, **Vercel (`vercel`)**, **Oracle Cloud (`oci`)**, and **GitHub (`gh`)** in one place. Import existing `~/.ssh/config` aliases or onboard with password-to-key conversion, host fingerprint verification, and read-only system probing.
 - **Dynamic Cloud Scope Management** — Cloudflare, Vercel, Oracle Cloud, and GitHub default to **auto-following** current and future resources under the linked account/owner—with stable per-item exclusions or manual selection whenever you want tighter boundaries.
 - **One Living Agent Skill (`cloudlink-servers`)** — Compiles verified connections, probed services (Docker, systemd, 1Panel, Baota), auto-derived topology links (DNS → server, jump hosts, GitHub repo → Vercel), and team conventions into a single clean Skill (`SKILL.md` + `references/*.md`) with **zero passwords, private keys, or API secrets**.
 - **Predictable Cross-Agent Delivery (Windows & WSL2)** — Syncs managed copies to **23 recognized AI agents** plus custom paths. Toggling one agent never silently toggles another; shared real directories publish only the explicit intersection; ownership (`.cloudlink.json`), symlinks, and Windows reparse points are checked before every write, with backup & undo on conflicts.
-- **Local Command Guardrails & Live Approvals** — All provided SSH and cloud CLI actions route through the bundled `cloudlink-guard` runner (with an automatic `PreToolUse` Bash hook for Claude Code). Choose **Confirm Changes** or **Auto-Ops** per resource, and approve or deny sensitive commands right from the Activity view.
+- **Local Guardrails & Live Approvals** — All provided SSH and cloud CLI actions route through the bundled `cloudlink-guard` runner (with an automatic `PreToolUse` Bash hook for Claude Code). Choose **Confirm Changes** or **Auto-Ops** per resource, and approve or deny sensitive commands right from the Activity view.
 - **Cross-Agent Ops Memory** — Agents append durable findings (config paths, deploy quirks, maintenance windows) to `~/.cloudlink/inbox/<resource>.md`. CloudLink scans notes for secrets (powered by gitleaks rules) and prompt-injection patterns; once you approve a note, it recompiles and syncs to every authorized agent.
 - **Local-First Native Desktop** — Built with Tauri v2 + Rust. Zero accounts, zero telemetry, light/dark themes, top/side navigation, system tray residency, auto-start, and minisign-verified in-app updates via GitHub Releases.
 
