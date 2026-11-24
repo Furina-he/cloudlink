@@ -272,6 +272,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete local setup, test isolat
 
 ---
 
+## Acknowledgments
+
+Special thanks to the **[LINUX DO](https://linux.do)** community for its open sharing, thoughtful feedback, and ongoing inspiration.
+
+---
+
 ## License
 
 CloudLink is open-source software licensed under the [MIT License](LICENSE). Third-party materials retain their respective licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

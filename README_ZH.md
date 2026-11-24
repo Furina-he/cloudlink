@@ -268,6 +268,12 @@ pnpm tauri dev
 
 ---
 
+## 致谢
+
+特别感谢 **[LINUX DO](https://linux.do)** 社区的真诚分享、热心反馈与持续启发。
+
+---
+
 ## 许可证
 
 CloudLink 使用 [MIT 许可证](LICENSE) 开源。第三方材料保留各自原有许可，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
